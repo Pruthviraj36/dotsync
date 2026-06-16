@@ -7,7 +7,7 @@
 ![License](https://img.shields.io/badge/license-MIT-blue.svg)
 ![Version](https://img.shields.io/badge/version-v0.1.0--beta-yellow.svg)
 ![Stack](https://img.shields.io/badge/stack-Go%20%7C%20PostgreSQL%20%7C%20Chi-00ADD8.svg)
-![Go Version](https://img.shields.io/badge/go-%3E%3D1.22-blue.svg)
+![Go Version](https://img.shields.io/badge/go-%3E%3D1.24-blue.svg)
 
 ---
 
@@ -16,9 +16,9 @@
 - [Quick Start (User)](#-quick-start-user)
 - [Architecture](#-architecture)
 - [Security Model](#-security-model)
-- [Self-Hosting (Railway)](#-self-hosting-railway)
+- [Self-Hosting (Render)](#-self-hosting-render)
   - [Step 1 — GitHub OAuth App](#step-1--create-github-oauth-app)
-  - [Step 2 — Deploy on Railway](#step-2--deploy-on-railway)
+  - [Step 2 — Deploy on Render](#step-2--deploy-on-render)
   - [Step 3 — Set Environment Variables](#step-3--set-environment-variables)
   - [Step 4 — Stripe Setup](#step-4--stripe-setup-optional)
 - [CLI Reference](#-cli-reference)
@@ -132,7 +132,7 @@ Encrypted blob + nonce → sent to server over TLS
 
 ---
 
-## 🚀 Self-Hosting (Railway)
+## 🚀 Self-Hosting (Render)
 
 ### Step 1 — Create GitHub OAuth App
 
@@ -140,8 +140,8 @@ Encrypted blob + nonce → sent to server over TLS
 2. Click **OAuth Apps** → **New OAuth App**
 3. Fill in:
    - **Application name**: `DotSync`
-   - **Homepage URL**: `https://your-app.railway.app` (update after deploy)
-   - **Authorization callback URL**: `https://your-app.railway.app/api/auth/github/callback`
+   - **Homepage URL**: `https://your-app.onrender.com` (update after deploy)
+   - **Authorization callback URL**: `https://your-app.onrender.com/api/auth/github/callback`
 4. Click **Register application**
 5. Click **Generate a new client secret**
 6. Save **Client ID** and **Client secret** — you'll need them in Step 3
@@ -150,25 +150,25 @@ Encrypted blob + nonce → sent to server over TLS
 
 ---
 
-### Step 2 — Deploy on Railway
+### Step 2 — Deploy on Render
 
 1. **Fork or clone this repo** to your GitHub account
-2. Go to [railway.app](https://railway.app) → **New Project**
+2. Go to [render.com](https://render.com) → **New Project**
 3. Click **Deploy from GitHub repo** → Select your forked repo
-4. Railway will auto-detect the `railway.toml` and `nixpacks.toml`
+4. Render will auto-detect the `render.yaml` in your repo root
 5. Add a **PostgreSQL** plugin:
-   - In your Railway project, click **+ New** → **Database** → **PostgreSQL**
-   - Railway auto-sets `DATABASE_URL` — done
+   - In your Render project, the `render.yaml` provisions a PostgreSQL database automatically
+   - Render injects `DATABASE_URL` from the linked database — done
 
 ---
 
 ### Step 3 — Set Environment Variables
 
-In Railway → your service → **Variables**, add:
+In Render → your service → **Environment**, add:
 
 ```
-PORT                   = 8080         (Railway sets this automatically)
-DATABASE_URL           = (auto-set by Railway PostgreSQL plugin)
+PORT                   = 10000        (Render sets this automatically)
+DATABASE_URL           = (auto-injected by Render from linked database)
 FRONTEND_URL           = https://your-frontend.vercel.app
 JWT_SECRET             = (generate: openssl rand -hex 64)
 GITHUB_CLIENT_ID       = (from Step 1)
@@ -183,7 +183,7 @@ MIGRATIONS_PATH        = ./migrations
 openssl rand -hex 64
 ```
 
-> ⚠️ Never commit real values. Use Railway's variable UI or `railway variables set KEY=value`.
+> ⚠️ Never commit real values. Use Render's Environment UI or the `render.yaml` `sync: false` fields.
 
 ---
 
@@ -203,7 +203,7 @@ openssl rand -hex 64
    }
    ```
 4. Add a **Webhook** at [dashboard.stripe.com/webhooks](https://dashboard.stripe.com/webhooks):
-   - Endpoint URL: `https://your-app.railway.app/api/stripe/webhook`
+   - Endpoint URL: `https://your-app.onrender.com/api/stripe/webhook`
    - Events to listen for:
      - `customer.subscription.created`
      - `customer.subscription.updated`
@@ -218,13 +218,13 @@ openssl rand -hex 64
 Users set the server URL via environment variable:
 
 ```bash
-export DOTSYNC_SERVER=https://your-app.railway.app
+export DOTSYNC_SERVER=https://your-app.onrender.com
 dotsync login
 ```
 
 Or update the default in `cli/config/config.go`:
 ```go
-return "https://your-app.railway.app"
+return "https://your-app.onrender.com"
 ```
 
 ---
@@ -310,7 +310,7 @@ X-DotSync-Signature: <hmac-sha256 of body>
 
 ### Prerequisites
 
-- Go 1.22+
+- Go 1.24+
 - PostgreSQL 14+ (or Docker)
 - A GitHub OAuth App (callback: `http://localhost:8080/api/auth/github/callback`)
 
@@ -391,9 +391,8 @@ dotsync/
 │   └── stripe/           # Stripe webhook handler + subscription sync
 ├── migrations/           # SQL migration files (up/down)
 ├── scripts/build.sh      # Multi-platform build script
-├── railway.toml          # Railway deploy config
-├── nixpacks.toml         # Railway build config
-├── .env.example          # Environment variable template
+├── render.yaml            # Render deploy config
+├── ├── .env.example          # Environment variable template
 └── go.mod
 ```
 
@@ -419,7 +418,7 @@ Before going live:
 - [ ] `STRIPE_WEBHOOK_SECRET` is set
 - [ ] `DATABASE_URL` uses SSL (`?sslmode=require`)
 - [ ] `FRONTEND_URL` is set to your exact frontend domain (CORS)
-- [ ] Railway service is not publicly exposing the DB
+- [ ] Render service is not publicly exposing the DB
 - [ ] Stripe webhook only listens to needed events
 - [ ] `.env` is in `.gitignore` ✅ (dotsync init does this automatically)
 
@@ -431,4 +430,4 @@ MIT — free to use, modify, and distribute.
 
 ---
 
-> Built with Go, secured with AES-256-GCM, deployed on Railway.
+> Built with Go, secured with AES-256-GCM, deployed on Render.

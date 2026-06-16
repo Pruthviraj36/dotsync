@@ -3,28 +3,34 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
-
-	"golang.org/x/crypto/pbkdf2"
 )
 
 const (
-	keySize   = 32 // AES-256
-	nonceSize = 12 // GCM standard nonce
-	saltSize  = 32
+	keySize    = 32 // AES-256
+	nonceSize  = 12 // GCM standard nonce
+	saltSize   = 32
 	pbkdf2Iter = 100_000
 )
 
 // DeriveKey derives a 256-bit AES key from a secret + project salt using PBKDF2-SHA256.
 // This is the client-side key derivation — the server never sees the raw key.
+// Uses the standard library crypto/pbkdf2 package (Go 1.24+).
 func DeriveKey(secret, projectID string) []byte {
 	salt := sha256.Sum256([]byte("dotsync-salt-v1:" + projectID))
-	return pbkdf2.Key([]byte(secret), salt[:], pbkdf2Iter, keySize, sha256.New)
+	key, err := pbkdf2.Key(sha256.New, secret, salt[:], pbkdf2Iter, keySize)
+	if err != nil {
+		// Key only fails on invalid parameters (e.g. keyLength <= 0),
+		// which can't happen with our fixed constants — but fail loudly if it ever does.
+		panic(fmt.Sprintf("pbkdf2 key derivation failed: %v", err))
+	}
+	return key
 }
 
 // Encrypt encrypts plaintext with AES-256-GCM. Returns (ciphertext, nonce, error).
