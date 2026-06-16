@@ -5,8 +5,6 @@
 
 # Build artifacts
 dist/
-dotsync-server
-dotsync
 
 # Go
 vendor/
