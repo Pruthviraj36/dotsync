@@ -2,7 +2,7 @@
 
 [phases.build]
 cmds = [
-  "go build -ldflags='-s -w' -o dotsync-server ./cmd/dotsync"
+  "go mod tidy && go build -ldflags='-s -w' -o dotsync-server ./cmd/dotsync"
 ]
 
 [start]

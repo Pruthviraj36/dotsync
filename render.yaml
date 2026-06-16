@@ -9,7 +9,7 @@ services:
     region: oregon         # options: oregon, frankfurt, singapore, ohio
     branch: main
 
-    buildCommand: "go build -ldflags='-s -w' -o dotsync-server ./cmd/dotsync"
+    buildCommand: "go mod tidy && go build -ldflags='-s -w' -o dotsync-server ./cmd/dotsync"
     startCommand: "./dotsync-server"
 
     healthCheckPath: /health
