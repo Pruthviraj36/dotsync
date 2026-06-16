@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/yourusername/dotsync/internal/crypto"
+	"github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 // EncryptEnvFile encrypts the contents of a .env file for transmission.

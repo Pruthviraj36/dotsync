@@ -7,8 +7,8 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/dotsync/cli/api"
-	"github.com/yourusername/dotsync/cli/config"
+	"github.com/Pruthviraj36/dotsync/cli/api"
+	"github.com/Pruthviraj36/dotsync/cli/config"
 )
 
 func loginCmd() *cobra.Command {

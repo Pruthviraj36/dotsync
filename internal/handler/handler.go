@@ -7,10 +7,10 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/yourusername/dotsync/internal/auth"
-	"github.com/yourusername/dotsync/internal/db"
-	"github.com/yourusername/dotsync/internal/model"
-	"github.com/yourusername/dotsync/internal/service"
+	"github.com/Pruthviraj36/dotsync/internal/auth"
+	"github.com/Pruthviraj36/dotsync/internal/db"
+	"github.com/Pruthviraj36/dotsync/internal/model"
+	"github.com/Pruthviraj36/dotsync/internal/service"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {

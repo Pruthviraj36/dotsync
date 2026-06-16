@@ -7,9 +7,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-	"github.com/yourusername/dotsync/cli/api"
-	cliCrypto "github.com/yourusername/dotsync/cli/crypto"
-	"github.com/yourusername/dotsync/cli/config"
+	"github.com/Pruthviraj36/dotsync/cli/api"
+	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/config"
 )
 
 func historyCmd() *cobra.Command {

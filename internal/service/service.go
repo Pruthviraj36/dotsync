@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	"github.com/yourusername/dotsync/internal/db"
-	"github.com/yourusername/dotsync/internal/model"
+	"github.com/Pruthviraj36/dotsync/internal/db"
+	"github.com/Pruthviraj36/dotsync/internal/model"
 )
 
 type SecretService struct {

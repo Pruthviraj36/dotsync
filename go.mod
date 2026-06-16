@@ -1,4 +1,4 @@
-module github.com/yourusername/dotsync
+module github.com/Pruthviraj36/dotsync
 
 go 1.24.0
 

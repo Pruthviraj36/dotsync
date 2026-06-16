@@ -13,12 +13,12 @@ import (
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
-	"github.com/yourusername/dotsync/internal/auth"
-	"github.com/yourusername/dotsync/internal/db"
-	"github.com/yourusername/dotsync/internal/handler"
-	mw "github.com/yourusername/dotsync/internal/middleware"
-	"github.com/yourusername/dotsync/internal/service"
-	stripehandler "github.com/yourusername/dotsync/internal/stripe"
+	"github.com/Pruthviraj36/dotsync/internal/auth"
+	"github.com/Pruthviraj36/dotsync/internal/db"
+	"github.com/Pruthviraj36/dotsync/internal/handler"
+	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
+	"github.com/Pruthviraj36/dotsync/internal/service"
+	stripehandler "github.com/Pruthviraj36/dotsync/internal/stripe"
 )
 
 func main() {
