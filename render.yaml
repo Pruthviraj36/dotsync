@@ -27,9 +27,12 @@ services:
         value: ./migrations
 
       - key: DATABASE_URL
-        fromDatabase:
-          name: dotsync-db
-          property: connectionString
+        sync: false             # paste your Neon pooled connection string in the Render dashboard
+                                 # format: postgresql://user:pass@ep-xxx-pooler.region.aws.neon.tech/dbname?sslmode=require
+
+      - key: DATABASE_URL_DIRECT
+        sync: false             # Neon's DIRECT (unpooled) connection string — use for migrations
+                                 # format: postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require
 
       - key: JWT_SECRET
         generateValue: true     # Render generates a secure random value
@@ -46,8 +49,6 @@ services:
       - key: STRIPE_WEBHOOK_SECRET
         sync: false             # set in Render dashboard
 
-databases:
-  - name: dotsync-db
-    databaseName: dotsync
-    plan: starter              # change to standard for production
-    region: oregon
+# Database is hosted on Neon (https://neon.tech), not Render —
+# create a project there and paste both connection strings above.
+# No `databases:` block needed since Neon manages it independently.
