@@ -7,9 +7,8 @@ import (
 	"net/http"
 	"os"
 
-	"github.com/stripe/stripe-go/v76"
-	"github.com/stripe/stripe-go/v76/customer"
-	"github.com/stripe/stripe-go/v76/webhook"
+	stripe "github.com/stripe/stripe-go/v86"
+	"github.com/stripe/stripe-go/v86/customer"
 	"github.com/yourusername/dotsync/internal/db"
 )
 
@@ -43,7 +42,8 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Verify webhook signature — prevents spoofed events
-	event, err := webhook.ConstructEvent(body, r.Header.Get("Stripe-Signature"), h.webhookSecret)
+	// In stripe-go v86, ConstructEvent is on the stripe package directly
+	event, err := stripe.ConstructEvent(body, r.Header.Get("Stripe-Signature"), h.webhookSecret)
 	if err != nil {
 		log.Printf("stripe webhook signature failed: %v", err)
 		http.Error(w, "invalid signature", http.StatusBadRequest)
