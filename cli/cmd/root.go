@@ -1,0 +1,45 @@
+package cmd
+
+import (
+	"fmt"
+	"os"
+
+	"github.com/spf13/cobra"
+)
+
+var rootCmd = &cobra.Command{
+	Use:   "dotsync",
+	Short: "🔐 Sync .env secrets securely across your team",
+	Long: `DotSync — end-to-end encrypted secret sync for dev teams.
+
+Secrets are encrypted on your machine before they ever reach the server.
+The server only stores encrypted blobs — it never sees your raw values.
+
+Get started:
+  dotsync login       Authenticate with GitHub
+  dotsync init        Link this folder to a project
+  dotsync push        Upload your .env (encrypted)
+  dotsync pull        Download latest .env`,
+	SilenceUsage: true,
+}
+
+func Execute() {
+	if err := rootCmd.Execute(); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+
+func init() {
+	rootCmd.AddCommand(
+		loginCmd(),
+		logoutCmd(),
+		initCmd(),
+		pushCmd(),
+		pullCmd(),
+		historyCmd(),
+		diffCmd(),
+		envsCmd(),
+		statusCmd(),
+	)
+}

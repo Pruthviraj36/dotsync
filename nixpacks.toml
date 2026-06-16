@@ -1,0 +1,9 @@
+# nixpacks.toml — tells Railway how to build and run the Go server
+
+[phases.build]
+cmds = [
+  "go build -ldflags='-s -w' -o dotsync-server ./cmd/dotsync"
+]
+
+[start]
+cmd = "./dotsync-server"

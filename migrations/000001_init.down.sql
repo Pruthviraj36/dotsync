@@ -1,0 +1,8 @@
+-- Rollback 001
+DROP TABLE IF EXISTS audit_logs;
+DROP TABLE IF EXISTS secrets;
+DROP TABLE IF EXISTS team_members;
+DROP TABLE IF EXISTS environments;
+DROP TABLE IF EXISTS projects;
+DROP TABLE IF EXISTS refresh_tokens;
+DROP TABLE IF EXISTS users;

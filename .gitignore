@@ -1,0 +1,33 @@
+# Secrets — never commit
+.env
+.env.local
+.env.production
+
+# Build artifacts
+dist/
+dotsync-server
+dotsync
+
+# Go
+vendor/
+*.exe
+*.exe~
+*.dll
+*.so
+*.dylib
+*.test
+*.out
+go.sum.backup
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# DotSync project config (this is SAFE to commit — it has no secrets)
+# .dotsync.json — commit this
