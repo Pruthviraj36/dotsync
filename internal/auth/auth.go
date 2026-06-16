@@ -9,9 +9,9 @@ import (
 
 	"github.com/golang-jwt/jwt/v5"
 	"github.com/google/uuid"
-	"github.com/yourusername/dotsync/internal/crypto"
-	"github.com/yourusername/dotsync/internal/db"
-	"github.com/yourusername/dotsync/internal/model"
+	"github.com/Pruthviraj36/dotsync/internal/crypto"
+	"github.com/Pruthviraj36/dotsync/internal/db"
+	"github.com/Pruthviraj36/dotsync/internal/model"
 )
 
 const (
