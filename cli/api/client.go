@@ -8,8 +8,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/yourusername/dotsync/cli/config"
-	"github.com/yourusername/dotsync/internal/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/config"
+	"github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 type Client struct {

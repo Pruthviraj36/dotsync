@@ -9,8 +9,8 @@ import (
 	"time"
 
 	"github.com/go-chi/httprate"
-	"github.com/yourusername/dotsync/internal/auth"
-	"github.com/yourusername/dotsync/internal/crypto"
+	"github.com/Pruthviraj36/dotsync/internal/auth"
+	"github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 // JSON error helper

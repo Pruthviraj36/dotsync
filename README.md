@@ -32,10 +32,10 @@
 
 ```bash
 # Install the CLI
-go install github.com/yourusername/dotsync/cli@latest
+go install github.com/Pruthviraj36/dotsync/cli@latest
 
 # Or build from source
-git clone https://github.com/yourusername/dotsync
+git clone https://github.com/Pruthviraj36/dotsync
 cd dotsync && go build -o dotsync ./cli && mv dotsync /usr/local/bin/
 
 # Login with GitHub
@@ -317,7 +317,7 @@ X-DotSync-Signature: <hmac-sha256 of body>
 ### 1. Clone and configure
 
 ```bash
-git clone https://github.com/yourusername/dotsync
+git clone https://github.com/Pruthviraj36/dotsync
 cd dotsync
 
 cp .env.example .env

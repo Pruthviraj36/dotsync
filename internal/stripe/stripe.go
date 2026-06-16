@@ -9,7 +9,7 @@ import (
 
 	stripe "github.com/stripe/stripe-go/v86"
 	"github.com/stripe/stripe-go/v86/customer"
-	"github.com/yourusername/dotsync/internal/db"
+	"github.com/Pruthviraj36/dotsync/internal/db"
 )
 
 // Plan mapping from Stripe price IDs to DotSync plan names
