@@ -32,11 +32,11 @@
 
 ```bash
 # Install the CLI
-go install github.com/Pruthviraj36/dotsync/cli@latest
+go install github.com/Pruthviraj36/dotsync/cli/dotsync@latest
 
 # Or build from source
 git clone https://github.com/Pruthviraj36/dotsync
-cd dotsync && go build -o dotsync ./cli && mv dotsync /usr/local/bin/
+cd dotsync && go build -o dotsync ./cli/dotsync && mv dotsync /usr/local/bin/
 
 # Login with GitHub
 dotsync login
@@ -350,7 +350,7 @@ go run ./cmd/dotsync
 ### 4. Build the CLI
 
 ```bash
-go build -o dotsync ./cli
+go build -o dotsync ./cli/dotsync
 ./dotsync --help
 ```
 
