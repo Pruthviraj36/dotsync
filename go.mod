@@ -2,7 +2,7 @@ module github.com/Pruthviraj36/dotsync
 
 go 1.24
 
-<!-- toolchain go1.24.4 -->
+// toolchain go1.24.4
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
