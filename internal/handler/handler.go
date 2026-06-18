@@ -6,11 +6,11 @@ import (
 	"os"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/Pruthviraj36/dotsync/internal/service"
+	"github.com/go-chi/chi/v5"
 )
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
@@ -91,6 +91,16 @@ func (h *AuthHandler) GitHubCallback(w http.ResponseWriter, r *http.Request) {
 		"access_token":  accessToken,
 		"refresh_token": refreshToken,
 		"user":          user,
+	})
+}
+
+// GET /api/auth/config — public config the CLI needs before starting OAuth.
+// The GitHub client ID is not a secret (GitHub's own docs treat it as public,
+// since it's embedded in the browser-visible authorize URL anyway) — only
+// the client SECRET must stay server-side, and this endpoint never returns it.
+func (h *AuthHandler) Config(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"github_client_id": os.Getenv("GITHUB_CLIENT_ID"),
 	})
 }
 
