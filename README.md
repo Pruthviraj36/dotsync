@@ -421,6 +421,10 @@ Before going live:
 - [ ] Render service is not publicly exposing the DB
 - [ ] Stripe webhook only listens to needed events
 - [ ] `.env` is in `.gitignore` ✅ (dotsync init does this automatically)
+- [ ] `.env.example` contains only placeholder values, never real secrets
+      — run `./scripts/check-env-example.sh` before committing to verify,
+      or install it as a pre-commit hook once:
+      `ln -s ../../scripts/check-env-example.sh .git/hooks/pre-commit && chmod +x .git/hooks/pre-commit`
 
 ---
 

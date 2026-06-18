@@ -8,9 +8,9 @@ import (
 )
 
 const (
-	configDirName  = ".dotsync"
-	globalFile     = "config.json"
-	projectFile    = ".dotsync.json"
+	configDirName = ".dotsync"
+	globalFile    = "config.json"
+	projectFile   = ".dotsync.json"
 )
 
 // GlobalConfig stores credentials in ~/.dotsync/config.json
@@ -123,7 +123,7 @@ func DefaultServerURL() string {
 	if url := os.Getenv("DOTSYNC_SERVER"); url != "" {
 		return url
 	}
-	return "https://your-dotsync-server.railway.app" // replace after deploy
+	return "https://dotsync.onrender.com"
 }
 
 // IsLoggedIn checks if there's a valid stored token.
