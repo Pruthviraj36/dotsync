@@ -18,16 +18,16 @@ go build -ldflags="${LDFLAGS}" -o dist/dotsync-server ./cmd/dotsync
 # ── CLI ───────────────────────────────────────────────────────────────────────
 echo ""
 echo "→ CLI (linux/amd64)..."
-GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-linux-amd64 ./cli
+GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-linux-amd64 ./cli/dotsync
 
 echo "→ CLI (darwin/amd64)..."
-GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-darwin-amd64 ./cli
+GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-darwin-amd64 ./cli/dotsync
 
 echo "→ CLI (darwin/arm64 — Apple Silicon)..."
-GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-darwin-arm64 ./cli
+GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-darwin-arm64 ./cli/dotsync
 
 echo "→ CLI (windows/amd64)..."
-GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-windows-amd64.exe ./cli
+GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-windows-amd64.exe ./cli/dotsync
 
 echo ""
 echo "✅ Build complete. Artifacts in ./dist/"
