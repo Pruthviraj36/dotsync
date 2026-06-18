@@ -230,6 +230,33 @@ func (c *Client) Logout() error {
 	return decodeResponse(resp, nil)
 }
 
+// AuthConfig is the public OAuth config served by /api/auth/config.
+type AuthConfig struct {
+	GitHubClientID string `json:"github_client_id"`
+}
+
+// GetAuthConfig fetches the server's public OAuth client ID.
+// No authentication required — this is intentionally a public endpoint
+// since GitHub client IDs are not secrets.
+func GetAuthConfig(serverURL string) (*AuthConfig, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	resp, err := client.Get(serverURL + "/api/auth/config")
+	if err != nil {
+		return nil, fmt.Errorf("connect to server: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
+	}
+
+	var cfg AuthConfig
+	if err := json.NewDecoder(resp.Body).Decode(&cfg); err != nil {
+		return nil, fmt.Errorf("decode config: %w", err)
+	}
+	return &cfg, nil
+}
+
 // ExchangeGitHubCode exchanges an OAuth code for DotSync tokens.
 func ExchangeGitHubCode(serverURL, code string) (*LoginResponse, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
@@ -242,7 +269,9 @@ func ExchangeGitHubCode(serverURL, code string) (*LoginResponse, error) {
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		var apiErr struct{ Error string `json:"error"` }
+		var apiErr struct {
+			Error string `json:"error"`
+		}
 		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
 		return nil, fmt.Errorf("auth failed: %s", apiErr.Error)
 	}

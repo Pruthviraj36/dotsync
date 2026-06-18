@@ -9,16 +9,16 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-	chimiddleware "github.com/go-chi/chi/v5/middleware"
-	"github.com/go-chi/cors"
-	"github.com/joho/godotenv"
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/handler"
 	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
 	"github.com/Pruthviraj36/dotsync/internal/service"
 	stripehandler "github.com/Pruthviraj36/dotsync/internal/stripe"
+	"github.com/go-chi/chi/v5"
+	chimiddleware "github.com/go-chi/chi/v5/middleware"
+	"github.com/go-chi/cors"
+	"github.com/joho/godotenv"
 )
 
 func main() {
@@ -94,6 +94,7 @@ func main() {
 	// ── Public auth routes ──
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(mw.RateLimitByIP(20, time.Minute)) // Strict limit for auth endpoints
+		r.Get("/config", authHandler.Config)
 		r.Post("/github", authHandler.GitHubCallback)
 		r.Post("/refresh", authHandler.RefreshToken)
 	})

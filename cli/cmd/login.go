@@ -6,9 +6,9 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
+	"github.com/spf13/cobra"
 )
 
 func loginCmd() *cobra.Command {
@@ -34,16 +34,21 @@ How it works:
 				return nil
 			}
 
-			clientID := os.Getenv("GITHUB_CLIENT_ID")
-			if clientID == "" {
-				// Fallback: use the server's configured client ID
-				// In production the CLI should fetch this from /api/auth/config
-				clientID = "your_github_client_id" // replace after setup
+			fmt.Print("⏳ Connecting to server...")
+			authCfg, err := api.GetAuthConfig(cfg.ServerURL)
+			if err != nil {
+				fmt.Println(" ❌")
+				return fmt.Errorf("could not reach server at %s: %w", cfg.ServerURL, err)
 			}
+			if authCfg.GitHubClientID == "" {
+				fmt.Println(" ❌")
+				return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
+			}
+			fmt.Println(" ✅")
 
 			authURL := fmt.Sprintf(
 				"https://github.com/login/oauth/authorize?client_id=%s&scope=read:user,user:email",
-				clientID,
+				authCfg.GitHubClientID,
 			)
 
 			fmt.Println()
