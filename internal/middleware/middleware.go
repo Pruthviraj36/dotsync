@@ -44,31 +44,36 @@ func Authenticate(authSvc *auth.Service) func(http.Handler) http.Handler {
 }
 
 // VerifyHMAC checks the X-DotSync-Signature header on CLI requests.
-// The CLI signs the request body with the user's HMAC secret (derived from access token).
-func VerifyHMAC(hmacSecret []byte) func(http.Handler) http.Handler {
-	return func(next http.Handler) http.Handler {
-		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			sig := r.Header.Get("X-DotSync-Signature")
-			if sig == "" {
-				writeError(w, http.StatusBadRequest, "missing X-DotSync-Signature header")
-				return
-			}
+// The CLI signs the request body with the user's HMAC secret (which is the access token).
+func VerifyHMAC(next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		sig := r.Header.Get("X-DotSync-Signature")
+		if sig == "" {
+			writeError(w, http.StatusBadRequest, "missing X-DotSync-Signature header")
+			return
+		}
 
-			body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MB max
-			if err != nil {
-				writeError(w, http.StatusBadRequest, "failed to read body")
-				return
-			}
-			r.Body = io.NopCloser(strings.NewReader(string(body)))
+		header := r.Header.Get("Authorization")
+		if !strings.HasPrefix(header, "Bearer ") {
+			writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
+			return
+		}
+		tokenStr := strings.TrimPrefix(header, "Bearer ")
 
-			if !crypto.HMACVerify(hmacSecret, body, sig) {
-				writeError(w, http.StatusUnauthorized, "invalid request signature")
-				return
-			}
+		body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MB max
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "failed to read body")
+			return
+		}
+		r.Body = io.NopCloser(strings.NewReader(string(body)))
 
-			next.ServeHTTP(w, r)
-		})
-	}
+		if !crypto.HMACVerify([]byte(tokenStr), body, sig) {
+			writeError(w, http.StatusUnauthorized, "invalid request signature")
+			return
+		}
+
+		next.ServeHTTP(w, r)
+	})
 }
 
 // RateLimitByIP rate-limits per remote IP address.
