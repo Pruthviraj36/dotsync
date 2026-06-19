@@ -8,18 +8,19 @@ import (
 )
 
 // EncryptEnvFile encrypts the contents of a .env file for transmission.
-// The key is derived from the user's access token + project slug (zero-knowledge).
-func EncryptEnvFile(envContent, accessToken, projectSlug string) (ciphertext, nonce []byte, err error) {
-	key := crypto.DeriveKey(accessToken, projectSlug)
+// The key is derived from the provided password (project password or access token)
+// + project slug (zero-knowledge).
+func EncryptEnvFile(envContent, password, projectSlug string) (ciphertext, nonce []byte, err error) {
+	key := crypto.DeriveKey(password, projectSlug)
 	return crypto.Encrypt(key, []byte(envContent))
 }
 
 // DecryptEnvFile decrypts the encrypted blob received from the server.
-func DecryptEnvFile(ciphertext, nonce []byte, accessToken, projectSlug string) (string, error) {
-	key := crypto.DeriveKey(accessToken, projectSlug)
+func DecryptEnvFile(ciphertext, nonce []byte, password, projectSlug string) (string, error) {
+	key := crypto.DeriveKey(password, projectSlug)
 	plain, err := crypto.Decrypt(key, ciphertext, nonce)
 	if err != nil {
-		return "", fmt.Errorf("decryption failed — wrong key or corrupted data: %w", err)
+		return "", fmt.Errorf("decryption failed — wrong password or corrupted data: %w", err)
 	}
 	return string(plain), nil
 }

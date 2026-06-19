@@ -4,33 +4,31 @@ import (
 	"crypto/aes"
 	"crypto/cipher"
 	"crypto/hmac"
-	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
 	"encoding/hex"
 	"errors"
 	"fmt"
 	"io"
+
+	"golang.org/x/crypto/argon2"
 )
 
 const (
 	keySize    = 32 // AES-256
 	nonceSize  = 12 // GCM standard nonce
 	saltSize   = 32
-	pbkdf2Iter = 100_000
 )
 
-// DeriveKey derives a 256-bit AES key from a secret + project salt using PBKDF2-SHA256.
+// DeriveKey derives a 256-bit AES key from a secret + project salt using Argon2id.
 // This is the client-side key derivation — the server never sees the raw key.
-// Uses the standard library crypto/pbkdf2 package (Go 1.24+).
+// Argon2id provides military-grade memory-hard protection against brute force.
 func DeriveKey(secret, projectID string) []byte {
 	salt := sha256.Sum256([]byte("dotsync-salt-v1:" + projectID))
-	key, err := pbkdf2.Key(sha256.New, secret, salt[:], pbkdf2Iter, keySize)
-	if err != nil {
-		// Key only fails on invalid parameters (e.g. keyLength <= 0),
-		// which can't happen with our fixed constants — but fail loudly if it ever does.
-		panic(fmt.Sprintf("pbkdf2 key derivation failed: %v", err))
-	}
+	
+	// time=3, memory=64MB, threads=4, keyLen=32
+	// These are recommended parameters for Argon2id for a good balance of security and speed.
+	key := argon2.IDKey([]byte(secret), salt[:], 3, 64*1024, 4, keySize)
 	return key
 }
 
