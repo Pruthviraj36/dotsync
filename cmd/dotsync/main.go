@@ -110,6 +110,7 @@ func main() {
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(mw.RateLimitByIP(20, time.Minute)) // Strict limit for auth endpoints
 		r.Get("/config", authHandler.Config)
+		r.Get("/github/callback", authHandler.GitHubCallbackPage)
 		r.Post("/github", authHandler.GitHubCallback)
 		r.Post("/refresh", authHandler.RefreshToken)
 	})

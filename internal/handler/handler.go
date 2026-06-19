@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
@@ -102,6 +103,146 @@ func (h *AuthHandler) Config(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]any{
 		"github_client_id": os.Getenv("GITHUB_CLIENT_ID"),
 	})
+}
+
+// GET /api/auth/github/callback — display the code to the user during CLI login
+func (h *AuthHandler) GitHubCallbackPage(w http.ResponseWriter, r *http.Request) {
+	code := r.URL.Query().Get("code")
+	errorDesc := r.URL.Query().Get("error_description")
+
+	w.Header().Set("Content-Type", "text/html; charset=utf-8")
+	w.WriteHeader(http.StatusOK)
+
+	if errorDesc != "" {
+		w.Write([]byte(`
+			<!DOCTYPE html>
+			<html lang="en">
+			<head>
+				<meta charset="UTF-8">
+				<meta name="viewport" content="width=device-width, initial-scale=1.0">
+				<title>DotSync - Authorization Failed</title>
+				<style>
+					body { font-family: 'Inter', system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #0d1117; color: #c9d1d9; margin: 0; }
+					.box { background: #161b22; padding: 2.5rem 3rem; border-radius: 12px; border: 1px solid #e5534b; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 400px; }
+					h2 { margin-top: 0; color: #e5534b; font-size: 1.5rem; }
+					p { color: #8b949e; line-height: 1.5; }
+					.icon { font-size: 3rem; margin-bottom: 1rem; }
+				</style>
+			</head>
+			<body>
+				<div class="box">
+					<div class="icon">❌</div>
+					<h2>Authorization Failed</h2>
+					<p>` + errorDesc + `</p>
+					<p style="font-size: 0.9em; margin-top: 2rem;">You can close this window and try again from the CLI.</p>
+				</div>
+			</body>
+			</html>
+		`))
+		return
+	}
+
+	if code == "" {
+		writeError(w, http.StatusBadRequest, "missing code in query")
+		return
+	}
+
+	w.Write([]byte(`
+		<!DOCTYPE html>
+		<html lang="en">
+		<head>
+			<meta charset="UTF-8">
+			<meta name="viewport" content="width=device-width, initial-scale=1.0">
+			<title>DotSync - Authorization Successful</title>
+			<style>
+				body { 
+					font-family: 'Inter', system-ui, -apple-system, sans-serif; 
+					display: flex; justify-content: center; align-items: center; 
+					height: 100vh; background: #0d1117; color: #c9d1d9; margin: 0; 
+				}
+				.box { 
+					background: #161b22; padding: 3rem; border-radius: 16px; 
+					border: 1px solid #30363d; text-align: center; 
+					box-shadow: 0 8px 32px rgba(0,0,0,0.5); max-width: 450px; width: 100%;
+					animation: slideUp 0.4s ease-out;
+				}
+				@keyframes slideUp {
+					from { opacity: 0; transform: translateY(20px); }
+					to { opacity: 1; transform: translateY(0); }
+				}
+				.icon { 
+					width: 64px; height: 64px; background: rgba(46, 160, 67, 0.15); 
+					color: #3fb950; border-radius: 50%; display: flex; 
+					align-items: center; justify-content: center; font-size: 2rem; 
+					margin: 0 auto 1.5rem auto;
+				}
+				h2 { margin-top: 0; color: #fff; font-size: 1.75rem; font-weight: 600; margin-bottom: 0.5rem; }
+				p { color: #8b949e; line-height: 1.5; margin-bottom: 2rem; }
+				
+				.code-container {
+					display: flex; align-items: center; justify-content: space-between;
+					background: #010409; border: 1px solid #30363d; border-radius: 8px;
+					padding: 0.5rem; margin-bottom: 2rem; transition: border-color 0.2s;
+				}
+				.code-container:hover { border-color: #8b949e; }
+				
+				.code { 
+					font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; 
+					font-size: 1.25rem; color: #58a6ff; padding-left: 1rem;
+					letter-spacing: 1px; user-select: all; overflow-x: auto;
+				}
+				
+				.copy-btn {
+					background: #238636; color: white; border: 1px solid rgba(240, 246, 252, 0.1);
+					padding: 0.75rem 1.25rem; border-radius: 6px; font-size: 0.9rem; font-weight: 500;
+					cursor: pointer; transition: background 0.2s; display: flex; align-items: center; gap: 0.5rem;
+				}
+				.copy-btn:hover { background: #2ea043; }
+				.copy-btn:active { transform: scale(0.98); }
+				.copy-btn.copied { background: #238636; opacity: 0.8; }
+				
+				.footer { color: #484f58; font-size: 0.85rem; }
+			</style>
+		</head>
+		<body>
+			<div class="box">
+				<div class="icon">✓</div>
+				<h2>Authorization Successful!</h2>
+				<p>Your GitHub account has been linked successfully. Copy the authorization code below and paste it back into your DotSync CLI.</p>
+				
+				<div class="code-container">
+					<div class="code" id="authCode">` + code + `</div>
+					<button class="copy-btn" id="copyBtn" onclick="copyCode()">
+						<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg>
+						Copy
+					</button>
+				</div>
+				
+				<div class="footer">You can safely close this window after copying the code.</div>
+			</div>
+
+			<script>
+				function copyCode() {
+					const code = document.getElementById('authCode').innerText;
+					const btn = document.getElementById('copyBtn');
+					
+					navigator.clipboard.writeText(code).then(() => {
+						const originalContent = btn.innerHTML;
+						btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg> Copied!';
+						btn.classList.add('copied');
+						
+						setTimeout(() => {
+							btn.innerHTML = originalContent;
+							btn.classList.remove('copied');
+						}, 2000);
+					}).catch(err => {
+						console.error('Failed to copy: ', err);
+					});
+				}
+			</script>
+		</body>
+		</html>
+	`))
 }
 
 // POST /api/auth/refresh — rotate refresh token
