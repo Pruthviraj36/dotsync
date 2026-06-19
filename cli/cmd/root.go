@@ -32,6 +32,7 @@ func Execute() {
 
 func init() {
 	rootCmd.AddCommand(
+		versionCmd(),
 		loginCmd(),
 		logoutCmd(),
 		initCmd(),

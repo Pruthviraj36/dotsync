@@ -61,6 +61,13 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 				return fmt.Errorf("slug cannot be empty")
 			}
 
+			fmt.Print("Project Password (for end-to-end encryption): ")
+			password, _ := reader.ReadString('\n')
+			password = strings.TrimSpace(password)
+			if password == "" {
+				return fmt.Errorf("password cannot be empty")
+			}
+
 			fmt.Print("Default environment [dev]: ")
 			env, _ := reader.ReadString('\n')
 			env = strings.TrimSpace(env)
@@ -72,8 +79,9 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			}
 
 			projCfg := &config.ProjectConfig{
-				ProjectSlug: slug,
-				DefaultEnv:  env,
+				ProjectSlug:     slug,
+				DefaultEnv:      env,
+				ProjectPassword: password,
 			}
 			if err := config.SaveProject(projCfg); err != nil {
 				return fmt.Errorf("save project config: %w", err)
@@ -113,6 +121,13 @@ func createNewProject(client *api.Client, reader *bufio.Reader) error {
 		return fmt.Errorf("name and slug are required")
 	}
 
+	fmt.Print("Create Project Password (for end-to-end encryption): ")
+	password, _ := reader.ReadString('\n')
+	password = strings.TrimSpace(password)
+	if password == "" {
+		return fmt.Errorf("password cannot be empty")
+	}
+
 	fmt.Print("⏳ Creating project...")
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
@@ -122,8 +137,9 @@ func createNewProject(client *api.Client, reader *bufio.Reader) error {
 	fmt.Println(" ✅")
 
 	projCfg := &config.ProjectConfig{
-		ProjectSlug: proj["slug"].(string),
-		DefaultEnv:  "dev",
+		ProjectSlug:     proj["slug"].(string),
+		DefaultEnv:      "dev",
+		ProjectPassword: password,
 	}
 	if err := config.SaveProject(projCfg); err != nil {
 		return fmt.Errorf("save project config: %w", err)

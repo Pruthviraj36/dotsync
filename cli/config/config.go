@@ -24,8 +24,9 @@ type GlobalConfig struct {
 
 // ProjectConfig stores project binding in .dotsync.json (project root)
 type ProjectConfig struct {
-	ProjectSlug string `json:"project_slug"`
-	DefaultEnv  string `json:"default_env"`
+	ProjectSlug     string `json:"project_slug"`
+	DefaultEnv      string `json:"default_env"`
+	ProjectPassword string `json:"project_password,omitempty"`
 }
 
 // ── Global config ────────────────────────────────────────────────────────────
