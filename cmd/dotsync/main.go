@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
@@ -24,6 +25,20 @@ import (
 func main() {
 	// Load .env in development — Render injects env vars directly in production
 	_ = godotenv.Load()
+
+	// ── Startup env validation ─────────────────────────────────────────────
+	// Fail immediately and loudly on missing config, rather than starting
+	// successfully and failing deep inside a request later (e.g. GitHub
+	// OAuth silently sending an empty client_id, or Stripe signature
+	// verification always failing with no clear cause).
+	requireEnv(
+		"DATABASE_URL",
+		"JWT_SECRET",
+		"GITHUB_CLIENT_ID",
+		"GITHUB_CLIENT_SECRET",
+		"STRIPE_SECRET_KEY",
+		"STRIPE_WEBHOOK_SECRET",
+	)
 
 	// ── Database ────────────────────────────────────────────────────────────
 	// DATABASE_URL: pooled connection (Neon PgBouncer) — used for normal app queries.
@@ -163,6 +178,25 @@ func mustEnv(key string) string {
 		log.Fatalf("required env var %s not set", key)
 	}
 	return v
+}
+
+// requireEnv checks all given env vars are set, and fails fast at startup
+// listing every missing one at once — rather than discovering them one at a
+// time, deep inside unrelated requests, after the server has already booted.
+func requireEnv(keys ...string) {
+	var missing []string
+	for _, k := range keys {
+		if os.Getenv(k) == "" {
+			missing = append(missing, k)
+		}
+	}
+	if len(missing) > 0 {
+		log.Fatalf(
+			"missing required env var(s): %s\n"+
+				"Set these before starting the server — see .env.example for details.",
+			strings.Join(missing, ", "),
+		)
+	}
 }
 
 func getEnv(key, fallback string) string {

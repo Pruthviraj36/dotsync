@@ -30,9 +30,12 @@ How it works:
 
 			if config.IsLoggedIn(cfg) {
 				fmt.Println("✅ Already logged in as", cfg.Username)
+				fmt.Println("   Server:", cfg.ServerURL)
 				fmt.Println("   Run 'dotsync logout' first to switch accounts.")
 				return nil
 			}
+
+			fmt.Println("Connecting to server:", cfg.ServerURL)
 
 			fmt.Print("⏳ Connecting to server...")
 			authCfg, err := api.GetAuthConfig(cfg.ServerURL)

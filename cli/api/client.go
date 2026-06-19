@@ -77,6 +77,9 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
 			sig := crypto.HMACSign([]byte(c.cfg.AccessToken), bodyBytes)
 			req.Header.Set("X-DotSync-Signature", sig)
+		} else {
+			sig := crypto.HMACSign([]byte(c.cfg.AccessToken), []byte(""))
+			req.Header.Set("X-DotSync-Signature", sig)
 		}
 		resp, err = c.httpClient.Do(req)
 		if err != nil {

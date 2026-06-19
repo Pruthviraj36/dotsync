@@ -41,5 +41,6 @@ func init() {
 		diffCmd(),
 		envsCmd(),
 		statusCmd(),
+		configCmd(),
 	)
 }

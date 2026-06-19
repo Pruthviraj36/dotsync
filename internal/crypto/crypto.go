@@ -3,6 +3,7 @@ package crypto
 import (
 	"crypto/aes"
 	"crypto/cipher"
+	"crypto/hmac"
 	"crypto/pbkdf2"
 	"crypto/rand"
 	"crypto/sha256"
@@ -93,22 +94,13 @@ func HashToken(token string) string {
 
 // HMACSign computes HMAC-SHA256 of payload using secret key.
 func HMACSign(secret, payload []byte) string {
-	h := sha256.New()
-	h.Write(secret)
-	h.Write(payload)
-	return hex.EncodeToString(h.Sum(nil))
+	mac := hmac.New(sha256.New, secret)
+	mac.Write(payload)
+	return hex.EncodeToString(mac.Sum(nil))
 }
 
 // HMACVerify verifies HMAC-SHA256 in constant time.
 func HMACVerify(secret, payload []byte, signature string) bool {
 	expected := HMACSign(secret, payload)
-	// Constant-time comparison to prevent timing attacks
-	if len(expected) != len(signature) {
-		return false
-	}
-	var diff byte
-	for i := range expected {
-		diff |= expected[i] ^ signature[i]
-	}
-	return diff == 0
+	return hmac.Equal([]byte(expected), []byte(signature))
 }
