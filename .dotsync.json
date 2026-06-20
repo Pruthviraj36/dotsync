@@ -1,4 +1,5 @@
 {
   "project_slug": "dotsync",
-  "default_env": "dev"
+  "default_env": "dev",
+  "project_password": "dynamo24626j"
 }
