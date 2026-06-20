@@ -121,20 +121,50 @@ func (h *AuthHandler) GitHubCallbackPage(w http.ResponseWriter, r *http.Request)
 				<meta charset="UTF-8">
 				<meta name="viewport" content="width=device-width, initial-scale=1.0">
 				<title>DotSync - Authorization Failed</title>
+				<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 				<style>
-					body { font-family: 'Inter', system-ui, -apple-system, sans-serif; display: flex; justify-content: center; align-items: center; height: 100vh; background: #0d1117; color: #c9d1d9; margin: 0; }
-					.box { background: #161b22; padding: 2.5rem 3rem; border-radius: 12px; border: 1px solid #e5534b; text-align: center; box-shadow: 0 8px 24px rgba(0,0,0,0.6); max-width: 400px; }
-					h2 { margin-top: 0; color: #e5534b; font-size: 1.5rem; }
-					p { color: #8b949e; line-height: 1.5; }
-					.icon { font-size: 3rem; margin-bottom: 1rem; }
+					body { 
+						font-family: 'Inter', system-ui, -apple-system, sans-serif; 
+						display: flex; justify-content: center; align-items: center; 
+						height: 100vh; margin: 0;
+						background: linear-gradient(135deg, #0f172a 0%, #1e1b4b 100%);
+						color: #e2e8f0;
+					}
+					.box { 
+						background: rgba(30, 41, 59, 0.7); 
+						backdrop-filter: blur(16px);
+						-webkit-backdrop-filter: blur(16px);
+						padding: 3rem; 
+						border-radius: 24px; 
+						border: 1px solid rgba(244, 63, 94, 0.3); 
+						text-align: center; 
+						box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5); 
+						max-width: 450px; 
+						width: 100%;
+						animation: fadeIn 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+					}
+					@keyframes fadeIn {
+						from { opacity: 0; transform: scale(0.95) translateY(10px); }
+						to { opacity: 1; transform: scale(1) translateY(0); }
+					}
+					.icon { 
+						width: 80px; height: 80px; 
+						background: linear-gradient(135deg, #f43f5e 0%, #e11d48 100%);
+						color: white; border-radius: 50%; display: flex; 
+						align-items: center; justify-content: center; font-size: 2.5rem; 
+						margin: 0 auto 1.5rem auto;
+						box-shadow: 0 10px 25px -5px rgba(225, 29, 72, 0.5);
+					}
+					h2 { margin-top: 0; color: #fff; font-size: 2rem; font-weight: 700; margin-bottom: 0.5rem; }
+					p { color: #94a3b8; line-height: 1.6; font-size: 1.1rem; }
 				</style>
 			</head>
 			<body>
 				<div class="box">
-					<div class="icon">❌</div>
-					<h2>Authorization Failed</h2>
+					<div class="icon">✕</div>
+					<h2>Auth Failed</h2>
 					<p>` + errorDesc + `</p>
-					<p style="font-size: 0.9em; margin-top: 2rem;">You can close this window and try again from the CLI.</p>
+					<p style="font-size: 0.9em; margin-top: 2rem; color: #64748b;">You can close this window and try again from the CLI.</p>
 				</div>
 			</body>
 			</html>
@@ -154,54 +184,76 @@ func (h *AuthHandler) GitHubCallbackPage(w http.ResponseWriter, r *http.Request)
 			<meta charset="UTF-8">
 			<meta name="viewport" content="width=device-width, initial-scale=1.0">
 			<title>DotSync - Authorization Successful</title>
+			<link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 			<style>
 				body { 
 					font-family: 'Inter', system-ui, -apple-system, sans-serif; 
 					display: flex; justify-content: center; align-items: center; 
-					height: 100vh; background: #0d1117; color: #c9d1d9; margin: 0; 
+					height: 100vh; margin: 0;
+					background: linear-gradient(135deg, #0f172a 0%, #064e3b 100%);
+					color: #e2e8f0;
 				}
 				.box { 
-					background: #161b22; padding: 3rem; border-radius: 16px; 
-					border: 1px solid #30363d; text-align: center; 
-					box-shadow: 0 8px 32px rgba(0,0,0,0.5); max-width: 450px; width: 100%;
-					animation: slideUp 0.4s ease-out;
+					background: rgba(30, 41, 59, 0.6); 
+					backdrop-filter: blur(20px);
+					-webkit-backdrop-filter: blur(20px);
+					padding: 3rem; border-radius: 24px; 
+					border: 1px solid rgba(16, 185, 129, 0.2); 
+					text-align: center; 
+					box-shadow: 0 25px 50px -12px rgba(0,0,0,0.5), inset 0 1px 0 rgba(255,255,255,0.1); 
+					max-width: 450px; width: 100%;
+					animation: slideUp 0.6s cubic-bezier(0.16, 1, 0.3, 1);
 				}
 				@keyframes slideUp {
-					from { opacity: 0; transform: translateY(20px); }
-					to { opacity: 1; transform: translateY(0); }
+					from { opacity: 0; transform: translateY(40px) scale(0.95); }
+					to { opacity: 1; transform: translateY(0) scale(1); }
 				}
 				.icon { 
-					width: 64px; height: 64px; background: rgba(46, 160, 67, 0.15); 
-					color: #3fb950; border-radius: 50%; display: flex; 
-					align-items: center; justify-content: center; font-size: 2rem; 
+					width: 80px; height: 80px; 
+					background: linear-gradient(135deg, #34d399 0%, #10b981 100%);
+					color: white; border-radius: 50%; display: flex; 
+					align-items: center; justify-content: center; font-size: 2.5rem; 
 					margin: 0 auto 1.5rem auto;
+					box-shadow: 0 10px 25px -5px rgba(16, 185, 129, 0.5);
+					animation: pulse 2s infinite;
 				}
-				h2 { margin-top: 0; color: #fff; font-size: 1.75rem; font-weight: 600; margin-bottom: 0.5rem; }
-				p { color: #8b949e; line-height: 1.5; margin-bottom: 2rem; }
+				@keyframes pulse {
+					0% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.7); }
+					70% { box-shadow: 0 0 0 20px rgba(16, 185, 129, 0); }
+					100% { box-shadow: 0 0 0 0 rgba(16, 185, 129, 0); }
+				}
+				h2 { margin-top: 0; color: #fff; font-size: 2rem; font-weight: 700; margin-bottom: 0.75rem; letter-spacing: -0.025em; }
+				p { color: #94a3b8; line-height: 1.6; margin-bottom: 2.5rem; font-size: 1.05rem; }
 				
 				.code-container {
 					display: flex; align-items: center; justify-content: space-between;
-					background: #010409; border: 1px solid #30363d; border-radius: 8px;
-					padding: 0.5rem; margin-bottom: 2rem; transition: border-color 0.2s;
+					background: rgba(15, 23, 42, 0.8); 
+					border: 1px solid rgba(255,255,255,0.1); border-radius: 12px;
+					padding: 0.75rem; margin-bottom: 2rem; 
+					transition: all 0.3s ease;
+					box-shadow: inset 0 2px 4px rgba(0,0,0,0.3);
 				}
-				.code-container:hover { border-color: #8b949e; }
+				.code-container:hover { border-color: rgba(52, 211, 153, 0.5); box-shadow: 0 0 15px rgba(16, 185, 129, 0.2), inset 0 2px 4px rgba(0,0,0,0.3); }
 				
 				.code { 
 					font-family: ui-monospace, SFMono-Regular, Consolas, "Liberation Mono", Menlo, monospace; 
-					font-size: 1.25rem; color: #58a6ff; padding-left: 1rem;
-					letter-spacing: 1px; user-select: all; overflow-x: auto;
+					font-size: 1.4rem; color: #34d399; padding-left: 1rem;
+					letter-spacing: 2px; user-select: all; overflow-x: auto; font-weight: 600;
 				}
 				
 				.copy-btn {
-					background: #238636; color: white; border: 1px solid rgba(240, 246, 252, 0.1);
-					padding: 0.75rem 1.25rem; border-radius: 6px; font-size: 0.9rem; font-weight: 500;
-					cursor: pointer; transition: background 0.2s; display: flex; align-items: center; gap: 0.5rem;
+					background: linear-gradient(135deg, #10b981 0%, #059669 100%); 
+					color: white; border: none;
+					padding: 0.85rem 1.5rem; border-radius: 8px; font-size: 1rem; font-weight: 600;
+					cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); 
+					display: flex; align-items: center; gap: 0.5rem;
+					box-shadow: 0 4px 6px -1px rgba(16, 185, 129, 0.3);
 				}
-				.copy-btn:hover { background: #2ea043; }
-				.copy-btn:active { transform: scale(0.98); }
-				.copy-btn.copied { background: #238636; opacity: 0.8; }
+				.copy-btn:hover { transform: translateY(-2px); box-shadow: 0 6px 10px -1px rgba(16, 185, 129, 0.4); }
+				.copy-btn:active { transform: translateY(0); }
+				.copy-btn.copied { background: linear-gradient(135deg, #059669 0%, #047857 100%); }
 				
-				.footer { color: #484f58; font-size: 0.85rem; }
+				.footer { color: #64748b; font-size: 0.9rem; font-weight: 500; }
 			</style>
 		</head>
 		<body>
@@ -213,7 +265,7 @@ func (h *AuthHandler) GitHubCallbackPage(w http.ResponseWriter, r *http.Request)
 				<div class="code-container">
 					<div class="code" id="authCode">` + code + `</div>
 					<button class="copy-btn" id="copyBtn" onclick="copyCode()">
-						<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg>
+						<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M0 6.75C0 5.784.784 5 1.75 5h1.5a.75.75 0 010 1.5h-1.5a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-1.5a.75.75 0 011.5 0v1.5A1.75 1.75 0 019.25 16h-7.5A1.75 1.75 0 010 14.25v-7.5z"></path><path fill-rule="evenodd" d="M5 1.75C5 .784 5.784 0 6.75 0h7.5C15.216 0 16 .784 16 1.75v7.5A1.75 1.75 0 0114.25 11h-7.5A1.75 1.75 0 015 9.25v-7.5zm1.75-.25a.25.25 0 00-.25.25v7.5c0 .138.112.25.25.25h7.5a.25.25 0 00.25-.25v-7.5a.25.25 0 00-.25-.25h-7.5z"></path></svg>
 						Copy
 					</button>
 				</div>
@@ -228,7 +280,7 @@ func (h *AuthHandler) GitHubCallbackPage(w http.ResponseWriter, r *http.Request)
 					
 					navigator.clipboard.writeText(code).then(() => {
 						const originalContent = btn.innerHTML;
-						btn.innerHTML = '<svg width="16" height="16" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg> Copied!';
+						btn.innerHTML = '<svg width="18" height="18" viewBox="0 0 16 16" fill="currentColor"><path fill-rule="evenodd" d="M13.78 4.22a.75.75 0 010 1.06l-7.25 7.25a.75.75 0 01-1.06 0L2.22 9.28a.75.75 0 011.06-1.06L6 10.94l6.72-6.72a.75.75 0 011.06 0z"></path></svg> Copied!';
 						btn.classList.add('copied');
 						
 						setTimeout(() => {

@@ -60,12 +60,15 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 
 			// Determine encryption password
 			password := projCfg.ProjectPassword
+			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
+				password = envPass
+			}
 			if localFlag {
 				password = cfg.AccessToken
 				fmt.Printf("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...\n", len(cliCrypto.ParseEnvFile(string(data))))
 			} else {
 				if password == "" {
-					return fmt.Errorf("missing project password. Please run 'dotsync init' again to set it up.")
+					return fmt.Errorf("missing project password. Please run 'dotsync init' again or set DOTSYNC_PASSWORD environment variable.")
 				}
 				fmt.Printf("🔒 Encrypting %d secrets for team access (%s/%s)...\n", len(cliCrypto.ParseEnvFile(string(data))), projCfg.ProjectSlug, env)
 			}
@@ -173,12 +176,15 @@ decrypts it locally, and writes your .env file.`,
 			}
 
 			password := projCfg.ProjectPassword
+			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
+				password = envPass
+			}
 			if localFlag {
 				password = cfg.AccessToken
 				fmt.Print("🔓 Decrypting with personal access token...")
 			} else {
 				if password == "" {
-					return fmt.Errorf("missing project password. Please run 'dotsync init' again to set it up.")
+					return fmt.Errorf("missing project password. Please run 'dotsync init' again or set DOTSYNC_PASSWORD environment variable.")
 				}
 				fmt.Print("🔓 Decrypting with team password...")
 			}
