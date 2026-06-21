@@ -43,9 +43,9 @@ How it works:
 				fmt.Println(" ❌")
 				return fmt.Errorf("could not reach server at %s: %w", cfg.ServerURL, err)
 			}
-			if authCfg.GitHubClientID == "" {
+			if authCfg.GitHubClientID == "" || authCfg.GitHubClientID == "your_github_client_id" {
 				fmt.Println(" ❌")
-				return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
+				return fmt.Errorf("server has no GITHUB_CLIENT_ID configured (found placeholder) — contact the server admin to update the environment variables")
 			}
 			fmt.Println(" ✅")
 

@@ -3,7 +3,7 @@
 set -euo pipefail
 
 VERSION="${VERSION:-v0.1.0-beta}"
-LDFLAGS="-s -w -X main.Version=${VERSION}"
+LDFLAGS="-s -w -X github.com/Pruthviraj36/dotsync/cli/cmd.Version=${VERSION}"
 
 echo "🔨 Building DotSync ${VERSION}"
 echo ""

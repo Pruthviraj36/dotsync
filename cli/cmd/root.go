@@ -43,5 +43,6 @@ func init() {
 		envsCmd(),
 		statusCmd(),
 		configCmd(),
+		updateCmd(),
 	)
 }
