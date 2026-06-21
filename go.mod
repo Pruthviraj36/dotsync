@@ -11,12 +11,14 @@ require (
 	github.com/google/uuid v1.6.0
 	github.com/joho/godotenv v1.5.1
 	github.com/lib/pq v1.10.9
+	github.com/minio/selfupdate v0.6.0
 	github.com/spf13/cobra v1.10.0
 	github.com/stripe/stripe-go/v86 v86.0.0
 	golang.org/x/crypto v0.53.0
 )
 
 require (
+	aead.dev/minisign v0.2.0 // indirect
 	github.com/inconshreveable/mousetrap v1.1.0 // indirect
 	github.com/klauspost/cpuid/v2 v2.2.10 // indirect
 	github.com/spf13/pflag v1.0.8 // indirect
