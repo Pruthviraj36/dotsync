@@ -17,17 +17,29 @@ go build -ldflags="${LDFLAGS}" -o dist/dotsync-server ./cmd/dotsync
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 echo ""
+mkdir -p dist/tmp
+
 echo "→ CLI (linux/amd64)..."
-GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-linux-amd64 ./cli/dotsync
+GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
+tar -czf dist/dotsync-linux-amd64.tar.gz -C dist/tmp dotsync
+rm dist/tmp/dotsync
 
 echo "→ CLI (darwin/amd64)..."
-GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-darwin-amd64 ./cli/dotsync
+GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
+tar -czf dist/dotsync-darwin-amd64.tar.gz -C dist/tmp dotsync
+rm dist/tmp/dotsync
 
 echo "→ CLI (darwin/arm64 — Apple Silicon)..."
-GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-darwin-arm64 ./cli/dotsync
+GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
+tar -czf dist/dotsync-darwin-arm64.tar.gz -C dist/tmp dotsync
+rm dist/tmp/dotsync
 
 echo "→ CLI (windows/amd64)..."
-GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-windows-amd64.exe ./cli/dotsync
+GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync.exe .
+zip -jq dist/dotsync-windows-amd64.zip dist/tmp/dotsync.exe
+rm dist/tmp/dotsync.exe
+
+rmdir dist/tmp
 
 echo ""
 echo "✅ Build complete. Artifacts in ./dist/"
