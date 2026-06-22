@@ -31,7 +31,7 @@ builds:
 archives:
   - id: dotsync
     builds: [dotsync]
-    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    name_template: "{{ .ProjectName }}-{{ .Os }}-{{ .Arch }}"
     format_overrides:
       - goos: windows
         formats: [zip]
