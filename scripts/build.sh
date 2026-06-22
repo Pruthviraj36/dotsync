@@ -42,5 +42,9 @@ rm dist/tmp/dotsync.exe
 rmdir dist/tmp
 
 echo ""
+echo "→ Generating checksums.txt..."
+( cd dist && sha256sum dotsync-* > checksums.txt )
+
+echo ""
 echo "✅ Build complete. Artifacts in ./dist/"
 ls -lh dist/

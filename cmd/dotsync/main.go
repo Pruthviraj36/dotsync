@@ -31,11 +31,13 @@ func main() {
 	// successfully and failing deep inside a request later (e.g. GitHub
 	// OAuth silently sending an empty client_id, or Stripe signature
 	// verification always failing with no clear cause).
+	// GITHUB_CLIENT_SECRET is intentionally NOT required — the device flow
+	// exchanges tokens directly between the CLI and GitHub; this server is
+	// never involved in that exchange and never needs the client secret.
 	requireEnv(
 		"DATABASE_URL",
 		"JWT_SECRET",
 		"GITHUB_CLIENT_ID",
-		"GITHUB_CLIENT_SECRET",
 		"STRIPE_SECRET_KEY",
 		"STRIPE_WEBHOOK_SECRET",
 	)
@@ -108,10 +110,9 @@ func main() {
 
 	// ── Public auth routes ──
 	r.Route("/api/auth", func(r chi.Router) {
-		r.Use(mw.RateLimitByIP(20, time.Minute)) // Strict limit for auth endpoints
+		r.Use(mw.RateLimitByIP(20, time.Minute))
 		r.Get("/config", authHandler.Config)
-		r.Get("/github/callback", authHandler.GitHubCallbackPage)
-		r.Post("/github", authHandler.GitHubCallback)
+		r.Post("/github/device", authHandler.GitHubDeviceLogin)
 		r.Post("/refresh", authHandler.RefreshToken)
 	})
 

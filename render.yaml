@@ -39,9 +39,9 @@ services:
 
       - key: GITHUB_CLIENT_ID
         sync: false             # set in Render dashboard
-
-      - key: GITHUB_CLIENT_SECRET
-        sync: false             # set in Render dashboard
+                                 # GITHUB_CLIENT_SECRET is NOT needed here — login uses
+                                 # GitHub's Device Flow; the server never participates in
+                                 # the token exchange and never needs the secret.
 
       - key: STRIPE_SECRET_KEY
         sync: false             # set in Render dashboard

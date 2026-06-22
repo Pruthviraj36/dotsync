@@ -1,113 +1,155 @@
 package cmd
 
 import (
-	"bufio"
 	"fmt"
-	"os"
-	"strings"
+	"time"
+
+	"github.com/spf13/cobra"
 
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
-	"github.com/spf13/cobra"
 )
 
 func loginCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "login",
 		Short: "Authenticate with GitHub",
-		Long: `Opens a GitHub OAuth flow in your browser.
+		Long: `Authenticate with GitHub using the OAuth Device Flow.
 
-How it works:
-  1. Open the URL shown below in your browser
-  2. Authorize DotSync on GitHub
-  3. Copy the code from the redirect URL (?code=...)
-  4. Paste it here`,
-		RunE: func(cmd *cobra.Command, args []string) error {
-			cfg, err := config.LoadGlobal()
-			if err != nil {
-				return err
-			}
+This works the same way whether you're on your laptop, SSH'd into a remote
+server, or running inside a container — you'll get a short code to enter
+at github.com/login/device, which you can open on ANY device with a
+browser (your phone is fine). The CLI waits and completes automatically
+once you approve it there.`,
+		RunE: runLogin,
+	}
+}
 
-			if config.IsLoggedIn(cfg) {
-				fmt.Println("✅ Already logged in as", cfg.Username)
-				fmt.Println("   Server:", cfg.ServerURL)
-				fmt.Println("   Run 'dotsync logout' first to switch accounts.")
-				return nil
-			}
+func runLogin(cmd *cobra.Command, args []string) error {
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return err
+	}
 
-			fmt.Println("Connecting to server:", cfg.ServerURL)
+	if config.IsLoggedIn(cfg) {
+		fmt.Println("✅ Already logged in as", cfg.Username)
+		fmt.Println("   Server:", cfg.ServerURL)
+		fmt.Println("   Run 'dotsync logout' first to switch accounts.")
+		return nil
+	}
 
-			fmt.Print("⏳ Connecting to server...")
-			authCfg, err := api.GetAuthConfig(cfg.ServerURL)
-			if err != nil {
-				fmt.Println(" ❌")
-				return fmt.Errorf("could not reach server at %s: %w", cfg.ServerURL, err)
-			}
-			if authCfg.GitHubClientID == "" || authCfg.GitHubClientID == "your_github_client_id" {
-				fmt.Println(" ❌")
-				return fmt.Errorf("server has no GITHUB_CLIENT_ID configured (found placeholder) — contact the server admin to update the environment variables")
-			}
-			fmt.Println(" ✅")
+	fmt.Println("Server:", cfg.ServerURL)
+	fmt.Print("Connecting... ")
+	authCfg, err := api.GetAuthConfig(cfg.ServerURL)
+	if err != nil {
+		fmt.Println("❌")
+		return fmt.Errorf("could not reach server at %s: %w", cfg.ServerURL, err)
+	}
+	if authCfg.GitHubClientID == "" {
+		fmt.Println("❌")
+		return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
+	}
+	fmt.Println("✅")
 
-			authURL := fmt.Sprintf(
-				"https://github.com/login/oauth/authorize?client_id=%s&scope=read:user,user:email",
-				authCfg.GitHubClientID,
-			)
+	// ── Step 1: request a device code from GitHub ──────────────────────────
+	dc, err := api.StartGitHubDeviceFlow(authCfg.GitHubClientID)
+	if err != nil {
+		return err
+	}
 
-			fmt.Println()
-			fmt.Println("🔐 DotSync Login via GitHub OAuth")
-			fmt.Println("──────────────────────────────────")
-			fmt.Println()
-			fmt.Println("1. Open this URL in your browser:")
-			fmt.Println()
-			fmt.Println("   " + authURL)
-			fmt.Println()
-			fmt.Println("2. Authorize DotSync on GitHub")
-			fmt.Println("3. You'll be redirected to a URL like:")
-			fmt.Println("   http://localhost?code=abc123xyz")
-			fmt.Println()
-			fmt.Print("4. Paste the code here: ")
+	// ── Step 2: show the user code clearly — this IS the UI, no browser
+	// redirect page needed, no copy-pasting long tokens ──────────────────
+	fmt.Println()
+	fmt.Println("┌─────────────────────────────────────────────┐")
+	fmt.Println("│  Open this URL on any device:                │")
+	fmt.Printf("│  %-44s │\n", dc.VerificationURI)
+	fmt.Println("│                                               │")
+	fmt.Printf("│  And enter this code:   %-19s │\n", dc.UserCode)
+	fmt.Println("└─────────────────────────────────────────────┘")
+	fmt.Println()
+	fmt.Println("Waiting for you to approve in the browser...")
 
-			reader := bufio.NewReader(os.Stdin)
-			code, _ := reader.ReadString('\n')
-			code = strings.TrimSpace(code)
+	// ── Step 3: poll GitHub until the user approves (or it expires) ────────
+	ghToken, err := pollForGitHubToken(authCfg.GitHubClientID, dc)
+	if err != nil {
+		fmt.Println()
+		return err
+	}
 
-			if code == "" {
-				return fmt.Errorf("no code provided")
-			}
+	fmt.Println("✅ Approved")
+	fmt.Print("Finishing login... ")
 
-			fmt.Println()
-			fmt.Print("⏳ Authenticating...")
+	// ── Step 4: hand the verified GitHub token to our server, get DotSync
+	// tokens back. The server independently re-verifies this token against
+	// GitHub's own API — it never just trusts what the CLI claims. ─────────
+	result, err := api.ExchangeGitHubDeviceToken(cfg.ServerURL, ghToken)
+	if err != nil {
+		fmt.Println("❌")
+		return fmt.Errorf("login failed: %w", err)
+	}
 
-			result, err := api.ExchangeGitHubCode(cfg.ServerURL, code)
-			if err != nil {
-				fmt.Println(" ❌")
-				return fmt.Errorf("login failed: %w", err)
-			}
+	username, _ := result.User["username"].(string)
+	userID, _ := result.User["id"].(string)
+	plan, _ := result.User["plan"].(string)
 
-			username, _ := result.User["username"].(string)
-			userID, _ := result.User["id"].(string)
-			plan, _ := result.User["plan"].(string)
+	cfg.AccessToken = result.AccessToken
+	cfg.RefreshToken = result.RefreshToken
+	cfg.UserID = userID
+	cfg.Username = username
 
-			cfg.AccessToken = result.AccessToken
-			cfg.RefreshToken = result.RefreshToken
-			cfg.UserID = userID
-			cfg.Username = username
+	if err := config.SaveGlobal(cfg); err != nil {
+		return fmt.Errorf("save credentials: %w", err)
+	}
 
-			if err := config.SaveGlobal(cfg); err != nil {
-				return fmt.Errorf("save credentials: %w", err)
-			}
+	fmt.Println("✅")
+	fmt.Println()
+	fmt.Printf("Welcome, %s! 👋\n", username)
+	fmt.Printf("Plan: %s\n", plan)
+	fmt.Println()
+	fmt.Println("Next: cd into your project and run 'dotsync init'")
+	fmt.Println()
 
-			fmt.Println(" ✅")
-			fmt.Println()
-			fmt.Printf("  Welcome, %s! 👋\n", username)
-			fmt.Printf("  Plan: %s\n", plan)
-			fmt.Println()
-			fmt.Println("  Next: cd into your project and run 'dotsync init'")
-			fmt.Println()
+	return nil
+}
 
-			return nil
-		},
+// pollForGitHubToken polls GitHub's token endpoint at the interval GitHub
+// requested, respecting slow_down backoff, until the user approves, the
+// code expires, or they explicitly deny access.
+func pollForGitHubToken(clientID string, dc *api.DeviceCodeResponse) (string, error) {
+	interval := time.Duration(dc.Interval) * time.Second
+	if interval <= 0 {
+		interval = 5 * time.Second
+	}
+	deadline := time.Now().Add(time.Duration(dc.ExpiresIn) * time.Second)
+
+	for {
+		if time.Now().After(deadline) {
+			return "", fmt.Errorf("code expired before authorization — run 'dotsync login' again")
+		}
+
+		time.Sleep(interval)
+
+		token, err := api.PollGitHubDeviceToken(clientID, dc.DeviceCode)
+		if err == nil {
+			return token, nil
+		}
+
+		switch err {
+		case api.PollErrAuthorizationPending:
+			fmt.Print(".")
+			continue
+		case api.PollErrSlowDown:
+			// RFC 8628 §3.5: add 5s to the interval, cumulatively, and keep polling.
+			interval += 5 * time.Second
+			fmt.Print(".")
+			continue
+		case api.PollErrExpired:
+			return "", fmt.Errorf("code expired before authorization — run 'dotsync login' again")
+		case api.PollErrAccessDenied:
+			return "", fmt.Errorf("authorization was denied")
+		default:
+			return "", err
+		}
 	}
 }
 
