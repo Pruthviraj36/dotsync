@@ -20,7 +20,8 @@ Get started:
   dotsync init        Link this folder to a project
   dotsync push        Upload your .env (encrypted)
   dotsync pull        Download latest .env`,
-	SilenceUsage: true,
+	SilenceUsage:  true,
+	SilenceErrors: true,
 }
 
 func Execute() {
