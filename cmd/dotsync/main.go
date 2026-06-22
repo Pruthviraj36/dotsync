@@ -108,13 +108,14 @@ func main() {
 	// Stripe webhook — raw body required, no auth middleware
 	r.Post("/api/stripe/webhook", stripeHandler.Webhook)
 
-	// ── Public auth routes ──
-	r.Route("/api/auth", func(r chi.Router) {
-		r.Use(mw.RateLimitByIP(20, time.Minute))
-		r.Get("/config", authHandler.Config)
-		r.Post("/github/device", authHandler.GitHubDeviceLogin)
-		r.Post("/refresh", authHandler.RefreshToken)
-	})
+	// ── Public auth routes (no authentication required) ──
+	// Registered directly on the root router to avoid chi sub-router shadowing.
+	// A nested r.Route("/api/auth") followed by r.Route("/api") causes chi to
+	// match /api/auth/github/device against the /api group, returning 404.
+	publicAuthRL := mw.RateLimitByIP(20, time.Minute)
+	r.With(publicAuthRL).Get("/api/auth/config", authHandler.Config)
+	r.With(publicAuthRL).Post("/api/auth/github/device", authHandler.GitHubDeviceLogin)
+	r.With(publicAuthRL).Post("/api/auth/refresh", authHandler.RefreshToken)
 
 	// ── Protected routes ──
 	r.Route("/api", func(r chi.Router) {
