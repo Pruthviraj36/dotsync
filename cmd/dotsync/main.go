@@ -73,6 +73,7 @@ func main() {
 	authHandler := handler.NewAuthHandler(authSvc, database)
 	projectHandler := handler.NewProjectHandler(projectSvc, teamSvc)
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
+	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
 	stripeHandler := stripehandler.New(database)
 
 	// ── Router ──────────────────────────────────────────────────────────────
@@ -108,14 +109,13 @@ func main() {
 	// Stripe webhook — raw body required, no auth middleware
 	r.Post("/api/stripe/webhook", stripeHandler.Webhook)
 
-	// ── Public auth routes (no authentication required) ──
-	// Registered directly on the root router to avoid chi sub-router shadowing.
-	// A nested r.Route("/api/auth") followed by r.Route("/api") causes chi to
-	// match /api/auth/github/device against the /api group, returning 404.
-	publicAuthRL := mw.RateLimitByIP(20, time.Minute)
-	r.With(publicAuthRL).Get("/api/auth/config", authHandler.Config)
-	r.With(publicAuthRL).Post("/api/auth/github/device", authHandler.GitHubDeviceLogin)
-	r.With(publicAuthRL).Post("/api/auth/refresh", authHandler.RefreshToken)
+	// ── Public auth routes ──
+	r.Route("/api/auth", func(r chi.Router) {
+		r.Use(mw.RateLimitByIP(20, time.Minute))
+		r.Get("/config", authHandler.Config)
+		r.Post("/github/device", authHandler.GitHubDeviceLogin)
+		r.Post("/refresh", authHandler.RefreshToken)
+	})
 
 	// ── Protected routes ──
 	r.Route("/api", func(r chi.Router) {
@@ -129,6 +129,9 @@ func main() {
 		// Projects
 		r.Post("/projects", projectHandler.Create)
 		r.Get("/projects", projectHandler.List)
+
+		// Teams
+		r.Post("/projects/{slug}/team", teamHandler.AddMember)
 
 		// Secrets (stricter rate limit for push/pull)
 		r.Route("/projects/{slug}/envs/{env}", func(r chi.Router) {

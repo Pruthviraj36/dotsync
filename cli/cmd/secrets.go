@@ -59,7 +59,10 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 			}
 
 			// Determine encryption password
-			password := projCfg.ProjectPassword
+			var password string
+			if cfg.ProjectPasswords != nil {
+				password = cfg.ProjectPasswords[projCfg.ProjectSlug]
+			}
 			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
 				password = envPass
 			}
@@ -175,7 +178,10 @@ decrypts it locally, and writes your .env file.`,
 				return err
 			}
 
-			password := projCfg.ProjectPassword
+			var password string
+			if cfg.ProjectPasswords != nil {
+				password = cfg.ProjectPasswords[projCfg.ProjectSlug]
+			}
 			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
 				password = envPass
 			}

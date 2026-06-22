@@ -45,5 +45,6 @@ func init() {
 		statusCmd(),
 		configCmd(),
 		updateCmd(),
+		teamCmd(),
 	)
 }
