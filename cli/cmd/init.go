@@ -6,9 +6,10 @@ import (
 	"os"
 	"strings"
 
-	"github.com/spf13/cobra"
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
+	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func initCmd() *cobra.Command {
@@ -35,9 +36,10 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			fmt.Println("────────────────────────────")
 			fmt.Println()
 
-			// Show existing projects
-			projects, err := client.ListProjects()
-			if err == nil && len(projects) > 0 {
+			// Show existing projects — listErr intentionally kept separate;
+			// a failure here should not block the user from proceeding.
+			projects, listErr := client.ListProjects()
+			if listErr == nil && len(projects) > 0 {
 				fmt.Println("Your projects:")
 				for _, p := range projects {
 					fmt.Printf("  • %s (slug: %s)\n", p["name"], p["slug"])
@@ -61,30 +63,30 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 				return fmt.Errorf("slug cannot be empty")
 			}
 
-			// Verify the project exists for this user before saving config.
-			// Silently accepting an unknown slug causes a confusing "project not found"
-			// error on every subsequent push/pull instead of failing here with a clear message.
-			var matched bool
-			for _, p := range projects {
-				if p["slug"] == slug {
-					matched = true
-					break
+			// Only validate against the project list if we actually fetched one.
+			// If ListProjects failed (server unreachable, token issue, etc.) we
+			// let the user proceed — a wrong slug will surface on push/pull instead.
+			if listErr == nil && len(projects) > 0 {
+				var matched bool
+				for _, p := range projects {
+					if p["slug"] == slug {
+						matched = true
+						break
+					}
+				}
+				if !matched {
+					return fmt.Errorf(
+						"project '%s' not found in your account\n"+
+							"  Run: dotsync init new   — to create it\n"+
+							"  Run: dotsync init       — to see your projects",
+						slug,
+					)
 				}
 			}
-			if !matched {
-				return fmt.Errorf(
-					"project '%s' not found in your account\n"+
-						"  Run: dotsync init new   — to create it\n"+
-						"  Run: dotsync init       — to see your projects",
-					slug,
-				)
-			}
 
-			fmt.Print("Project Password (for end-to-end encryption): ")
-			password, _ := reader.ReadString('\n')
-			password = strings.TrimSpace(password)
-			if password == "" {
-				return fmt.Errorf("password cannot be empty")
+			password, err := readPassword("Project Password (for end-to-end encryption): ")
+			if err != nil {
+				return err
 			}
 
 			fmt.Print("Default environment [dev]: ")
@@ -140,11 +142,9 @@ func createNewProject(client *api.Client, reader *bufio.Reader) error {
 		return fmt.Errorf("name and slug are required")
 	}
 
-	fmt.Print("Create Project Password (for end-to-end encryption): ")
-	password, _ := reader.ReadString('\n')
-	password = strings.TrimSpace(password)
-	if password == "" {
-		return fmt.Errorf("password cannot be empty")
+	password, err := readPassword("Create Project Password (for end-to-end encryption): ")
+	if err != nil {
+		return err
 	}
 
 	fmt.Print("⏳ Creating project...")
@@ -172,6 +172,31 @@ func createNewProject(client *api.Client, reader *bufio.Reader) error {
 	fmt.Println()
 
 	return nil
+}
+
+// readPassword reads a password from stdin with echo disabled.
+// Falls back to plain readline when stdin is not a real terminal (CI, pipes).
+func readPassword(prompt string) (string, error) {
+	fmt.Print(prompt)
+	if term.IsTerminal(int(os.Stdin.Fd())) {
+		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
+		fmt.Println() // restore cursor to new line after hidden input
+		if err != nil {
+			return "", fmt.Errorf("read password: %w", err)
+		}
+		if strings.TrimSpace(string(pw)) == "" {
+			return "", fmt.Errorf("password cannot be empty")
+		}
+		return string(pw), nil
+	}
+	// Non-terminal fallback
+	r := bufio.NewReader(os.Stdin)
+	pw, _ := r.ReadString('\n')
+	pw = strings.TrimSpace(pw)
+	if pw == "" {
+		return "", fmt.Errorf("password cannot be empty")
+	}
+	return pw, nil
 }
 
 // ensureGitignore adds .env to .gitignore if not already present.

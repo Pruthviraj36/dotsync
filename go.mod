@@ -1,6 +1,6 @@
 module github.com/Pruthviraj36/dotsync
 
-go 1.25
+go 1.25.0
 
 require (
 	github.com/go-chi/chi/v5 v5.3.0
@@ -15,6 +15,7 @@ require (
 	github.com/spf13/cobra v1.10.0
 	github.com/stripe/stripe-go/v86 v86.0.0
 	golang.org/x/crypto v0.53.0
+	golang.org/x/term v0.44.0
 )
 
 require (
