@@ -1,0 +1,71 @@
+version: 2
+
+project_name: dotsync
+
+before:
+  hooks:
+    - go mod tidy
+
+builds:
+  - id: dotsync
+    # The CLI lives at the repo root (main.go imports cli/cmd)
+    main: .
+    binary: dotsync
+    ldflags:
+      - -s -w
+      - -X github.com/Pruthviraj36/dotsync/cli/cmd.Version={{ .Version }}
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    ignore:
+      # No Windows arm64 builds (uncommon target)
+      - goos: windows
+        goarch: arm64
+
+archives:
+  - id: dotsync
+    builds: [dotsync]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    files:
+      - README.md
+      - LICENSE
+
+checksum:
+  name_template: "checksums.txt"
+  algorithm: sha256
+
+changelog:
+  sort: asc
+  use: github
+  groups:
+    - title: "🐛 Bug Fixes"
+      regexp: "^fix"
+      order: 0
+    - title: "✨ Features"
+      regexp: "^feat"
+      order: 1
+    - title: "🔧 Other Changes"
+      order: 999
+  filters:
+    exclude:
+      - "^docs"
+      - "^chore"
+      - "^ci"
+      - "Merge pull request"
+
+release:
+  github:
+    owner: Pruthviraj36
+    name: dotsync
+  name_template: "v{{ .Version }}"
+  draft: false
+  prerelease: auto
