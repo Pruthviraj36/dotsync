@@ -354,3 +354,65 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 
 	writeJSON(w, http.StatusOK, history)
 }
+
+// ============================================================
+// Team Handlers
+// ============================================================
+
+type TeamHandler struct {
+	projectSvc *service.ProjectService
+	teamSvc    *service.TeamService
+	db         *db.DB
+}
+
+func NewTeamHandler(ps *service.ProjectService, ts *service.TeamService, database *db.DB) *TeamHandler {
+	return &TeamHandler{projectSvc: ps, teamSvc: ts, db: database}
+}
+
+// POST /api/projects/{slug}/team
+func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	// Verify the caller is an owner (or admin, if roles expand)
+	role, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || role != "owner" {
+		writeError(w, http.StatusForbidden, "only project owners can invite members")
+		return
+	}
+
+	var req struct {
+		Username string `json:"username"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
+		writeError(w, http.StatusBadRequest, "username required")
+		return
+	}
+
+	// Find user by username
+	var targetUser model.User
+	err = h.db.QueryRowContext(r.Context(),
+		`SELECT id, username FROM users WHERE username = $1`, req.Username,
+	).Scan(&targetUser.ID, &targetUser.Username)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found in dotsync (they must log in at least once)")
+		return
+	}
+
+	err = h.teamSvc.InviteMember(r.Context(), proj.ID, targetUser.ID, "member", claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to add member")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message":  "user added successfully",
+		"username": targetUser.Username,
+	})
+}

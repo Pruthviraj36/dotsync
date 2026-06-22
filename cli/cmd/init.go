@@ -48,7 +48,7 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			}
 
 			if create {
-				return createNewProject(client, reader)
+				return createNewProject(client, cfg, reader)
 			}
 
 			fmt.Print("Project slug (or type 'new' to create): ")
@@ -56,7 +56,7 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			slug = strings.TrimSpace(slug)
 
 			if slug == "new" {
-				return createNewProject(client, reader)
+				return createNewProject(client, cfg, reader)
 			}
 
 			if slug == "" {
@@ -66,7 +66,7 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			// Only validate against the project list if we actually fetched one.
 			// If ListProjects failed (server unreachable, token issue, etc.) we
 			// let the user proceed — a wrong slug will surface on push/pull instead.
-			if listErr == nil && len(projects) > 0 {
+			if listErr == nil {
 				var matched bool
 				for _, p := range projects {
 					if p["slug"] == slug {
@@ -102,10 +102,17 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			projCfg := &config.ProjectConfig{
 				ProjectSlug:     slug,
 				DefaultEnv:      env,
-				ProjectPassword: password,
 			}
 			if err := config.SaveProject(projCfg); err != nil {
 				return fmt.Errorf("save project config: %w", err)
+			}
+
+			if cfg.ProjectPasswords == nil {
+				cfg.ProjectPasswords = make(map[string]string)
+			}
+			cfg.ProjectPasswords[slug] = password
+			if err := config.SaveGlobal(cfg); err != nil {
+				return fmt.Errorf("save global config: %w", err)
 			}
 
 			ensureGitignore()
@@ -125,7 +132,7 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 	return cmd
 }
 
-func createNewProject(client *api.Client, reader *bufio.Reader) error {
+func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufio.Reader) error {
 	fmt.Print("Project name: ")
 	name, _ := reader.ReadString('\n')
 	name = strings.TrimSpace(name)
@@ -158,10 +165,17 @@ func createNewProject(client *api.Client, reader *bufio.Reader) error {
 	projCfg := &config.ProjectConfig{
 		ProjectSlug:     proj["slug"].(string),
 		DefaultEnv:      "dev",
-		ProjectPassword: password,
 	}
 	if err := config.SaveProject(projCfg); err != nil {
 		return fmt.Errorf("save project config: %w", err)
+	}
+
+	if cfg.ProjectPasswords == nil {
+		cfg.ProjectPasswords = make(map[string]string)
+	}
+	cfg.ProjectPasswords[proj["slug"].(string)] = password
+	if err := config.SaveGlobal(cfg); err != nil {
+		return fmt.Errorf("save global config: %w", err)
 	}
 
 	ensureGitignore()

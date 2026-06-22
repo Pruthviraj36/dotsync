@@ -227,6 +227,17 @@ func (c *Client) ListProjects() ([]map[string]any, error) {
 	return result, decodeResponse(resp, &result)
 }
 
+func (c *Client) AddTeamMember(slug, username string) error {
+	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/team", slug), map[string]string{
+		"username": username,
+	})
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
+
 func (c *Client) Logout() error {
 	resp, err := c.do("POST", "/api/auth/logout", map[string]string{})
 	if err != nil {

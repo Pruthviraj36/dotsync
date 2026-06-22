@@ -61,9 +61,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// redirect page needed, no copy-pasting long tokens ──────────────────
 	fmt.Println()
 	fmt.Println("┌─────────────────────────────────────────────┐")
-	fmt.Println("│  Open this URL on any device:               │")
+	fmt.Println("│  Open this URL on any device:                │")
 	fmt.Printf("│  %-44s │\n", dc.VerificationURI)
-	fmt.Println("│                                             │")
+	fmt.Println("│                                               │")
 	fmt.Printf("│  And enter this code:   %-19s │\n", dc.UserCode)
 	fmt.Println("└─────────────────────────────────────────────┘")
 	fmt.Println()

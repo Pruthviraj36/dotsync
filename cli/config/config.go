@@ -15,18 +15,18 @@ const (
 
 // GlobalConfig stores credentials in ~/.dotsync/config.json
 type GlobalConfig struct {
-	AccessToken  string `json:"access_token"`
-	RefreshToken string `json:"refresh_token"`
-	UserID       string `json:"user_id"`
-	Username     string `json:"username"`
-	ServerURL    string `json:"server_url"`
+	AccessToken      string            `json:"access_token"`
+	RefreshToken     string            `json:"refresh_token"`
+	UserID           string            `json:"user_id"`
+	Username         string            `json:"username"`
+	ServerURL        string            `json:"server_url"`
+	ProjectPasswords map[string]string `json:"project_passwords,omitempty"`
 }
 
 // ProjectConfig stores project binding in .dotsync.json (project root)
 type ProjectConfig struct {
-	ProjectSlug     string `json:"project_slug"`
-	DefaultEnv      string `json:"default_env"`
-	ProjectPassword string `json:"project_password,omitempty"`
+	ProjectSlug string `json:"project_slug"`
+	DefaultEnv  string `json:"default_env"`
 }
 
 // ── Global config ────────────────────────────────────────────────────────────
