@@ -60,6 +60,26 @@ dotsync envs                         # List all environments
 
 ---
 
+## 🤖 CI/CD & Automation
+
+You can run DotSync non-interactively in your CI/CD pipelines (like GitHub Actions, GitLab CI, Vercel) by providing the project password as an environment variable:
+
+```yaml
+# Example: Pulling production secrets in GitHub Actions
+- name: Pull Secrets
+  env:
+    DOTSYNC_PASSWORD: ${{ secrets.DOTSYNC_PROJECT_PASSWORD }}
+  run: dotsync pull --env production
+```
+
+If your company self-hosts the DotSync server, point the CLI to it using the `DOTSYNC_SERVER` variable:
+```bash
+DOTSYNC_SERVER=https://dotsync.onrender.com dotsync pull
+```
+
+
+---
+
 ## 🔒 Uncrackable Security Model (Argon2id)
 
 DotSync uses state-of-the-art cryptography to ensure your secrets are safe, even if the database is compromised.
