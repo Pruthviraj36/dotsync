@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/url"
+	"strings"
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/cli/config"
@@ -260,12 +262,153 @@ func GetAuthConfig(serverURL string) (*AuthConfig, error) {
 	return &cfg, nil
 }
 
-// ExchangeGitHubCode exchanges an OAuth code for DotSync tokens.
-func ExchangeGitHubCode(serverURL, code string) (*LoginResponse, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
-	body, _ := json.Marshal(map[string]string{"code": code})
+// ── GitHub OAuth Device Flow ────────────────────────────────────────────
+//
+// This talks directly to GitHub, not to the DotSync server. GitHub designed
+// the device flow specifically so public clients (like this CLI) never need
+// to hold a client secret — see https://docs.github.com/en/apps/oauth-apps/
+// building-oauth-apps/authorizing-oauth-apps#device-flow. The only thing the
+// DotSync server needs from us afterward is the resulting GitHub access
+// token, which it independently verifies against GitHub's own /user API
+// before issuing DotSync credentials (see GitHubDeviceLogin server-side —
+// the server never just trusts whatever token the CLI hands it).
+//
+// This also means login now works identically whether the CLI is running
+// on the same machine as the browser, over SSH on a remote box, or inside
+// a container — the user can complete the browser step on literally any
+// device with internet access, since all that's needed is typing a short
+// code at github.com/login/device.
 
-	resp, err := client.Post(serverURL+"/api/auth/github", "application/json", bytes.NewReader(body))
+const githubDeviceCodeURL = "https://github.com/login/device/code"
+const githubTokenURL = "https://github.com/login/oauth/access_token"
+
+// DeviceCodeResponse is GitHub's response to a device code request.
+type DeviceCodeResponse struct {
+	DeviceCode      string `json:"device_code"`
+	UserCode        string `json:"user_code"`
+	VerificationURI string `json:"verification_uri"`
+	ExpiresIn       int    `json:"expires_in"`
+	Interval        int    `json:"interval"`
+}
+
+// StartGitHubDeviceFlow requests a device code + user code from GitHub.
+// The CLI shows the user code and verification URI to the user, who enters
+// the code at that URL on any device with a browser.
+func StartGitHubDeviceFlow(clientID string) (*DeviceCodeResponse, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	form := url.Values{
+		"client_id": {clientID},
+		"scope":     {"read:user user:email"},
+	}
+
+	req, err := http.NewRequest("POST", githubDeviceCodeURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("connect to github: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusBadRequest {
+		return nil, fmt.Errorf("github rejected the device code request — " +
+			"is Device Flow enabled on the GitHub OAuth App? " +
+			"(github.com/settings/developers → your app → Advanced)")
+	}
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("github returned %d", resp.StatusCode)
+	}
+
+	var dc DeviceCodeResponse
+	if err := json.NewDecoder(resp.Body).Decode(&dc); err != nil {
+		return nil, fmt.Errorf("decode device code response: %w", err)
+	}
+	if dc.DeviceCode == "" || dc.UserCode == "" {
+		return nil, fmt.Errorf("github returned an incomplete device code response")
+	}
+	return &dc, nil
+}
+
+// PollErrAuthorizationPending is returned while the user hasn't yet
+// completed the browser step — the caller should keep polling.
+var PollErrAuthorizationPending = fmt.Errorf("authorization_pending")
+
+// PollErrExpired means the user_code expired (15 minutes) before the user
+// completed authorization — the caller must restart the whole flow.
+var PollErrExpired = fmt.Errorf("expired_token")
+
+// PollErrAccessDenied means the user explicitly declined authorization.
+var PollErrAccessDenied = fmt.Errorf("access_denied")
+
+// PollErrSlowDown means GitHub is asking us to poll less frequently —
+// the caller must add 5 seconds to its polling interval, cumulatively,
+// per RFC 8628 section 3.5.
+var PollErrSlowDown = fmt.Errorf("slow_down")
+
+// PollGitHubDeviceToken makes a single poll request to GitHub's token
+// endpoint. Returns PollErrAuthorizationPending if the user hasn't finished
+// yet (the normal case while waiting) — callers should sleep for `interval`
+// seconds and call this again.
+func PollGitHubDeviceToken(clientID, deviceCode string) (string, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	form := url.Values{
+		"client_id":   {clientID},
+		"device_code": {deviceCode},
+		"grant_type":  {"urn:ietf:params:oauth:grant-type:device_code"},
+	}
+
+	req, err := http.NewRequest("POST", githubTokenURL, strings.NewReader(form.Encode()))
+	if err != nil {
+		return "", err
+	}
+	req.Header.Set("Content-Type", "application/x-www-form-urlencoded")
+	req.Header.Set("Accept", "application/json")
+
+	resp, err := client.Do(req)
+	if err != nil {
+		return "", fmt.Errorf("connect to github: %w", err)
+	}
+	defer resp.Body.Close()
+
+	var result struct {
+		AccessToken string `json:"access_token"`
+		Error       string `json:"error"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return "", fmt.Errorf("decode token response: %w", err)
+	}
+
+	switch result.Error {
+	case "":
+		if result.AccessToken == "" {
+			return "", fmt.Errorf("github returned no access token and no error")
+		}
+		return result.AccessToken, nil
+	case "authorization_pending":
+		return "", PollErrAuthorizationPending
+	case "slow_down":
+		return "", PollErrSlowDown
+	case "expired_token":
+		return "", PollErrExpired
+	case "access_denied":
+		return "", PollErrAccessDenied
+	default:
+		return "", fmt.Errorf("github device auth error: %s", result.Error)
+	}
+}
+
+// ExchangeGitHubDeviceToken sends the verified GitHub access token to the
+// DotSync server, which independently re-verifies it against GitHub's own
+// /user API and, if valid, issues DotSync access + refresh tokens.
+func ExchangeGitHubDeviceToken(serverURL, githubAccessToken string) (*LoginResponse, error) {
+	client := &http.Client{Timeout: 15 * time.Second}
+	body, _ := json.Marshal(map[string]string{"github_access_token": githubAccessToken})
+
+	resp, err := client.Post(serverURL+"/api/auth/github/device", "application/json", bytes.NewReader(body))
 	if err != nil {
 		return nil, fmt.Errorf("connect to server: %w", err)
 	}
@@ -276,7 +419,10 @@ func ExchangeGitHubCode(serverURL, code string) (*LoginResponse, error) {
 			Error string `json:"error"`
 		}
 		_ = json.NewDecoder(resp.Body).Decode(&apiErr)
-		return nil, fmt.Errorf("auth failed: %s", apiErr.Error)
+		if apiErr.Error != "" {
+			return nil, fmt.Errorf("server rejected token: %s", apiErr.Error)
+		}
+		return nil, fmt.Errorf("server returned %d", resp.StatusCode)
 	}
 
 	var result LoginResponse

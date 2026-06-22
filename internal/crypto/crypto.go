@@ -15,9 +15,9 @@ import (
 )
 
 const (
-	keySize    = 32 // AES-256
-	nonceSize  = 12 // GCM standard nonce
-	saltSize   = 32
+	keySize   = 32 // AES-256
+	nonceSize = 12 // GCM standard nonce
+	saltSize  = 32
 )
 
 // DeriveKey derives a 256-bit AES key from a secret + project salt using Argon2id.
@@ -25,7 +25,7 @@ const (
 // Argon2id provides military-grade memory-hard protection against brute force.
 func DeriveKey(secret, projectID string) []byte {
 	salt := sha256.Sum256([]byte("dotsync-salt-v1:" + projectID))
-	
+
 	// time=3, memory=64MB, threads=4, keyLen=32
 	// These are recommended parameters for Argon2id for a good balance of security and speed.
 	key := argon2.IDKey([]byte(secret), salt[:], 3, 64*1024, 4, keySize)
