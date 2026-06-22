@@ -61,6 +61,25 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 				return fmt.Errorf("slug cannot be empty")
 			}
 
+			// Verify the project exists for this user before saving config.
+			// Silently accepting an unknown slug causes a confusing "project not found"
+			// error on every subsequent push/pull instead of failing here with a clear message.
+			var matched bool
+			for _, p := range projects {
+				if p["slug"] == slug {
+					matched = true
+					break
+				}
+			}
+			if !matched {
+				return fmt.Errorf(
+					"project '%s' not found in your account\n"+
+						"  Run: dotsync init new   — to create it\n"+
+						"  Run: dotsync init       — to see your projects",
+					slug,
+				)
+			}
+
 			fmt.Print("Project Password (for end-to-end encryption): ")
 			password, _ := reader.ReadString('\n')
 			password = strings.TrimSpace(password)
