@@ -1,0 +1,20 @@
+# Site Theme Configuration
+theme: jekyll-theme-minimal
+
+# Project Identity
+title: dotsync
+description: A zero-knowledge CLI to sync dotfiles and secrets natively in Go.
+
+# Build Settings
+markdown: kramdown
+highlighter: rouge
+
+# Exclude unnecessary files from being processed by the web builder
+exclude:
+  - LICENSE
+  - .gitignore
+  - cli/
+  - internal/
+  - cmd/
+  - go.mod
+  - go.sum
