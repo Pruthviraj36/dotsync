@@ -16,7 +16,7 @@
 
 ```bash
 # Install the CLI
-go install github.com/Pruthviraj36/dotsync/cli/dotsync@latest
+go install github.com/Pruthviraj36/dotsync@latest
 
 # Login with GitHub
 dotsync login
@@ -70,11 +70,6 @@ You can run DotSync non-interactively in your CI/CD pipelines (like GitHub Actio
   env:
     DOTSYNC_PASSWORD: ${{ secrets.DOTSYNC_PROJECT_PASSWORD }}
   run: dotsync pull --env production
-```
-
-If your company self-hosts the DotSync server, point the CLI to it using the `DOTSYNC_SERVER` variable:
-```bash
-DOTSYNC_SERVER=https://dotsync.onrender.com dotsync pull
 ```
 
 
