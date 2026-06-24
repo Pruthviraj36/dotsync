@@ -65,17 +65,17 @@ If you just want to inspect an old version without pushing it:
 			currentVersion, _, _ := client.GetLatestVersion(projCfg.ProjectSlug, env)
 
 			if version == currentVersion {
-				fmt.Printf("✅ Already at version %d — nothing to roll back.\n", version)
+				fmt.Printf(green("✅ Already at version %d — nothing to roll back.")+"\n", version)
 				return nil
 			}
 
-			fmt.Printf("\n⏮  Rolling back %s/%s\n", projCfg.ProjectSlug, env)
-			fmt.Printf("   Current  : v%d\n", currentVersion)
-			fmt.Printf("   Target   : v%d\n", version)
+			fmt.Printf("\n"+bold("⏮  Rolling back %s/%s")+"\n", projCfg.ProjectSlug, env)
+			fmt.Printf("   Current  : "+dim("v%d")+"\n", currentVersion)
+			fmt.Printf("   Target   : "+cyan("v%d")+"\n", version)
 			fmt.Println()
 
 			// Fetch the historical version
-			fmt.Printf("⏳ Fetching v%d...\n", version)
+			fmt.Printf(dim("⏳ Fetching v%d...")+"\n", version)
 			old, err := client.PullVersion(projCfg.ProjectSlug, env, version)
 			if err != nil {
 				return fmt.Errorf("could not fetch version %d: %w", version, err)
@@ -97,7 +97,7 @@ If you just want to inspect an old version without pushing it:
 				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
-				fmt.Printf("✅ Version %d written to %s (not pushed — inspect before committing)\n",
+				fmt.Printf(green("✅ Version %d written to %s (not pushed — inspect before committing)\n",
 					version, outputFlag)
 				return nil
 			}
@@ -110,7 +110,7 @@ If you just want to inspect an old version without pushing it:
 					keys = append(keys, k)
 				}
 				for _, k := range keys {
-					fmt.Printf("  • %s\n", k)
+					fmt.Printf("  • "+cyan("%s")+"\n", k)
 				}
 				fmt.Println()
 				fmt.Printf("Re-encrypt v%d and push as v%d? [y/N]: ",
@@ -126,7 +126,7 @@ If you just want to inspect an old version without pushing it:
 			// Re-encrypt with the same project password and push as a new version
 			// This is important: we don't just re-upload the old ciphertext because
 			// re-encrypting generates a fresh nonce (AES-GCM nonce reuse is catastrophic).
-			fmt.Print("🔒 Re-encrypting and pushing...")
+			fmt.Print(dim("🔒 Re-encrypting and pushing..."))
 
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, projCfg.ProjectSlug)
 			if err != nil {
@@ -143,13 +143,13 @@ If you just want to inspect an old version without pushing it:
 				return err
 			}
 
-			fmt.Println(" ✅")
+			fmt.Println(green(" ✅"))
 			fmt.Println()
-			fmt.Printf("  ✅ Rolled back successfully\n")
-			fmt.Printf("  Project  : %s\n", projCfg.ProjectSlug)
-			fmt.Printf("  Env      : %s\n", env)
-			fmt.Printf("  Restored : v%d content\n", version)
-			fmt.Printf("  New ver  : v%d\n", result.Version)
+			fmt.Printf("  "+green("✅ Rolled back successfully")+"\n")
+			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
+			fmt.Printf("  "+bold("Env")+"      : %s\n", env)
+			fmt.Printf("  "+bold("Restored")+": "+green("v%d content")+"\n", version)
+			fmt.Printf("  "+bold("New ver")+"  : "+green("v%d")+"\n", result.Version)
 			fmt.Println()
 			fmt.Println("  History preserved — v" +
 				fmt.Sprint(version) + " through v" +
@@ -163,7 +163,7 @@ If you just want to inspect an old version without pushing it:
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
 					os.WriteFile(".env", []byte(plaintext), 0600)
-					fmt.Println("  ✅ Local .env updated")
+					fmt.Println("  "+green("✅ Local .env updated"))
 				}
 			}
 

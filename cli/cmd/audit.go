@@ -42,7 +42,7 @@ Available on the Business plan. Shows the last 50 events.`,
 				if strings.Contains(err.Error(), "Business plan") ||
 					strings.Contains(err.Error(), "402") {
 					fmt.Println()
-					fmt.Println("🔒 Audit logs require the Business plan.")
+					fmt.Println(yellow("🔒 Audit logs require the Business plan."))
 					fmt.Println("   Upgrade at: https://dotsync.onrender.com/pricing")
 					fmt.Println()
 					return nil
@@ -66,13 +66,13 @@ Available on the Business plan. Shows the last 50 events.`,
 				logs = filtered
 			}
 
-			fmt.Printf("\n📋 Audit Log — %s", projCfg.ProjectSlug)
+			fmt.Printf("\n"+bold("📋 Audit Log — %s"), projCfg.ProjectSlug)
 			if envFlag != "" {
 				fmt.Printf(" (%s)", envFlag)
 			}
 			fmt.Println()
 			fmt.Println(strings.Repeat("─", 65))
-			fmt.Printf("  %-18s %-10s %-12s %-10s %s\n",
+			fmt.Printf("  "+bold("%-18s")+" "+bold("%-10s")+" "+bold("%-12s")+" "+bold("%-10s")+" "+bold("%s")+"\n",
 				"WHEN", "WHO", "ACTION", "ENV", "DETAIL")
 			fmt.Println(strings.Repeat("─", 65))
 
@@ -93,8 +93,8 @@ Available on the Business plan. Shows the last 50 events.`,
 				detail := parseAuditDetail(action, metaStr)
 				icon := actionIcon(action)
 
-				fmt.Printf("  %-18s %-10s %s %-8s %-12s %s\n",
-					age, "@"+username, icon, action, envName, detail)
+				fmt.Printf("  "+dim("%-18s")+" "+cyan("%-10s")+" %s "+yellow("%-8s")+" "+blue("%-12s")+" %s\n",
+				age, "@"+username, icon, action, envName, detail)
 			}
 
 			fmt.Println(strings.Repeat("─", 65))

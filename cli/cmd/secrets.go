@@ -68,12 +68,12 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 			}
 			if localFlag {
 				password = cfg.AccessToken
-				fmt.Printf("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...\n", len(cliCrypto.ParseEnvFile(string(data))))
+				fmt.Printf(cyan("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...")+"\n", len(cliCrypto.ParseEnvFile(string(data))))
 			} else {
 				if password == "" {
 					return fmt.Errorf("missing project password. Please run 'dotsync init' again or set DOTSYNC_PASSWORD environment variable.")
 				}
-				fmt.Printf("🔒 Encrypting %d secrets for team access (%s/%s)...\n", len(cliCrypto.ParseEnvFile(string(data))), projCfg.ProjectSlug, env)
+				fmt.Printf(cyan("🔒 Encrypting %d secrets for team access (%s/%s)...")+"\n", len(cliCrypto.ParseEnvFile(string(data))), projCfg.ProjectSlug, env)
 			}
 
 			// Client-side AES-256-GCM encryption
@@ -84,7 +84,7 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return fmt.Errorf("encryption failed: %w", err)
 			}
 
-			fmt.Print("📤 Uploading...")
+			fmt.Print(dim("📤 Uploading..."))
 
 			client := api.New(cfg)
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
@@ -96,12 +96,12 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return err
 			}
 
-			fmt.Println(" ✅")
+			fmt.Println(green(" ✅"))
 			fmt.Println()
-			fmt.Printf("  Project : %s\n", projCfg.ProjectSlug)
-			fmt.Printf("  Env     : %s\n", env)
-			fmt.Printf("  Version : v%d\n", result.Version)
-			fmt.Printf("  Secrets : %d keys encrypted\n", len(cliCrypto.ParseEnvFile(string(data))))
+			fmt.Printf("  "+bold("Project")+" : %s\n", projCfg.ProjectSlug)
+			fmt.Printf("  "+bold("Env")+"     : %s\n", env)
+			fmt.Printf("  "+bold("Version")+" : "+green("v%d")+"\n", result.Version)
+			fmt.Printf("  "+bold("Secrets")+" : "+green("%d keys encrypted")+"\n", len(cliCrypto.ParseEnvFile(string(data))))
 			fmt.Println()
 			if localFlag {
 				fmt.Println("  You can now run: dotsync pull --local")
@@ -170,7 +170,7 @@ decrypts it locally, and writes your .env file.`,
 				}
 			}
 
-			fmt.Printf("📥 Fetching secrets for %s/%s...\n", projCfg.ProjectSlug, env)
+			fmt.Printf(dim("📥 Fetching secrets for %s/%s...")+"\n", projCfg.ProjectSlug, env)
 
 			client := api.New(cfg)
 			result, err := client.Pull(projCfg.ProjectSlug, env)
@@ -187,12 +187,12 @@ decrypts it locally, and writes your .env file.`,
 			}
 			if localFlag {
 				password = cfg.AccessToken
-				fmt.Print("🔓 Decrypting with personal access token...")
+				fmt.Print(dim("🔓 Decrypting with personal access token..."))
 			} else {
 				if password == "" {
 					return fmt.Errorf("missing project password. Please run 'dotsync init' again or set DOTSYNC_PASSWORD environment variable.")
 				}
-				fmt.Print("🔓 Decrypting with team password...")
+				fmt.Print(dim("🔓 Decrypting with team password..."))
 			}
 
 			// Client-side decryption
@@ -205,7 +205,7 @@ decrypts it locally, and writes your .env file.`,
 				return err
 			}
 
-			fmt.Println(" ✅")
+			fmt.Println(green(" ✅"))
 
 			// Write with secure permissions (owner read/write only)
 			if err := os.WriteFile(outputFile, []byte(plaintext), 0600); err != nil {
@@ -215,11 +215,11 @@ decrypts it locally, and writes your .env file.`,
 			parsed := cliCrypto.ParseEnvFile(plaintext)
 
 			fmt.Println()
-			fmt.Printf("  Project  : %s\n", projCfg.ProjectSlug)
-			fmt.Printf("  Env      : %s\n", env)
-			fmt.Printf("  Version  : v%d\n", result.Version)
-			fmt.Printf("  Pushed by: %s\n", result.PushedBy)
-			fmt.Printf("  Secrets  : %d keys written to %s\n", len(parsed), outputFile)
+			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
+			fmt.Printf("  "+bold("Env")+"      : %s\n", env)
+			fmt.Printf("  "+bold("Version")+"  : "+green("v%d")+"\n", result.Version)
+			fmt.Printf("  "+bold("Pushed by")+": "+cyan("%s")+"\n", result.PushedBy)
+			fmt.Printf("  "+bold("Secrets")+"  : "+green("%d keys written to %s")+"\n", len(parsed), outputFile)
 			fmt.Println()
 
 			return nil
