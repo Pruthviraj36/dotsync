@@ -271,7 +271,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce)
+	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.Username, req.EncryptedData, req.Nonce)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "push failed")
 		return

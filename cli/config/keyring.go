@@ -1,72 +1,58 @@
-//go:build !linux || (linux && cgo)
-
 package config
 
-// keyring.go — stores project passwords in the OS keychain.
+// keyring.go — password helpers used by push, pull, run, rollback, and status.
 //
-// This file is built when CGO is available (macOS, Windows, Linux with CGO).
-// On Linux without CGO (cross-compiled binaries), keyring_nocgo.go is used
-// instead, which falls back to DOTSYNC_PASSWORD env var only.
+// Passwords are stored in ~/.dotsync/config.json under project_passwords map.
+// The file is created with 0600 permissions (owner read/write only).
 //
-// Storage backends:
-//   macOS   → Keychain
-//   Linux   → libsecret / GNOME Keyring (requires CGO + libsecret-1-dev)
-//   Windows → Windows Credential Manager
+// CI/CD: set DOTSYNC_PASSWORD env var to bypass the stored map entirely.
 
 import (
 	"errors"
-	"fmt"
 	"os"
-
-	"github.com/zalando/go-keyring"
 )
 
-const (
-	keyringService       = "dotsync"
-	keyringAccountPrefix = "project:"
-)
-
+// ErrNoPassword is returned when no password is found for the project.
 var ErrNoPassword = errors.New(
 	"no project password found\n" +
-		"  On this machine for the first time? Run: dotsync init\n" +
+		"  On this machine for the first time? Run: dotsync init --rotate-password\n" +
 		"  In CI/CD? Set the DOTSYNC_PASSWORD environment variable.",
 )
 
+// GetProjectPassword returns the password for the given project slug.
+// Resolution order:
+//  1. DOTSYNC_PASSWORD env var (CI/CD)
+//  2. ~/.dotsync/config.json project_passwords map
 func GetProjectPassword(projectSlug string) (string, error) {
 	if p := os.Getenv("DOTSYNC_PASSWORD"); p != "" {
 		return p, nil
 	}
 
-	account := keyringAccountPrefix + projectSlug
-	password, err := keyring.Get(keyringService, account)
-	if err == nil {
-		return password, nil
+	cfg, err := LoadGlobal()
+	if err != nil {
+		return "", err
 	}
 
-	if errors.Is(err, keyring.ErrNotFound) {
-		return "", ErrNoPassword
+	if cfg.ProjectPasswords != nil {
+		if p, ok := cfg.ProjectPasswords[projectSlug]; ok && p != "" {
+			return p, nil
+		}
 	}
 
-	return "", fmt.Errorf(
-		"could not access OS keychain (%w)\n"+
-			"  On a headless Linux server? Set DOTSYNC_PASSWORD instead.", err)
+	return "", ErrNoPassword
 }
 
+// SetProjectPassword stores the password for a project in the global config.
 func SetProjectPassword(projectSlug, password string) error {
-	account := keyringAccountPrefix + projectSlug
-	if err := keyring.Set(keyringService, account, password); err != nil {
-		return fmt.Errorf(
-			"could not save password to OS keychain (%w)\n"+
-				"  On a headless Linux server? Use the DOTSYNC_PASSWORD env var instead.", err)
+	cfg, err := LoadGlobal()
+	if err != nil {
+		return err
 	}
-	return nil
-}
 
-func DeleteProjectPassword(projectSlug string) error {
-	account := keyringAccountPrefix + projectSlug
-	err := keyring.Delete(keyringService, account)
-	if err != nil && !errors.Is(err, keyring.ErrNotFound) {
-		return fmt.Errorf("delete keychain entry: %w", err)
+	if cfg.ProjectPasswords == nil {
+		cfg.ProjectPasswords = make(map[string]string)
 	}
-	return nil
+	cfg.ProjectPasswords[projectSlug] = password
+
+	return SaveGlobal(cfg)
 }
