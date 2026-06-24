@@ -19,7 +19,9 @@ Get started:
   dotsync login       Authenticate with GitHub
   dotsync init        Link this folder to a project
   dotsync push        Upload your .env (encrypted)
-  dotsync pull        Download latest .env`,
+  dotsync pull        Download latest .env
+  dotsync run         Run a command with secrets injected (nothing hits disk)
+  dotsync scan        Scan for secrets accidentally left in source files`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -39,10 +41,14 @@ func init() {
 		initCmd(),
 		pushCmd(),
 		pullCmd(),
+		runCmd(),
+		rollbackCmd(),
 		historyCmd(),
 		diffCmd(),
+		scanCmd(),
 		envsCmd(),
 		statusCmd(),
+		auditCmd(),
 		configCmd(),
 		updateCmd(),
 		teamCmd(),
