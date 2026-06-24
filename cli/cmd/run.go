@@ -143,7 +143,7 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				}
 			}()
 
-			fmt.Fprintf(os.Stderr, "→ dotsync: injecting %d secrets (%s/%s v%d)\n",
+			fmt.Fprintf(os.Stderr, dim("→ dotsync: injecting %d secrets (%s/%s v%d)")+"\n",
 				len(secrets), projCfg.ProjectSlug, env, result.Version)
 
 			if err := proc.Run(); err != nil {

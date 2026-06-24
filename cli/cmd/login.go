@@ -32,7 +32,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if config.IsLoggedIn(cfg) {
-		fmt.Println("✅ Already logged in as", cfg.Username)
+		fmt.Println(green("✅ Already logged in as"), cyan(cfg.Username))
 		fmt.Println("   Server:", cfg.ServerURL)
 		fmt.Println("   Run 'dotsync logout' first to switch accounts.")
 		return nil
@@ -64,7 +64,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	fmt.Println("│  Open this URL on any device:                │")
 	fmt.Printf("│  %-44s │\n", dc.VerificationURI)
 	fmt.Println("│                                               │")
-	fmt.Printf("│  And enter this code:   %-19s │\n", dc.UserCode)
+	fmt.Printf("│  And enter this code:   "+bold(yellow("%-19s"))+" │\n", dc.UserCode)
 	fmt.Println("└─────────────────────────────────────────────┘")
 	fmt.Println()
 	fmt.Println("Waiting for you to approve in the browser...")
@@ -76,7 +76,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println("✅ Approved")
+	fmt.Println(green("✅ Approved"))
 	fmt.Print("Finishing login... ")
 
 	// ── Step 4: hand the verified GitHub token to our server, get DotSync
@@ -101,10 +101,10 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 
-	fmt.Println("✅")
+	fmt.Println(green("✅"))
 	fmt.Println()
-	fmt.Printf("Welcome, %s! 👋\n", username)
-	fmt.Printf("Plan: %s\n", plan)
+	fmt.Printf(bold("Welcome, %s! 👋")+"\n", username)
+	fmt.Printf("Plan: "+cyan("%s")+"\n", plan)
 	fmt.Println()
 	fmt.Println("Next: cd into your project and run 'dotsync init'")
 	fmt.Println()
@@ -176,7 +176,7 @@ func logoutCmd() *cobra.Command {
 				return fmt.Errorf("clear credentials: %w", err)
 			}
 
-			fmt.Println("✅ Logged out. All sessions revoked.")
+			fmt.Println(green("✅ Logged out. All sessions revoked."))
 			return nil
 		},
 	}

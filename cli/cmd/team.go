@@ -49,9 +49,9 @@ func teamListCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("\n👥 Team for project '%s'\n", projCfg.ProjectSlug)
+			fmt.Printf("\n"+bold("👥 Team for project '%s'")+"\n", projCfg.ProjectSlug)
 			fmt.Println(strings.Repeat("─", 50))
-			fmt.Printf("  %-25s %-10s %s\n", "USERNAME", "ROLE", "JOINED")
+			fmt.Printf("  "+bold("%-25s")+" "+bold("%-10s")+" "+bold("%s")+"\n", "USERNAME", "ROLE", "JOINED")
 			fmt.Println(strings.Repeat("─", 50))
 
 			for _, m := range members {
@@ -68,10 +68,10 @@ func teamListCmd() *cobra.Command {
 				// Highlight the current user
 				marker := "  "
 				if username == cfg.Username {
-					marker = "→ "
+					marker = green("→ ")
 				}
 
-				fmt.Printf("%s%-25s %-15s %s\n", marker, "@"+username, roleLabel, age)
+				fmt.Printf("%s"+cyan("%-25s")+" %-15s "+dim("%s")+"\n", marker, "@"+username, roleLabel, age)
 			}
 
 			fmt.Println(strings.Repeat("─", 50))
@@ -106,7 +106,7 @@ func teamAddCmd() *cobra.Command {
 			username := args[0]
 			client := api.New(cfg)
 
-			fmt.Printf("⏳ Inviting @%s to '%s' as %s...\n",
+			fmt.Printf(dim("⏳ Inviting @%s to '%s' as %s...")+"\n",
 				username, projCfg.ProjectSlug, roleFlag)
 
 			if err := client.AddTeamMember(projCfg.ProjectSlug, username); err != nil {
@@ -116,12 +116,12 @@ func teamAddCmd() *cobra.Command {
 			// Set role if not the default "member"
 			if roleFlag != "member" {
 				if err := client.UpdateTeamRole(projCfg.ProjectSlug, username, roleFlag); err != nil {
-					fmt.Printf("⚠️  Added, but could not set role to %s: %v\n", roleFlag, err)
+					fmt.Printf(yellow("⚠️  Added, but could not set role to %s: %v")+"\n", roleFlag, err)
 					return nil
 				}
 			}
 
-			fmt.Printf("✅ @%s added to '%s' as %s\n",
+			fmt.Printf(green("✅ @%s added to '%s' as %s")+"\n",
 				username, projCfg.ProjectSlug, roleWithIcon(roleFlag))
 			fmt.Println()
 			fmt.Printf("  They'll need to run: dotsync init\n")
@@ -166,7 +166,7 @@ func teamRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("✅ @%s removed from '%s'\n", username, projCfg.ProjectSlug)
+			fmt.Printf(green("✅ @%s removed from '%s'")+"\n", username, projCfg.ProjectSlug)
 			fmt.Println()
 			fmt.Println("  Note: they still have any locally pulled .env files.")
 			fmt.Println("  Rotate your project password if this was a security removal:")
@@ -210,7 +210,7 @@ func teamRoleCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("✅ @%s is now %s in '%s'\n",
+			fmt.Printf(green("✅ @%s is now %s in '%s'")+"\n",
 				username, roleWithIcon(role), projCfg.ProjectSlug)
 			return nil
 		},

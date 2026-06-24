@@ -52,7 +52,7 @@ without touching the project slug or env config.`,
 			if listErr == nil && len(projects) > 0 {
 				fmt.Println("Your projects:")
 				for _, p := range projects {
-					fmt.Printf("  • %s (slug: %s)\n", p["name"], p["slug"])
+					fmt.Printf("  • "+bold("%s")+" (slug: "+cyan("%s")+")\n", p["name"], p["slug"])
 				}
 				fmt.Println()
 			}
@@ -121,7 +121,7 @@ without touching the project slug or env config.`,
 			ensureGitignore()
 
 			fmt.Println()
-			fmt.Printf("✅ Linked to project '%s' (env: %s)\n", slug, env)
+			fmt.Printf(green("✅ Linked to project '%s' (env: %s)")+"\n", slug, env)
 			fmt.Println()
 			fmt.Println("  dotsync push    # upload your .env")
 			fmt.Println("  dotsync pull    # download latest .env")
@@ -164,7 +164,7 @@ func rotateProjectPassword() error {
 	}
 
 	fmt.Println()
-	fmt.Printf("✅ Password saved for project '%s'\n", projCfg.ProjectSlug)
+	fmt.Printf(green("✅ Password saved for project '%s'")+"\n", projCfg.ProjectSlug)
 	fmt.Println()
 	fmt.Println("  You can now run: dotsync pull")
 	fmt.Println()
@@ -202,13 +202,13 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("passwords do not match — try again")
 	}
 
-	fmt.Print("⏳ Creating project...")
+	fmt.Print(dim("⏳ Creating project..."))
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
 		fmt.Println(" ❌")
 		return err
 	}
-	fmt.Println(" ✅")
+	fmt.Println(green(" ✅"))
 
 	actualSlug := proj["slug"].(string)
 
@@ -226,7 +226,7 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 
 	ensureGitignore()
 
-	fmt.Printf("\n✅ Project '%s' created and linked!\n", name)
+	fmt.Printf("\n"+green("✅ Project '%s' created and linked!")+"\n", name)
 	fmt.Println("\n  3 environments auto-created: dev, staging, production")
 	fmt.Println("  Run: dotsync push")
 	fmt.Println()
@@ -288,7 +288,7 @@ func ensureGitignore() {
 		f.WriteString(entry + "\n")
 	}
 
-	fmt.Println("  📝 Added .env to .gitignore")
+	fmt.Println("  "+dim("📝 Added .env to .gitignore"))
 }
 
 // requireLogin loads config and validates login state.
