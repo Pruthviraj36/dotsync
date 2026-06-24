@@ -6,10 +6,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/spf13/cobra"
 	"github.com/Pruthviraj36/dotsync/cli/api"
-	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
 	"github.com/Pruthviraj36/dotsync/cli/config"
+	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/spf13/cobra"
 )
 
 func historyCmd() *cobra.Command {
@@ -205,34 +205,76 @@ func envsCmd() *cobra.Command {
 func statusCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "status",
-		Short: "Show current login and project status",
+		Short: "Show current login, project, and sync state",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, _ := config.LoadGlobal()
 			projCfg, projErr := config.LoadProject()
 
 			fmt.Println()
 			fmt.Println("📊 DotSync Status")
-			fmt.Println(strings.Repeat("─", 40))
+			fmt.Println(strings.Repeat("─", 44))
 
+			// Auth state
 			if config.IsLoggedIn(cfg) {
 				fmt.Printf("  User    : @%s ✅\n", cfg.Username)
 				fmt.Printf("  Server  : %s\n", cfg.ServerURL)
 			} else {
 				fmt.Println("  User    : not logged in ❌")
 				fmt.Println("  Run: dotsync login")
+				fmt.Println(strings.Repeat("─", 44))
+				fmt.Println()
+				return nil
 			}
 
 			fmt.Println()
 
-			if projErr == nil {
-				fmt.Printf("  Project : %s ✅\n", projCfg.ProjectSlug)
-				fmt.Printf("  Env     : %s (default)\n", projCfg.DefaultEnv)
-			} else {
+			if projErr != nil {
 				fmt.Println("  Project : not linked ❌")
 				fmt.Println("  Run: dotsync init")
+				fmt.Println(strings.Repeat("─", 44))
+				fmt.Println()
+				return nil
 			}
 
-			fmt.Println(strings.Repeat("─", 40))
+			fmt.Printf("  Project : %s ✅\n", projCfg.ProjectSlug)
+			fmt.Printf("  Env     : %s (default)\n", projCfg.DefaultEnv)
+
+			// Keychain password state
+			_, pwErr := config.GetProjectPassword(projCfg.ProjectSlug)
+			if pwErr != nil {
+				fmt.Println("  Password: ❌ not in keychain — run: dotsync init --rotate-password")
+			} else {
+				fmt.Println("  Password: 🔑 in OS keychain ✅")
+			}
+
+			fmt.Println()
+
+			// Sync state — compare remote version with local .env existence
+			client := api.New(cfg)
+			remoteVer, pushedBy, err := client.GetLatestVersion(
+				projCfg.ProjectSlug, projCfg.DefaultEnv)
+			if err != nil {
+				fmt.Println("  Sync    : ⚠️  could not reach server")
+			} else if remoteVer == 0 {
+				fmt.Println("  Sync    : no secrets pushed yet")
+				fmt.Println("  Run: dotsync push")
+			} else {
+				fmt.Printf("  Remote  : v%d (by @%s)\n", remoteVer, pushedBy)
+				if _, err := os.Stat(".env"); err == nil {
+					fmt.Println("  Local   : .env exists — run 'dotsync diff' to compare")
+				} else {
+					fmt.Println("  Local   : no .env ⚠️  — run: dotsync pull")
+				}
+			}
+
+			// Team size
+			members, err := client.ListTeamMembers(projCfg.ProjectSlug)
+			if err == nil {
+				fmt.Printf("  Team    : %d member(s) — 'dotsync team list' for details\n",
+					len(members))
+			}
+
+			fmt.Println(strings.Repeat("─", 44))
 			fmt.Println()
 			return nil
 		},

@@ -2,6 +2,7 @@ package handler
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"os"
 	"strings"
@@ -415,4 +416,204 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		"message":  "user added successfully",
 		"username": targetUser.Username,
 	})
+}
+
+// GET /api/projects/{slug}/team — list all team members with roles
+func (h *TeamHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	members, err := h.teamSvc.ListMembers(r.Context(), proj.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list members")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, members)
+}
+
+// DELETE /api/projects/{slug}/team/{username} — remove a member
+func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+	username := chi.URLParam(r, "username")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (callerRole != "owner" && callerRole != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can remove members")
+		return
+	}
+
+	var targetUser model.User
+	err = h.db.QueryRowContext(r.Context(),
+		`SELECT id FROM users WHERE username = $1`, username,
+	).Scan(&targetUser.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	// Admins cannot remove other admins or the owner — only the owner can
+	if callerRole == "admin" {
+		targetRole, _ := h.teamSvc.GetRole(r.Context(), proj.ID, targetUser.ID)
+		if targetRole == "owner" || targetRole == "admin" {
+			writeError(w, http.StatusForbidden, "admins can only remove members and viewers")
+			return
+		}
+	}
+
+	if err := h.teamSvc.RemoveMember(r.Context(), proj.ID, targetUser.ID); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message":  "member removed",
+		"username": username,
+	})
+}
+
+// PATCH /api/projects/{slug}/team/{username} — update a member's role
+func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+	username := chi.URLParam(r, "username")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || callerRole != "owner" {
+		writeError(w, http.StatusForbidden, "only the project owner can change roles")
+		return
+	}
+
+	var req struct {
+		Role string `json:"role"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Role == "" {
+		writeError(w, http.StatusBadRequest, "role required")
+		return
+	}
+
+	var targetUser model.User
+	err = h.db.QueryRowContext(r.Context(),
+		`SELECT id FROM users WHERE username = $1`, username,
+	).Scan(&targetUser.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+
+	if err := h.teamSvc.UpdateRole(r.Context(), proj.ID, targetUser.ID, req.Role); err != nil {
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"message":  "role updated",
+		"username": username,
+		"role":     req.Role,
+	})
+}
+
+// GET /api/projects/{slug}/envs/{env}/pull?version=N — pull a specific version
+func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+	envName := chi.URLParam(r, "env")
+
+	versionStr := r.URL.Query().Get("version")
+	if versionStr == "" {
+		writeError(w, http.StatusBadRequest, "version query param required")
+		return
+	}
+	var version int
+	if _, err := fmt.Sscanf(versionStr, "%d", &version); err != nil || version < 1 {
+		writeError(w, http.StatusBadRequest, "version must be a positive integer")
+		return
+	}
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	isMember, _ := h.teamSvc.IsProjectMember(r.Context(), proj.ID, claims.UserID)
+	if !isMember {
+		writeError(w, http.StatusForbidden, "not a project member")
+		return
+	}
+
+	env, err := h.projectSvc.GetEnvironment(r.Context(), proj.ID, envName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+
+	secret, err := h.secretSvc.PullVersion(r.Context(), env.ID, version)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, env.ID, "pull", realIP(r),
+		map[string]any{"version": secret.Version, "env": envName, "specific_version": true})
+
+	writeJSON(w, http.StatusOK, map[string]any{
+		"encrypted_data": secret.EncryptedData,
+		"nonce":          secret.DataNonce,
+		"version":        secret.Version,
+		"pushed_by":      secret.PushedBy,
+		"created_at":     secret.CreatedAt,
+	})
+}
+
+// GET /api/projects/{slug}/audit — read audit logs (business plan only)
+func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	limits := model.Plans[claims.Plan]
+	if !limits.HasAuditLogs {
+		writeError(w, http.StatusPaymentRequired,
+			"audit logs require the Business plan — upgrade at dotsync.onrender.com")
+		return
+	}
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (callerRole != "owner" && callerRole != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can view audit logs")
+		return
+	}
+
+	logs, err := h.auditSvc.GetLogs(r.Context(), proj.ID, 50)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to fetch audit logs")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, logs)
 }

@@ -237,7 +237,6 @@ func (c *Client) AddTeamMember(slug, username string) error {
 	return decodeResponse(resp, nil)
 }
 
-
 func (c *Client) Logout() error {
 	resp, err := c.do("POST", "/api/auth/logout", map[string]string{})
 	if err != nil {
@@ -444,4 +443,71 @@ type LoginResponse struct {
 	AccessToken  string         `json:"access_token"`
 	RefreshToken string         `json:"refresh_token"`
 	User         map[string]any `json:"user"`
+}
+
+// ListTeamMembers returns all members of a project with their roles.
+func (c *Client) ListTeamMembers(slug string) ([]map[string]any, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/team", slug), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []map[string]any
+	return result, decodeResponse(resp, &result)
+}
+
+// RemoveTeamMember removes a user from the project team.
+func (c *Client) RemoveTeamMember(slug, username string) error {
+	resp, err := c.do("DELETE", fmt.Sprintf("/api/projects/%s/team/%s", slug, username), nil)
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
+// UpdateTeamRole changes a member's role.
+func (c *Client) UpdateTeamRole(slug, username, role string) error {
+	resp, err := c.do("PATCH", fmt.Sprintf("/api/projects/%s/team/%s", slug, username),
+		map[string]string{"role": role})
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
+// PullVersion fetches a specific version of secrets.
+func (c *Client) PullVersion(slug, env string, version int) (*PullResponse, error) {
+	path := fmt.Sprintf("/api/projects/%s/envs/%s/pull/version?version=%d", slug, env, version)
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return nil, err
+	}
+	var result PullResponse
+	return &result, decodeResponse(resp, &result)
+}
+
+// AuditLogs fetches the audit log for a project.
+func (c *Client) AuditLogs(slug string) ([]map[string]any, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/audit", slug), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result []map[string]any
+	return result, decodeResponse(resp, &result)
+}
+
+// GetLatestVersion fetches just the latest version number for sync-state comparison.
+func (c *Client) GetLatestVersion(slug, env string) (int, string, error) {
+	path := fmt.Sprintf("/api/projects/%s/envs/%s/history", slug, env)
+	resp, err := c.do("GET", path, nil)
+	if err != nil {
+		return 0, "", err
+	}
+	var history []HistoryEntry
+	if err := decodeResponse(resp, &history); err != nil {
+		return 0, "", err
+	}
+	if len(history) == 0 {
+		return 0, "", nil
+	}
+	return history[0].Version, history[0].PushedBy, nil
 }

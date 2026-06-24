@@ -8,9 +8,9 @@ import (
 	"fmt"
 	"time"
 
-	"github.com/google/uuid"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
+	"github.com/google/uuid"
 )
 
 type SecretService struct {
@@ -269,4 +269,156 @@ func (s *TeamService) InviteMember(ctx context.Context, projectID, userID, role,
 		uuid.New().String(), projectID, userID, role, invitedBy,
 	)
 	return err
+}
+
+// ListMembers returns all team members for a project with their usernames and roles.
+func (s *TeamService) ListMembers(ctx context.Context, projectID string) ([]map[string]any, error) {
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT u.username, u.avatar_url, tm.role, tm.created_at
+		FROM team_members tm
+		JOIN users u ON u.id = tm.user_id
+		WHERE tm.project_id = $1
+		ORDER BY
+			CASE tm.role
+				WHEN 'owner'  THEN 1
+				WHEN 'admin'  THEN 2
+				WHEN 'member' THEN 3
+				WHEN 'viewer' THEN 4
+			END, tm.created_at ASC`, projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var members []map[string]any
+	for rows.Next() {
+		var username, avatarURL, role string
+		var createdAt time.Time
+		if err := rows.Scan(&username, &avatarURL, &role, &createdAt); err != nil {
+			return nil, err
+		}
+		members = append(members, map[string]any{
+			"username":   username,
+			"avatar_url": avatarURL,
+			"role":       role,
+			"joined_at":  createdAt,
+		})
+	}
+	return members, rows.Err()
+}
+
+// RemoveMember removes a user from a project team.
+// Cannot remove the owner.
+func (s *TeamService) RemoveMember(ctx context.Context, projectID, targetUserID string) error {
+	// Prevent removing the owner
+	var role string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT role FROM team_members WHERE project_id = $1 AND user_id = $2`,
+		projectID, targetUserID,
+	).Scan(&role)
+	if err != nil {
+		return fmt.Errorf("member not found")
+	}
+	if role == "owner" {
+		return fmt.Errorf("cannot remove the project owner")
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`DELETE FROM team_members WHERE project_id = $1 AND user_id = $2`,
+		projectID, targetUserID,
+	)
+	return err
+}
+
+// UpdateRole changes a team member's role.
+// Cannot change the owner's role or promote someone to owner.
+func (s *TeamService) UpdateRole(ctx context.Context, projectID, targetUserID, newRole string) error {
+	validRoles := map[string]bool{"admin": true, "member": true, "viewer": true}
+	if !validRoles[newRole] {
+		return fmt.Errorf("invalid role: must be admin, member, or viewer")
+	}
+
+	var currentRole string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT role FROM team_members WHERE project_id = $1 AND user_id = $2`,
+		projectID, targetUserID,
+	).Scan(&currentRole)
+	if err != nil {
+		return fmt.Errorf("member not found")
+	}
+	if currentRole == "owner" {
+		return fmt.Errorf("cannot change the project owner's role")
+	}
+
+	_, err = s.db.ExecContext(ctx,
+		`UPDATE team_members SET role = $1 WHERE project_id = $2 AND user_id = $3`,
+		newRole, projectID, targetUserID,
+	)
+	return err
+}
+
+// --- Secret version pull ---
+
+// PullVersion returns a specific version of secrets for an environment.
+func (s *SecretService) PullVersion(ctx context.Context, envID string, version int) (*model.Secret, error) {
+	var sec model.Secret
+	err := s.db.QueryRowContext(ctx, `
+		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
+		FROM secrets
+		WHERE environment_id = $1 AND version = $2`,
+		envID, version,
+	).Scan(
+		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
+		&sec.DataNonce, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
+	)
+	if err != nil {
+		return nil, fmt.Errorf("version %d not found", version)
+	}
+	return &sec, nil
+}
+
+// --- Audit read ---
+
+// GetAuditLogs returns audit log entries for a project.
+func (s *AuditService) GetLogs(ctx context.Context, projectID string, limit int) ([]map[string]any, error) {
+	if limit <= 0 || limit > 100 {
+		limit = 50
+	}
+	rows, err := s.db.QueryContext(ctx, `
+		SELECT al.action, al.metadata, al.ip_address, al.created_at,
+		       u.username, e.name as env_name
+		FROM audit_logs al
+		JOIN users u ON u.id = al.user_id
+		LEFT JOIN environments e ON e.id = al.environment_id
+		WHERE al.project_id = $1
+		ORDER BY al.created_at DESC
+		LIMIT $2`, projectID, limit,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var logs []map[string]any
+	for rows.Next() {
+		var action, metadata, ip, username string
+		var envName *string
+		var createdAt time.Time
+		if err := rows.Scan(&action, &metadata, &ip, &createdAt, &username, &envName); err != nil {
+			return nil, err
+		}
+		entry := map[string]any{
+			"action":     action,
+			"username":   username,
+			"ip":         ip,
+			"created_at": createdAt,
+			"metadata":   metadata,
+		}
+		if envName != nil {
+			entry["env"] = *envName
+		}
+		logs = append(logs, entry)
+	}
+	return logs, rows.Err()
 }

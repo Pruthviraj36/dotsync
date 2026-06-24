@@ -132,12 +132,19 @@ func main() {
 
 		// Teams
 		r.Post("/projects/{slug}/team", teamHandler.AddMember)
+		r.Get("/projects/{slug}/team", teamHandler.ListMembers)
+		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
+		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
+
+		// Audit logs (business plan)
+		r.Get("/projects/{slug}/audit", secretsHandler.AuditLogs)
 
 		// Secrets (stricter rate limit for push/pull)
 		r.Route("/projects/{slug}/envs/{env}", func(r chi.Router) {
 			r.Use(mw.RateLimitByUser(100, time.Minute))
 			r.Post("/push", secretsHandler.Push)
 			r.Get("/pull", secretsHandler.Pull)
+			r.Get("/pull/version", secretsHandler.PullVersion)
 			r.Get("/history", secretsHandler.History)
 		})
 	})
