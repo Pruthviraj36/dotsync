@@ -3,7 +3,6 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
-	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -272,9 +271,8 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.Username, req.EncryptedData, req.Nonce)
+	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce)
 	if err != nil {
-		log.Printf("ERROR push [project=%s env=%s user=%s]: %v", slug, envName, claims.Username, err)
 		writeError(w, http.StatusInternalServerError, "push failed")
 		return
 	}
