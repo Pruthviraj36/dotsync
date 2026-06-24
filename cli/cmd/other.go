@@ -114,9 +114,22 @@ Only shows which keys changed — values are never displayed.`,
 				return fmt.Errorf("fetch remote: %w", err)
 			}
 
+			// Resolve decryption password using the same priority order as push:
+			// 1. DOTSYNC_PASSWORD env var  2. stored project password
+			var diffPassword string
+			if cfg.ProjectPasswords != nil {
+				diffPassword = cfg.ProjectPasswords[projCfg.ProjectSlug]
+			}
+			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
+				diffPassword = envPass
+			}
+			if diffPassword == "" {
+				return fmt.Errorf("missing project password — run: dotsync init --rotate-password or set DOTSYNC_PASSWORD")
+			}
+
 			remotePlain, err := cliCrypto.DecryptEnvFile(
 				remote.EncryptedData, remote.Nonce,
-				cfg.AccessToken, projCfg.ProjectSlug,
+				diffPassword, projCfg.ProjectSlug,
 			)
 			if err != nil {
 				return fmt.Errorf("decrypt remote: %w", err)
