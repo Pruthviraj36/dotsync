@@ -6,14 +6,16 @@ import (
 	"os"
 	"strings"
 
-	"github.com/Pruthviraj36/dotsync/cli/api"
-	"github.com/Pruthviraj36/dotsync/cli/config"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
+
+	"github.com/Pruthviraj36/dotsync/cli/api"
+	"github.com/Pruthviraj36/dotsync/cli/config"
 )
 
 func initCmd() *cobra.Command {
 	var create bool
+	var rotatePassword bool
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -21,11 +23,21 @@ func initCmd() *cobra.Command {
 		Long: `Creates or links this directory to a DotSync project.
 
 A .dotsync.json file is created in the current directory — commit
-this file but NOT your .env. Add .env to your .gitignore.`,
+this file but NOT your .env. Add .env to your .gitignore.
+
+On a new machine where .dotsync.json already exists (from git),
+run 'dotsync init --rotate-password' to enter the project password
+without touching the project slug or env config.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
 				return err
+			}
+
+			// --rotate-password: re-enter password on a new machine without
+			// re-doing the full init flow.
+			if rotatePassword {
+				return rotateProjectPassword()
 			}
 
 			client := api.New(cfg)
@@ -36,8 +48,6 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			fmt.Println("────────────────────────────")
 			fmt.Println()
 
-			// Show existing projects — listErr intentionally kept separate;
-			// a failure here should not block the user from proceeding.
 			projects, listErr := client.ListProjects()
 			if listErr == nil && len(projects) > 0 {
 				fmt.Println("Your projects:")
@@ -63,9 +73,6 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 				return fmt.Errorf("slug cannot be empty")
 			}
 
-			// Only validate against the project list if we actually fetched one.
-			// If ListProjects failed (server unreachable, token issue, etc.) we
-			// let the user proceed — a wrong slug will surface on push/pull instead.
 			if listErr == nil {
 				var matched bool
 				for _, p := range projects {
@@ -100,19 +107,15 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			}
 
 			projCfg := &config.ProjectConfig{
-				ProjectSlug:     slug,
-				DefaultEnv:      env,
+				ProjectSlug: slug,
+				DefaultEnv:  env,
 			}
 			if err := config.SaveProject(projCfg); err != nil {
 				return fmt.Errorf("save project config: %w", err)
 			}
 
-			if cfg.ProjectPasswords == nil {
-				cfg.ProjectPasswords = make(map[string]string)
-			}
-			cfg.ProjectPasswords[slug] = password
-			if err := config.SaveGlobal(cfg); err != nil {
-				return fmt.Errorf("save global config: %w", err)
+			if err := config.SetProjectPassword(slug, password); err != nil {
+				return err
 			}
 
 			ensureGitignore()
@@ -123,13 +126,49 @@ this file but NOT your .env. Add .env to your .gitignore.`,
 			fmt.Println("  dotsync push    # upload your .env")
 			fmt.Println("  dotsync pull    # download latest .env")
 			fmt.Println()
+			fmt.Println("  On a new machine: run 'dotsync init --rotate-password'")
+			fmt.Println("  to enter the same password there.")
+			fmt.Println()
 
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&create, "new", false, "create a new project")
+	cmd.Flags().BoolVar(&rotatePassword, "rotate-password", false,
+		"re-enter the project password on this machine (use after cloning on a new device)")
 	return cmd
+}
+
+// rotateProjectPassword lets the user re-enter the password for an already-linked
+// project. This is the primary workflow for setting up a second machine:
+// clone the repo (which has .dotsync.json), then run dotsync init --rotate-password.
+func rotateProjectPassword() error {
+	projCfg, err := config.LoadProject()
+	if err != nil {
+		return fmt.Errorf("no project linked in this directory — run 'dotsync init' first")
+	}
+
+	fmt.Printf("\n🔑 Set password for project '%s'\n", projCfg.ProjectSlug)
+	fmt.Println("────────────────────────────────")
+	fmt.Println("Enter the same password used on your other machine.")
+	fmt.Println()
+
+	password, err := readPassword("Project Password: ")
+	if err != nil {
+		return err
+	}
+
+	if err := config.SetProjectPassword(projCfg.ProjectSlug, password); err != nil {
+		return err
+	}
+
+	fmt.Println()
+	fmt.Printf("✅ Password saved for project '%s'\n", projCfg.ProjectSlug)
+	fmt.Println()
+	fmt.Println("  You can now run: dotsync pull")
+	fmt.Println()
+	return nil
 }
 
 func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufio.Reader) error {
@@ -154,6 +193,15 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return err
 	}
 
+	// Confirm to catch typos — a wrong password = permanently unrecoverable secrets
+	confirm, err := readPassword("Confirm Password: ")
+	if err != nil {
+		return err
+	}
+	if confirm != password {
+		return fmt.Errorf("passwords do not match — try again")
+	}
+
 	fmt.Print("⏳ Creating project...")
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
@@ -162,20 +210,18 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	}
 	fmt.Println(" ✅")
 
+	actualSlug := proj["slug"].(string)
+
 	projCfg := &config.ProjectConfig{
-		ProjectSlug:     proj["slug"].(string),
-		DefaultEnv:      "dev",
+		ProjectSlug: actualSlug,
+		DefaultEnv:  "dev",
 	}
 	if err := config.SaveProject(projCfg); err != nil {
 		return fmt.Errorf("save project config: %w", err)
 	}
 
-	if cfg.ProjectPasswords == nil {
-		cfg.ProjectPasswords = make(map[string]string)
-	}
-	cfg.ProjectPasswords[proj["slug"].(string)] = password
-	if err := config.SaveGlobal(cfg); err != nil {
-		return fmt.Errorf("save global config: %w", err)
+	if err := config.SetProjectPassword(actualSlug, password); err != nil {
+		return err
 	}
 
 	ensureGitignore()
@@ -189,12 +235,11 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 }
 
 // readPassword reads a password from stdin with echo disabled.
-// Falls back to plain readline when stdin is not a real terminal (CI, pipes).
 func readPassword(prompt string) (string, error) {
 	fmt.Print(prompt)
 	if term.IsTerminal(int(os.Stdin.Fd())) {
 		pw, err := term.ReadPassword(int(os.Stdin.Fd()))
-		fmt.Println() // restore cursor to new line after hidden input
+		fmt.Println()
 		if err != nil {
 			return "", fmt.Errorf("read password: %w", err)
 		}
@@ -203,7 +248,6 @@ func readPassword(prompt string) (string, error) {
 		}
 		return string(pw), nil
 	}
-	// Non-terminal fallback
 	r := bufio.NewReader(os.Stdin)
 	pw, _ := r.ReadString('\n')
 	pw = strings.TrimSpace(pw)
