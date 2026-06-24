@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/base64"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -31,6 +32,16 @@ func New(cfg *config.GlobalConfig) *Client {
 }
 
 // do executes an authenticated request with HMAC signing and auto-refresh.
+//
+// Token handling: if the stored access token is already expired (or within
+// 30s of expiry), we proactively refresh before sending — this avoids the
+// failure case where Argon2id key derivation takes long enough that a token
+// that was valid at the start of push() is expired by the time the HTTP
+// request fires.
+//
+// Retry: on a 401 we refresh and rebuild a brand-new *http.Request rather
+// than mutating the original — the original request's Body is already fully
+// consumed by the first Do() call and cannot be re-read.
 func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	var bodyBytes []byte
 	var err error
@@ -42,6 +53,39 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 		}
 	}
 
+	// Proactively refresh if token is expired or expiring within 30s.
+	// This covers the case where Argon2id key derivation (64 MB, 3 passes)
+	// runs long enough to push us past the 15-minute JWT TTL.
+	if c.tokenExpired() {
+		if err := c.refreshTokens(); err != nil {
+			return nil, fmt.Errorf("session expired — run: dotsync login")
+		}
+	}
+
+	resp, err := c.buildAndSend(method, path, bodyBytes)
+	if err != nil {
+		return nil, err
+	}
+
+	// If still 401 after proactive refresh, try one reactive refresh + retry.
+	if resp.StatusCode == http.StatusUnauthorized {
+		resp.Body.Close()
+		if err := c.refreshTokens(); err != nil {
+			return nil, fmt.Errorf("session expired — run: dotsync login")
+		}
+		// Build a completely fresh request — the original Body is consumed.
+		resp, err = c.buildAndSend(method, path, bodyBytes)
+		if err != nil {
+			return nil, err
+		}
+	}
+
+	return resp, nil
+}
+
+// buildAndSend constructs a signed HTTP request and executes it.
+// Always builds a fresh request so the Body reader is never exhausted.
+func (c *Client) buildAndSend(method, path string, bodyBytes []byte) (*http.Response, error) {
 	req, err := http.NewRequest(method, c.baseURL+path, bytes.NewReader(bodyBytes))
 	if err != nil {
 		return nil, err
@@ -50,46 +94,52 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
 
-	// HMAC-sign the request body using access token as HMAC secret
-	// This proves the request came from a holder of a valid token
-	if len(bodyBytes) > 0 {
-		sig := crypto.HMACSign([]byte(c.cfg.AccessToken), bodyBytes)
-		req.Header.Set("X-DotSync-Signature", sig)
-	} else {
-		// Sign an empty body marker for GET requests
-		sig := crypto.HMACSign([]byte(c.cfg.AccessToken), []byte(""))
-		req.Header.Set("X-DotSync-Signature", sig)
+	// HMAC-sign the request body using access token as HMAC secret.
+	// GET requests sign an empty payload so the header is always present.
+	sigPayload := bodyBytes
+	if len(sigPayload) == 0 {
+		sigPayload = []byte("")
 	}
+	req.Header.Set("X-DotSync-Signature", crypto.HMACSign([]byte(c.cfg.AccessToken), sigPayload))
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
 	}
-
-	// If 401, try to refresh and retry once
-	if resp.StatusCode == http.StatusUnauthorized {
-		resp.Body.Close()
-		if err := c.refreshTokens(); err != nil {
-			return nil, fmt.Errorf("session expired — run: dotsync login")
-		}
-
-		// Retry with new token
-		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
-		if len(bodyBytes) > 0 {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			sig := crypto.HMACSign([]byte(c.cfg.AccessToken), bodyBytes)
-			req.Header.Set("X-DotSync-Signature", sig)
-		} else {
-			sig := crypto.HMACSign([]byte(c.cfg.AccessToken), []byte(""))
-			req.Header.Set("X-DotSync-Signature", sig)
-		}
-		resp, err = c.httpClient.Do(req)
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	return resp, nil
+}
+
+// tokenExpired reports whether the stored access token is expired or will
+// expire within the next 30 seconds. Parses the JWT claims without
+// verifying the signature (the server will verify — we just want the exp).
+func (c *Client) tokenExpired() bool {
+	if c.cfg.AccessToken == "" {
+		return true
+	}
+	parts := strings.Split(c.cfg.AccessToken, ".")
+	if len(parts) != 3 {
+		return true
+	}
+	// JWT payload is base64url-encoded without padding — add it back
+	payload := parts[1]
+	switch len(payload) % 4 {
+	case 2:
+		payload += "=="
+	case 3:
+		payload += "="
+	}
+	decoded, err := base64.URLEncoding.DecodeString(payload)
+	if err != nil {
+		return true
+	}
+	var claims struct {
+		Exp int64 `json:"exp"`
+	}
+	if err := json.Unmarshal(decoded, &claims); err != nil {
+		return true
+	}
+	// Treat as expired if within 30 seconds of actual expiry
+	return time.Now().Add(30 * time.Second).Unix() >= claims.Exp
 }
 
 func (c *Client) refreshTokens() error {
@@ -302,8 +352,6 @@ type DeviceCodeResponse struct {
 }
 
 // StartGitHubDeviceFlow requests a device code + user code from GitHub.
-// The CLI shows the user code and verification URI to the user, who enters
-// the code at that URL on any device with a browser.
 func StartGitHubDeviceFlow(clientID string) (*DeviceCodeResponse, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	form := url.Values{
@@ -343,26 +391,19 @@ func StartGitHubDeviceFlow(clientID string) (*DeviceCodeResponse, error) {
 	return &dc, nil
 }
 
-// PollErrAuthorizationPending is returned while the user hasn't yet
-// completed the browser step — the caller should keep polling.
+// PollErrAuthorizationPending is returned while the user hasn't yet completed the browser step.
 var PollErrAuthorizationPending = fmt.Errorf("authorization_pending")
 
-// PollErrExpired means the user_code expired (15 minutes) before the user
-// completed authorization — the caller must restart the whole flow.
+// PollErrExpired means the user_code expired before the user completed authorization.
 var PollErrExpired = fmt.Errorf("expired_token")
 
 // PollErrAccessDenied means the user explicitly declined authorization.
 var PollErrAccessDenied = fmt.Errorf("access_denied")
 
-// PollErrSlowDown means GitHub is asking us to poll less frequently —
-// the caller must add 5 seconds to its polling interval, cumulatively,
-// per RFC 8628 section 3.5.
+// PollErrSlowDown means GitHub is asking us to poll less frequently.
 var PollErrSlowDown = fmt.Errorf("slow_down")
 
-// PollGitHubDeviceToken makes a single poll request to GitHub's token
-// endpoint. Returns PollErrAuthorizationPending if the user hasn't finished
-// yet (the normal case while waiting) — callers should sleep for `interval`
-// seconds and call this again.
+// PollGitHubDeviceToken makes a single poll request to GitHub's token endpoint.
 func PollGitHubDeviceToken(clientID, deviceCode string) (string, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	form := url.Values{
@@ -411,9 +452,7 @@ func PollGitHubDeviceToken(clientID, deviceCode string) (string, error) {
 	}
 }
 
-// ExchangeGitHubDeviceToken sends the verified GitHub access token to the
-// DotSync server, which independently re-verifies it against GitHub's own
-// /user API and, if valid, issues DotSync access + refresh tokens.
+// ExchangeGitHubDeviceToken sends the verified GitHub access token to the DotSync server.
 func ExchangeGitHubDeviceToken(serverURL, githubAccessToken string) (*LoginResponse, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	body, _ := json.Marshal(map[string]string{"github_access_token": githubAccessToken})
