@@ -23,11 +23,23 @@ func NewSecretService(database *db.DB) *SecretService {
 
 // PushSecrets stores a new version of encrypted secrets for an environment.
 // The ciphertext and nonce are already encrypted on the client — we store blobs only.
+//
+// Version increment is done inside a transaction with FOR UPDATE to prevent a
+// TOCTOU race: without this, two concurrent pushes could both read MAX(version)=N
+// and both attempt to insert version N+1, causing a unique constraint violation
+// on (environment_id, version) for one of them.
 func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce []byte) (*model.Secret, error) {
-	// Get current version
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin tx: %w", err)
+	}
+	defer tx.Rollback()
+
+	// FOR UPDATE locks the winning row (or the table gap) so concurrent pushes
+	// queue up rather than racing to the same version number.
 	var currentVersion int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(version), 0) FROM secrets WHERE environment_id = $1`, envID,
+	err = tx.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM secrets WHERE environment_id = $1 FOR UPDATE`, envID,
 	).Scan(&currentVersion)
 	if err != nil {
 		return nil, fmt.Errorf("get version: %w", err)
@@ -43,7 +55,7 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 		CreatedAt:     time.Now(),
 	}
 
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO secrets (id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		secret.ID, secret.EnvironmentID, secret.EncryptedData,
@@ -51,6 +63,10 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert secret: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit: %w", err)
 	}
 
 	return secret, nil
