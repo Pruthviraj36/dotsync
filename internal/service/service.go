@@ -23,23 +23,11 @@ func NewSecretService(database *db.DB) *SecretService {
 
 // PushSecrets stores a new version of encrypted secrets for an environment.
 // The ciphertext and nonce are already encrypted on the client — we store blobs only.
-//
-// Version increment is done inside a transaction with FOR UPDATE to prevent a
-// TOCTOU race: without this, two concurrent pushes could both read MAX(version)=N
-// and both attempt to insert version N+1, causing a unique constraint violation
-// on (environment_id, version) for one of them.
 func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce []byte) (*model.Secret, error) {
-	tx, err := s.db.BeginTx(ctx, nil)
-	if err != nil {
-		return nil, fmt.Errorf("begin tx: %w", err)
-	}
-	defer tx.Rollback()
-
-	// FOR UPDATE locks the winning row (or the table gap) so concurrent pushes
-	// queue up rather than racing to the same version number.
+	// Get current version
 	var currentVersion int
-	err = tx.QueryRowContext(ctx,
-		`SELECT COALESCE(MAX(version), 0) FROM secrets WHERE environment_id = $1 FOR UPDATE`, envID,
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(MAX(version), 0) FROM secrets WHERE environment_id = $1`, envID,
 	).Scan(&currentVersion)
 	if err != nil {
 		return nil, fmt.Errorf("get version: %w", err)
@@ -55,7 +43,7 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 		CreatedAt:     time.Now(),
 	}
 
-	_, err = tx.ExecContext(ctx, `
+	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO secrets (id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		secret.ID, secret.EnvironmentID, secret.EncryptedData,
@@ -65,10 +53,6 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 		return nil, fmt.Errorf("insert secret: %w", err)
 	}
 
-	if err := tx.Commit(); err != nil {
-		return nil, fmt.Errorf("commit: %w", err)
-	}
-
 	return secret, nil
 }
 
@@ -76,10 +60,11 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 func (s *SecretService) PullLatest(ctx context.Context, envID string) (*model.Secret, error) {
 	var sec model.Secret
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
-		FROM secrets
-		WHERE environment_id = $1
-		ORDER BY version DESC
+		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.version, u.username, s.created_at
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1
+		ORDER BY s.version DESC
 		LIMIT 1`, envID,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
@@ -95,10 +80,11 @@ func (s *SecretService) PullLatest(ctx context.Context, envID string) (*model.Se
 func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays int) ([]model.Secret, error) {
 	since := time.Now().AddDate(0, 0, -historyDays)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT id, environment_id, version, pushed_by, created_at
-		FROM secrets
-		WHERE environment_id = $1 AND created_at >= $2
-		ORDER BY version DESC`, envID, since,
+		SELECT s.id, s.environment_id, s.version, u.username, s.created_at
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1 AND s.created_at >= $2
+		ORDER BY s.version DESC`, envID, since,
 	)
 	if err != nil {
 		return nil, err
@@ -380,9 +366,10 @@ func (s *TeamService) UpdateRole(ctx context.Context, projectID, targetUserID, n
 func (s *SecretService) PullVersion(ctx context.Context, envID string, version int) (*model.Secret, error) {
 	var sec model.Secret
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
-		FROM secrets
-		WHERE environment_id = $1 AND version = $2`,
+		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.version, u.username, s.created_at
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1 AND s.version = $2`,
 		envID, version,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
