@@ -97,7 +97,7 @@ If you just want to inspect an old version without pushing it:
 				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
-				fmt.Printf(green("✅ Version %d written to %s (not pushed — inspect before committing)\n",
+				fmt.Printf(green("✅ Version %d written to %s (not pushed — inspect before committing)")+"\n",
 					version, outputFlag)
 				return nil
 			}
