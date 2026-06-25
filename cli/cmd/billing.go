@@ -128,11 +128,11 @@ func billingPlansCmd() *cobra.Command {
 			// tabwriter counts ANSI escape bytes as visible chars and
 			// miscalculates padding, so we pad manually with %-Ns.
 			// planBadge() strips the emoji here to keep alignment clean.
-			fmt.Printf("  %-14s %-10s %-12s %-10s %-12s %s\n",
+			fmt.Printf("  %-10s %-10s %-12s %-11s %-12s %s\n",
 				bold("PLAN"), bold("PRICE"), bold("PROJECTS"), bold("MEMBERS"), bold("HISTORY"), bold("AUDIT"))
-			fmt.Printf("  %-14s %-10s %-12s %-10s %-12s %s\n",
-				strings.Repeat("─", 8), strings.Repeat("─", 9), strings.Repeat("─", 9),
-				strings.Repeat("─", 7), strings.Repeat("─", 7), strings.Repeat("─", 5))
+			fmt.Printf("  %-10s %-10s %-12s %-11s %-12s %s\n",
+				strings.Repeat("-", 8), strings.Repeat("-", 8), strings.Repeat("-", 9),
+				strings.Repeat("-", 9), strings.Repeat("-", 9), strings.Repeat("-", 5))
 
 			for _, p := range plans {
 				plan := p.(map[string]any)
@@ -154,29 +154,36 @@ func billingPlansCmd() *cobra.Command {
 
 				history := fmt.Sprintf("%v days", plan["history_days"])
 
-				auditLogs := red("✗")
+				auditLogs := red("x")
 				if al, _ := plan["audit_logs"].(bool); al {
-					auditLogs = green("✓")
+					auditLogs = green("v")
 				}
 
-				// planLabel: plain padded name + color applied around it so ANSI
-				// bytes don't affect %-14s width computation.
-				var planLabel string
+				// Pad BEFORE colorizing — fmt.Sprintf counts bytes, not
+				// visible chars, so applying color first breaks alignment.
+				paddedName     := fmt.Sprintf("%-10s", name)
+				paddedPrice    := fmt.Sprintf("%-10s", price)
+				paddedProjects := fmt.Sprintf("%-12s", projects)
+				paddedMembers  := fmt.Sprintf("%-11s", members)
+				paddedHistory  := fmt.Sprintf("%-12s", history)
+
+				// Now colorize the already-padded strings
+				var coloredName string
 				switch name {
 				case "free":
-					planLabel = fmt.Sprintf("%-14s", dim("free"))
+					coloredName = dim(paddedName)
 				case "pro":
-					planLabel = fmt.Sprintf("%-14s", cyan("pro"))
+					coloredName = cyan(paddedName)
 				case "team":
-					planLabel = fmt.Sprintf("%-14s", blue("team"))
+					coloredName = blue(paddedName)
 				case "business":
-					planLabel = fmt.Sprintf("%-14s", yellow("business"))
+					coloredName = yellow(paddedName)
 				default:
-					planLabel = fmt.Sprintf("%-14s", name)
+					coloredName = paddedName
 				}
 
-				fmt.Printf("  %s %-10s %-12s %-10s %-12s %s\n",
-					planLabel, price, projects, members, history, auditLogs)
+				fmt.Printf("  %s %s %s %s %s %s\n",
+					coloredName, paddedPrice, paddedProjects, paddedMembers, paddedHistory, auditLogs)
 			}
 
 			fmt.Println()
