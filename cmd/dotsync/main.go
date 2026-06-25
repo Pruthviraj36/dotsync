@@ -15,7 +15,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/internal/handler"
 	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
 	"github.com/Pruthviraj36/dotsync/internal/service"
-	stripehandler "github.com/Pruthviraj36/dotsync/internal/stripe"
+	"github.com/Pruthviraj36/dotsync/internal/payment"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
@@ -38,8 +38,7 @@ func main() {
 		"DATABASE_URL",
 		"JWT_SECRET",
 		"GITHUB_CLIENT_ID",
-		"STRIPE_SECRET_KEY",
-		"STRIPE_WEBHOOK_SECRET",
+
 	)
 
 	// ── Database ────────────────────────────────────────────────────────────
@@ -74,8 +73,12 @@ func main() {
 	projectHandler := handler.NewProjectHandler(projectSvc, teamSvc)
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
 	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
-	stripeHandler := stripehandler.New(database)
-	billingHandler := handler.NewBillingHandler(stripeHandler, database)
+	paymentProvider, err := payment.New()
+	if err != nil {
+		log.Fatalf("payment provider: %v", err)
+	}
+	log.Printf("payment provider: %s", paymentProvider.Name())
+	billingHandler := handler.NewBillingHandler(paymentProvider, database)
 
 	// ── Router ──────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -108,7 +111,7 @@ func main() {
 	})
 
 	// Stripe webhook — raw body required, no auth middleware
-	r.Post("/api/stripe/webhook", stripeHandler.Webhook)
+	r.Post("/api/payment/webhook", handler.WebhookHandler(paymentProvider, database))
 
 	// ── Public billing route (unauthenticated) ──
 	r.Get("/api/billing/plans", billingHandler.Plans)
