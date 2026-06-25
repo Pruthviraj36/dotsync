@@ -44,24 +44,27 @@ will never silently install an unverified binary.`,
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	fmt.Println(dim("⏳ Checking for updates..."))
+	fmt.Println("⏳ Checking for updates...")
 
 	release, err := fetchLatestRelease()
 	if err != nil {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
-	if Version != "dev" && Version == release.TagName {
-		fmt.Printf(green("✅ You are already using the latest version (%s)!")+"\n", Version)
+	// Normalize both sides: strip leading "v" so "1.33.10" == "v1.33.10"
+	currentNorm := strings.TrimPrefix(Version, "v")
+	latestNorm := strings.TrimPrefix(release.TagName, "v")
+	if Version != "dev" && currentNorm == latestNorm {
+		fmt.Printf("✅ You are already using the latest version (%s)!\n", Version)
 		return nil
 	}
 
-	fmt.Printf("📦 Found new version: "+green("%s")+" (current: "+dim("%s")+")\n", release.TagName, Version)
+	fmt.Printf("📦 Found new version: %s (current: %s)\n", release.TagName, Version)
 
 	// ── Fetch checksums.txt FIRST — refuse to proceed at all if it's missing.
 	// This is the actual security boundary: we never download or apply a
 	// binary we have no way to verify. ──────────────────────────────────────
-	fmt.Println(dim("⏳ Fetching checksums..."))
+	fmt.Println("⏳ Fetching checksums...")
 	checksums, err := fetchChecksums(release)
 	if err != nil {
 		return fmt.Errorf(
@@ -91,7 +94,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no suitable binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
 	}
 
-	fmt.Println(dim("⏳ Downloading..."))
+	fmt.Println("⏳ Downloading...")
 	archiveBytes, err := downloadAll(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %w", err)
@@ -111,14 +114,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				"it: https://github.com/Pruthviraj36/dotsync/issues",
 			assetName, expectedChecksum, actualChecksum)
 	}
-	fmt.Println(green("✅ Checksum verified"))
+	fmt.Println("✅ Checksum verified")
 
 	binaryReader, err := extractBinary(archiveBytes, ext)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(dim("⏳ Applying update..."))
+	fmt.Println("⏳ Applying update...")
 	if err := selfupdate.Apply(binaryReader, selfupdate.Options{}); err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
 			return fmt.Errorf("permission denied — try running with sudo/admin privileges")
@@ -126,7 +129,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to apply update: %w", err)
 	}
 
-	fmt.Printf(green("✅ Successfully updated to %s!")+"\n", release.TagName)
+	fmt.Printf("✅ Successfully updated to %s!\n", release.TagName)
 	return nil
 }
 
