@@ -75,6 +75,7 @@ func main() {
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
 	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
 	stripeHandler := stripehandler.New(database)
+	billingHandler := handler.NewBillingHandler(stripeHandler, database)
 
 	// ── Router ──────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -109,6 +110,9 @@ func main() {
 	// Stripe webhook — raw body required, no auth middleware
 	r.Post("/api/stripe/webhook", stripeHandler.Webhook)
 
+	// ── Public billing route (unauthenticated) ──
+	r.Get("/api/billing/plans", billingHandler.Plans)
+
 	// ── Public auth routes ──
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(mw.RateLimitByIP(20, time.Minute))
@@ -125,6 +129,11 @@ func main() {
 		// Auth
 		r.Post("/auth/logout", authHandler.Logout)
 		r.Get("/auth/me", authHandler.Me)
+
+		// Billing
+		r.Post("/billing/checkout", billingHandler.Checkout)
+		r.Post("/billing/portal", billingHandler.Portal)
+		r.Get("/billing/status", billingHandler.Status)
 
 		// Projects
 		r.Post("/projects", projectHandler.Create)

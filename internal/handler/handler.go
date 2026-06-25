@@ -3,6 +3,7 @@ package handler
 import (
 	"encoding/json"
 	"fmt"
+	"log"
 	"net/http"
 	"os"
 	"strings"
@@ -11,6 +12,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/Pruthviraj36/dotsync/internal/service"
+	stripehandler "github.com/Pruthviraj36/dotsync/internal/stripe"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -273,6 +275,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 
 	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce)
 	if err != nil {
+		log.Printf("ERROR push [project=%s env=%s user=%s]: %v", slug, envName, claims.Username, err)
 		writeError(w, http.StatusInternalServerError, "push failed")
 		return
 	}
@@ -404,6 +407,21 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "user not found in dotsync (they must log in at least once)")
 		return
+	}
+
+	// Enforce plan member limit on the project owner
+	var ownerPlan string
+	_ = h.db.QueryRowContext(r.Context(),
+		`SELECT plan FROM users WHERE id = $1`, proj.OwnerID,
+	).Scan(&ownerPlan)
+	limits := model.Plans[ownerPlan]
+	if limits.MaxMembers != -1 {
+		count, _ := h.teamSvc.CountMembers(r.Context(), proj.ID)
+		if count >= limits.MaxMembers {
+			writeError(w, http.StatusForbidden,
+				fmt.Sprintf("member limit (%d) reached for the %s plan — upgrade at dotsync.onrender.com/upgrade", limits.MaxMembers, ownerPlan))
+			return
+		}
 	}
 
 	err = h.teamSvc.InviteMember(r.Context(), proj.ID, targetUser.ID, "member", claims.UserID)
@@ -616,4 +634,198 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 	}
 
 	writeJSON(w, http.StatusOK, logs)
+}
+
+// ============================================================
+// Billing Handlers
+// ============================================================
+
+type BillingHandler struct {
+	stripeSvc *stripehandler.Handler
+	db        *db.DB
+}
+
+func NewBillingHandler(s *stripehandler.Handler, database *db.DB) *BillingHandler {
+	return &BillingHandler{stripeSvc: s, db: database}
+}
+
+// GET /api/billing/plans — returns plan matrix (unauthenticated, public)
+func (h *BillingHandler) Plans(w http.ResponseWriter, r *http.Request) {
+	writeJSON(w, http.StatusOK, map[string]any{
+		"plans": []map[string]any{
+			{
+				"id":           "free",
+				"name":         "Free",
+				"price_usd":    0,
+				"max_projects": 1,
+				"max_members":  3,
+				"history_days": 7,
+				"audit_logs":   false,
+				"leak_detect":  false,
+			},
+			{
+				"id":           "pro",
+				"name":         "Pro",
+				"price_usd":    9,
+				"max_projects": -1,
+				"max_members":  5,
+				"history_days": 30,
+				"audit_logs":   false,
+				"leak_detect":  true,
+				"price_id":     os.Getenv("STRIPE_PRICE_PRO"),
+			},
+			{
+				"id":           "team",
+				"name":         "Team",
+				"price_usd":    29,
+				"max_projects": -1,
+				"max_members":  10,
+				"history_days": 90,
+				"audit_logs":   false,
+				"leak_detect":  true,
+				"price_id":     os.Getenv("STRIPE_PRICE_TEAM"),
+			},
+			{
+				"id":           "business",
+				"name":         "Business",
+				"price_usd":    79,
+				"max_projects": -1,
+				"max_members":  -1,
+				"history_days": 365,
+				"audit_logs":   true,
+				"leak_detect":  true,
+				"price_id":     os.Getenv("STRIPE_PRICE_BUSINESS"),
+			},
+		},
+	})
+}
+
+// POST /api/billing/checkout — create a Stripe Checkout session
+// Body: {"plan": "pro"|"team"|"business"}
+// Returns: {"checkout_url": "https://checkout.stripe.com/..."}
+//
+// The CLI opens this URL in the browser. After payment, Stripe fires a
+// webhook (customer.subscription.created) which upgrades the user's plan
+// in the DB automatically — no polling needed.
+func (h *BillingHandler) Checkout(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+
+	var req struct {
+		Plan string `json:"plan"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Plan == "" {
+		writeError(w, http.StatusBadRequest, "plan required (pro, team, business)")
+		return
+	}
+
+	priceEnvMap := map[string]string{
+		"pro":      "STRIPE_PRICE_PRO",
+		"team":     "STRIPE_PRICE_TEAM",
+		"business": "STRIPE_PRICE_BUSINESS",
+	}
+	priceEnvKey, ok := priceEnvMap[req.Plan]
+	if !ok {
+		writeError(w, http.StatusBadRequest, "invalid plan — must be pro, team, or business")
+		return
+	}
+	priceID := os.Getenv(priceEnvKey)
+	if priceID == "" {
+		writeError(w, http.StatusInternalServerError, "billing not configured — contact support")
+		return
+	}
+
+	// Fetch user email for Stripe customer
+	var email, username string
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT email, username FROM users WHERE id = $1`, claims.UserID,
+	).Scan(&email, &username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+
+	// Get or create Stripe customer
+	customerID, err := h.stripeSvc.CreateOrGetCustomer(claims.UserID, email, username)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "stripe customer error: "+err.Error())
+		return
+	}
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "https://dotsync.onrender.com"
+	}
+
+	// Create Stripe Checkout session
+	checkoutURL, err := h.stripeSvc.CreateCheckoutSession(customerID, priceID,
+		frontendURL+"/billing/success?plan="+req.Plan,
+		frontendURL+"/billing/cancel",
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "checkout session failed: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{
+		"checkout_url": checkoutURL,
+		"customer_id":  customerID,
+	})
+}
+
+// POST /api/billing/portal — create a Stripe Customer Portal session
+// Returns: {"portal_url": "https://billing.stripe.com/..."}
+//
+// Used for: cancel subscription, update payment method, view invoices.
+// The CLI opens this URL in the browser.
+func (h *BillingHandler) Portal(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+
+	var stripeCustomerID string
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT COALESCE(stripe_customer_id, '') FROM users WHERE id = $1`, claims.UserID,
+	).Scan(&stripeCustomerID)
+	if err != nil || stripeCustomerID == "" {
+		writeError(w, http.StatusBadRequest, "no billing account found — subscribe first with: dotsync upgrade")
+		return
+	}
+
+	frontendURL := os.Getenv("FRONTEND_URL")
+	if frontendURL == "" {
+		frontendURL = "https://dotsync.onrender.com"
+	}
+
+	portalURL, err := h.stripeSvc.CreatePortalSession(stripeCustomerID, frontendURL+"/billing")
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "portal session failed: "+err.Error())
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"portal_url": portalURL})
+}
+
+// GET /api/billing/status — current plan + limits for the authenticated user
+func (h *BillingHandler) Status(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+
+	var plan, stripeSubID string
+	err := h.db.QueryRowContext(r.Context(),
+		`SELECT plan, COALESCE(stripe_subscription_id, '') FROM users WHERE id = $1`, claims.UserID,
+	).Scan(&plan, &stripeSubID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "user lookup failed")
+		return
+	}
+
+	limits := model.Plans[plan]
+	writeJSON(w, http.StatusOK, map[string]any{
+		"plan":             plan,
+		"has_subscription": stripeSubID != "",
+		"limits": map[string]any{
+			"max_projects":  limits.MaxProjects,
+			"max_members":   limits.MaxMembers,
+			"history_days":  limits.HistoryDays,
+			"audit_logs":    limits.HasAuditLogs,
+			"leak_detect":   limits.HasLeakDetect,
+		},
+	})
 }

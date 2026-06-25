@@ -1,0 +1,4 @@
+
+# DotSync — never commit secrets
+.env
+.env.local

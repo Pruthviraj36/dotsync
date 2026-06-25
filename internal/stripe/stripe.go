@@ -10,15 +10,26 @@ import (
 
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	stripe "github.com/stripe/stripe-go/v86"
+	checkoutsession "github.com/stripe/stripe-go/v86/checkout/session"
+	portalsession "github.com/stripe/stripe-go/v86/billingportal/session"
 	"github.com/stripe/stripe-go/v86/customer"
 )
 
-// Plan mapping from Stripe price IDs to DotSync plan names
-var PriceIDToPlan = map[string]string{
-	// Set these to your actual Stripe Price IDs
-	"price_pro_monthly":      "pro",
-	"price_team_monthly":     "team",
-	"price_business_monthly": "business",
+// PriceIDToPlan maps Stripe Price IDs (set via env vars) to DotSync plan names.
+// Use STRIPE_PRICE_PRO, STRIPE_PRICE_TEAM, STRIPE_PRICE_BUSINESS env vars.
+var PriceIDToPlan map[string]string
+
+func init() {
+	PriceIDToPlan = map[string]string{}
+	for env, plan := range map[string]string{
+		"STRIPE_PRICE_PRO":      "pro",
+		"STRIPE_PRICE_TEAM":     "team",
+		"STRIPE_PRICE_BUSINESS": "business",
+	} {
+		if id := os.Getenv(env); id != "" {
+			PriceIDToPlan[id] = plan
+		}
+	}
 }
 
 type Handler struct {
@@ -34,7 +45,8 @@ func New(database *db.DB) *Handler {
 	}
 }
 
-// POST /api/stripe/webhook — receives all Stripe events
+// POST /api/stripe/webhook — receives all Stripe events.
+// Raw body required — do NOT use body-parsing middleware before this.
 func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 	body, err := io.ReadAll(io.LimitReader(r.Body, 65536))
 	if err != nil {
@@ -42,8 +54,6 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify webhook signature — prevents spoofed events
-	// In stripe-go v86, ConstructEvent is on the stripe package directly
 	event, err := stripe.ConstructEvent(body, r.Header.Get("Stripe-Signature"), h.webhookSecret)
 	if err != nil {
 		log.Printf("stripe webhook signature failed: %v", err)
@@ -59,11 +69,16 @@ func (h *Handler) Webhook(w http.ResponseWriter, r *http.Request) {
 		procErr = h.handleSubscriptionDeleted(event)
 	case "invoice.payment_failed":
 		procErr = h.handlePaymentFailed(event)
+	case "invoice.payment_succeeded":
+		procErr = h.handlePaymentSucceeded(event)
+	default:
+		// Unhandled event types — acknowledge receipt so Stripe doesn't retry
+		log.Printf("stripe: unhandled event type %s", event.Type)
 	}
 
 	if procErr != nil {
 		// Return 500 so Stripe retries — a transient DB error here would
-		// otherwise silently and permanently drop a subscription state update.
+		// permanently drop a subscription state update.
 		log.Printf("stripe: processing %s failed: %v", event.Type, procErr)
 		http.Error(w, "processing failed", http.StatusInternalServerError)
 		return
@@ -83,16 +98,17 @@ func (h *Handler) handleSubscriptionUpsert(event stripe.Event) error {
 		priceID := sub.Items.Data[0].Price.ID
 		if p, ok := PriceIDToPlan[priceID]; ok {
 			plan = p
+		} else {
+			log.Printf("stripe: unknown price ID %s — defaulting to free. Add STRIPE_PRICE_* env vars.", priceID)
 		}
 	}
 
-	// Only update if subscription is active
-	if sub.Status != "active" && sub.Status != "trialing" {
+	if sub.Status != stripe.SubscriptionStatusActive && sub.Status != stripe.SubscriptionStatusTrialing {
 		plan = "free"
 	}
 
 	customerID := sub.Customer.ID
-	_, err := h.db.Exec(`
+	result, err := h.db.Exec(`
 		UPDATE users SET plan = $1, stripe_subscription_id = $2, updated_at = NOW()
 		WHERE stripe_customer_id = $3`,
 		plan, sub.ID, customerID,
@@ -100,7 +116,12 @@ func (h *Handler) handleSubscriptionUpsert(event stripe.Event) error {
 	if err != nil {
 		return fmt.Errorf("update user plan: %w", err)
 	}
-	log.Printf("stripe: updated customer %s to plan %s", customerID, plan)
+	rows, _ := result.RowsAffected()
+	if rows == 0 {
+		log.Printf("stripe: no user found for customer %s — webhook may have arrived before user record created", customerID)
+	} else {
+		log.Printf("stripe: customer %s → plan %s (sub %s)", customerID, plan, sub.ID)
+	}
 	return nil
 }
 
@@ -116,8 +137,7 @@ func (h *Handler) handleSubscriptionDeleted(event stripe.Event) error {
 	if err != nil {
 		return fmt.Errorf("downgrade user plan: %w", err)
 	}
-
-	log.Printf("stripe: subscription cancelled for customer %s, downgraded to free", sub.Customer.ID)
+	log.Printf("stripe: subscription cancelled for customer %s → free", sub.Customer.ID)
 	return nil
 }
 
@@ -126,14 +146,22 @@ func (h *Handler) handlePaymentFailed(event stripe.Event) error {
 	if err := json.Unmarshal(event.Data.Raw, &invoice); err != nil {
 		return fmt.Errorf("unmarshal invoice: %w", err)
 	}
-	log.Printf("stripe: payment failed for customer %s", invoice.Customer.ID)
-	// TODO: send email notification (extend with email service)
+	log.Printf("stripe: payment FAILED for customer %s, invoice %s", invoice.Customer.ID, invoice.ID)
+	// TODO: send email notification
 	return nil
 }
 
-// CreateOrGetCustomer creates a Stripe customer for a user or returns existing.
+func (h *Handler) handlePaymentSucceeded(event stripe.Event) error {
+	var invoice stripe.Invoice
+	if err := json.Unmarshal(event.Data.Raw, &invoice); err != nil {
+		return fmt.Errorf("unmarshal invoice: %w", err)
+	}
+	log.Printf("stripe: payment succeeded for customer %s, invoice %s", invoice.Customer.ID, invoice.ID)
+	return nil
+}
+
+// CreateOrGetCustomer creates a Stripe customer for a user, or returns the existing one.
 func (h *Handler) CreateOrGetCustomer(userID, email, username string) (string, error) {
-	// Check if already has stripe customer
 	var stripeID string
 	err := h.db.QueryRow(
 		`SELECT COALESCE(stripe_customer_id, '') FROM users WHERE id = $1`, userID,
@@ -149,14 +177,60 @@ func (h *Handler) CreateOrGetCustomer(userID, email, username string) (string, e
 			"username": username,
 		},
 	}
-
 	c, err := customer.New(params)
 	if err != nil {
-		return "", err
+		return "", fmt.Errorf("stripe customer.New: %w", err)
 	}
 
 	_, err = h.db.Exec(
 		`UPDATE users SET stripe_customer_id = $1 WHERE id = $2`, c.ID, userID,
 	)
-	return c.ID, err
+	if err != nil {
+		return "", fmt.Errorf("save stripe customer id: %w", err)
+	}
+	log.Printf("stripe: created customer %s for user %s", c.ID, username)
+	return c.ID, nil
+}
+
+// CreateCheckoutSession creates a Stripe Checkout session for upgrading a plan.
+// The user is redirected to this URL in their browser to complete payment.
+func (h *Handler) CreateCheckoutSession(customerID, priceID, successURL, cancelURL string) (string, error) {
+	params := &stripe.CheckoutSessionParams{
+		Customer: stripe.String(customerID),
+		Mode:     stripe.String(string(stripe.CheckoutSessionModeSubscription)),
+		LineItems: []*stripe.CheckoutSessionLineItemParams{
+			{
+				Price:    stripe.String(priceID),
+				Quantity: stripe.Int64(1),
+			},
+		},
+		SuccessURL: stripe.String(successURL),
+		CancelURL:  stripe.String(cancelURL),
+		// Allow updating existing subscription (upgrade/downgrade)
+		SubscriptionData: &stripe.CheckoutSessionSubscriptionDataParams{
+			Metadata: map[string]string{
+				"source": "dotsync-cli",
+			},
+		},
+	}
+
+	s, err := checkoutsession.New(params)
+	if err != nil {
+		return "", fmt.Errorf("stripe checkout.session.New: %w", err)
+	}
+	return s.URL, nil
+}
+
+// CreatePortalSession creates a Stripe Customer Portal session.
+// Used for: cancel subscription, update payment method, download invoices.
+func (h *Handler) CreatePortalSession(customerID, returnURL string) (string, error) {
+	params := &stripe.BillingPortalSessionParams{
+		Customer:  stripe.String(customerID),
+		ReturnURL: stripe.String(returnURL),
+	}
+	s, err := portalsession.New(params)
+	if err != nil {
+		return "", fmt.Errorf("stripe portal.session.New: %w", err)
+	}
+	return s.URL, nil
 }
