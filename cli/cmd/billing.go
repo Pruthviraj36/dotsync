@@ -128,8 +128,13 @@ func billingPlansCmd() *cobra.Command {
 			// tabwriter counts ANSI escape bytes as visible chars and
 			// miscalculates padding, so we pad manually with %-Ns.
 			// planBadge() strips the emoji here to keep alignment clean.
-			fmt.Printf("  %-10s %-10s %-12s %-11s %-12s %s\n",
-				bold("PLAN"), bold("PRICE"), bold("PROJECTS"), bold("MEMBERS"), bold("HISTORY"), bold("AUDIT"))
+			fmt.Printf("  %s %s %s %s %s %s\n",
+				bold(fmt.Sprintf("%-10s", "PLAN")),
+				bold(fmt.Sprintf("%-10s", "PRICE")),
+				bold(fmt.Sprintf("%-12s", "PROJECTS")),
+				bold(fmt.Sprintf("%-11s", "MEMBERS")),
+				bold(fmt.Sprintf("%-12s", "HISTORY")),
+				bold("AUDIT"))
 			fmt.Printf("  %-10s %-10s %-12s %-11s %-12s %s\n",
 				strings.Repeat("-", 8), strings.Repeat("-", 8), strings.Repeat("-", 9),
 				strings.Repeat("-", 9), strings.Repeat("-", 9), strings.Repeat("-", 5))
