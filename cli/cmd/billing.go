@@ -6,8 +6,6 @@ import (
 	"os/exec"
 	"runtime"
 	"strings"
-	"text/tabwriter"
-
 	"github.com/spf13/cobra"
 
 	"github.com/Pruthviraj36/dotsync/cli/api"
@@ -127,16 +125,19 @@ func billingPlansCmd() *cobra.Command {
 			fmt.Println(bold("📋 DotSync Plans"))
 			fmt.Println()
 
-			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n",
+			// Column widths — fixed, no tabwriter.
+			// tabwriter counts ANSI escape bytes as visible chars and
+			// miscalculates padding, so we pad manually with %-Ns.
+			// planBadge() strips the emoji here to keep alignment clean.
+			fmt.Printf("  %-14s %-10s %-12s %-10s %-12s %s\n",
 				bold("PLAN"), bold("PRICE"), bold("PROJECTS"), bold("MEMBERS"), bold("HISTORY"), bold("AUDIT"))
-			fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n",
-				strings.Repeat("─", 8), strings.Repeat("─", 10), strings.Repeat("─", 10),
-				strings.Repeat("─", 9), strings.Repeat("─", 10), strings.Repeat("─", 7))
+			fmt.Printf("  %-14s %-10s %-12s %-10s %-12s %s\n",
+				strings.Repeat("─", 8), strings.Repeat("─", 9), strings.Repeat("─", 9),
+				strings.Repeat("─", 7), strings.Repeat("─", 7), strings.Repeat("─", 5))
 
 			for _, p := range plans {
 				plan := p.(map[string]any)
-				name := fmt.Sprintf("%v", plan["name"])
+				name := strings.ToLower(fmt.Sprintf("%v", plan["name"]))
 				price := fmt.Sprintf("$%v/mo", plan["price_usd"])
 				if plan["price_usd"] == float64(0) {
 					price = "Free"
@@ -154,15 +155,30 @@ func billingPlansCmd() *cobra.Command {
 
 				history := fmt.Sprintf("%v days", plan["history_days"])
 
-				auditLogs := "❌"
+				auditLogs := red("✗")
 				if al, _ := plan["audit_logs"].(bool); al {
-					auditLogs = "✅"
+					auditLogs = green("✓")
 				}
 
-				fmt.Fprintf(w, "  %s\t%s\t%s\t%s\t%s\t%s\n",
-					planBadge(strings.ToLower(name)), price, projects, members, history, auditLogs)
+				// planLabel: plain padded name + color applied around it so ANSI
+				// bytes don't affect %-14s width computation.
+				var planLabel string
+				switch name {
+				case "free":
+					planLabel = fmt.Sprintf("%-14s", dim("free"))
+				case "pro":
+					planLabel = fmt.Sprintf("%-14s", cyan("pro"))
+				case "team":
+					planLabel = fmt.Sprintf("%-14s", blue("team"))
+				case "business":
+					planLabel = fmt.Sprintf("%-14s", yellow("business"))
+				default:
+					planLabel = fmt.Sprintf("%-14s", name)
+				}
+
+				fmt.Printf("  %s %-10s %-12s %-10s %-12s %s\n",
+					planLabel, price, projects, members, history, auditLogs)
 			}
-			w.Flush()
 
 			fmt.Println()
 			fmt.Printf("  %s\n", dim("Run 'dotsync billing upgrade' to subscribe"))
