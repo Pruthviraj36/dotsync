@@ -575,13 +575,3 @@ func (c *Client) ListEnvironments(slug string) ([]string, error) {
 	}
 	return names, nil
 }
-
-// BillingStatus returns the current user's plan and limits.
-func (c *Client) BillingStatus() (map[string]any, error) {
-	resp, err := c.do("GET", "/api/billing/status", nil)
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	return result, decodeResponse(resp, &result)
-}
