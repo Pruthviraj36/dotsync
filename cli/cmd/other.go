@@ -114,9 +114,19 @@ Only shows which keys changed — values are never displayed.`,
 				return fmt.Errorf("fetch remote: %w", err)
 			}
 
+			var diffPassword string
+			if cfg.ProjectPasswords != nil {
+				diffPassword = cfg.ProjectPasswords[projCfg.ProjectSlug]
+			}
+			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
+				diffPassword = envPass
+			}
+			if diffPassword == "" {
+				return fmt.Errorf("missing project password — run: dotsync init --rotate-password or set DOTSYNC_PASSWORD")
+			}
 			remotePlain, err := cliCrypto.DecryptEnvFile(
 				remote.EncryptedData, remote.Nonce,
-				cfg.AccessToken, projCfg.ProjectSlug,
+				diffPassword, projCfg.ProjectSlug,
 			)
 			if err != nil {
 				return fmt.Errorf("decrypt remote: %w", err)
@@ -167,7 +177,7 @@ func envsCmd() *cobra.Command {
 		Use:   "envs",
 		Short: "List environments for this project",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			_, err := requireLogin()
+			cfg, err := requireLogin()
 			if err != nil {
 				return err
 			}
@@ -177,25 +187,25 @@ func envsCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf("\n🌍 Environments for project '%s'\n\n", projCfg.ProjectSlug)
-			envs := []struct{ name, desc string }{
-				{"dev", "local development (default)"},
-				{"staging", "pre-production testing"},
-				{"production", "live environment (restricted)"},
+			client := api.New(cfg)
+			envs, err := client.ListEnvironments(projCfg.ProjectSlug)
+			if err != nil {
+				// fallback to known defaults if server unreachable
+				envs = []string{"dev", "staging", "production"}
 			}
 
+			fmt.Printf("\n"+bold("🌍 Environments for '%s'")+"\n\n", projCfg.ProjectSlug)
 			for _, e := range envs {
 				marker := "  "
-				if e.name == projCfg.DefaultEnv {
-					marker = "→ "
+				if e == projCfg.DefaultEnv {
+					marker = green("→ ")
 				}
-				fmt.Printf("%s%-12s %s\n", marker, e.name, e.desc)
+				fmt.Printf("%s%s\n", marker, cyan(e))
 			}
 
 			fmt.Println()
-			fmt.Println("Usage:")
-			fmt.Println("  dotsync push --env production")
-			fmt.Println("  dotsync pull --env staging")
+			fmt.Printf("  %s\n", dim("dotsync push --env production"))
+			fmt.Printf("  %s\n", dim("dotsync pull --env staging"))
 			fmt.Println()
 			return nil
 		},

@@ -43,11 +43,40 @@ services:
                                  # GitHub's Device Flow; the server never participates in
                                  # the token exchange and never needs the secret.
 
-      - key: STRIPE_SECRET_KEY
+      - key: PAYMENT_PROVIDER
+        value: lemonsqueezy     # lemonsqueezy (default) or paypal
+
+      # ── LemonSqueezy (default provider) ──────────────────────────────────
+      # Get these from app.lemonsqueezy.com → Settings → API / Stores / Products
+      - key: LEMONSQUEEZY_API_KEY
         sync: false             # set in Render dashboard
 
-      - key: STRIPE_WEBHOOK_SECRET
-        sync: false             # set in Render dashboard
+      - key: LEMONSQUEEZY_STORE_ID
+        sync: false             # numeric store ID from LS dashboard
+
+      - key: LEMONSQUEEZY_WEBHOOK_SECRET
+        sync: false             # from app.lemonsqueezy.com → Webhooks
+
+      - key: LS_VARIANT_PRO
+        sync: false             # variant ID for the Pro plan product
+
+      - key: LS_VARIANT_TEAM
+        sync: false             # variant ID for the Team plan product
+
+      - key: LS_VARIANT_BUSINESS
+        sync: false             # variant ID for the Business plan product
+
+      # ── PayPal (alternative provider — set PAYMENT_PROVIDER=paypal) ──────
+      # - key: PAYPAL_CLIENT_ID
+      #   sync: false
+      # - key: PAYPAL_CLIENT_SECRET
+      #   sync: false
+      # - key: PAYPAL_PLAN_PRO
+      #   sync: false
+      # - key: PAYPAL_PLAN_TEAM
+      #   sync: false
+      # - key: PAYPAL_PLAN_BUSINESS
+      #   sync: false
 
 # Database is hosted on Neon (https://neon.tech), not Render —
 # create a project there and paste both connection strings above.

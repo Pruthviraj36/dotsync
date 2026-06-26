@@ -554,3 +554,34 @@ func (c *Client) BillingPortal() (map[string]any, error) {
 	var result map[string]any
 	return result, decodeResponse(resp, &result)
 }
+
+// ListEnvironments fetches the environment names for a project.
+func (c *Client) ListEnvironments(slug string) ([]string, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs", slug), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Environments []struct {
+			Name string `json:"name"`
+		} `json:"environments"`
+	}
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	names := make([]string, len(result.Environments))
+	for i, e := range result.Environments {
+		names[i] = e.Name
+	}
+	return names, nil
+}
+
+// BillingStatus returns the current user's plan and limits.
+func (c *Client) BillingStatus() (map[string]any, error) {
+	resp, err := c.do("GET", "/api/billing/status", nil)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	return result, decodeResponse(resp, &result)
+}
