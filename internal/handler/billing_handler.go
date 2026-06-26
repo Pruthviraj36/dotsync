@@ -8,6 +8,7 @@ import (
 	"log"
 	"net/http"
 	"os"
+	"strings"
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
@@ -74,7 +75,18 @@ func (h *BillingHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 
 	priceID := providerPriceID(req.Plan)
 	if priceID == "" {
-		writeError(w, http.StatusBadRequest, "invalid plan or billing not configured for this plan")
+		providerName := os.Getenv("PAYMENT_PROVIDER")
+		if providerName == "" {
+			providerName = "lemonsqueezy"
+		}
+		var hint string
+		switch providerName {
+		case "paypal":
+			hint = fmt.Sprintf("set PAYPAL_PLAN_%s in your environment", strings.ToUpper(req.Plan))
+		default: // lemonsqueezy
+			hint = fmt.Sprintf("set LS_VARIANT_%s in your environment", strings.ToUpper(req.Plan))
+		}
+		writeError(w, http.StatusServiceUnavailable, "billing not configured for plan "+req.Plan+" — "+hint)
 		return
 	}
 

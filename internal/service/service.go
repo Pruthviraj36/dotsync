@@ -60,11 +60,10 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 func (s *SecretService) PullLatest(ctx context.Context, envID string) (*model.Secret, error) {
 	var sec model.Secret
 	err := s.db.QueryRowContext(ctx, `
-		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.version, u.username, s.created_at
-		FROM secrets s
-		JOIN users u ON u.id = s.pushed_by
-		WHERE s.environment_id = $1
-		ORDER BY s.version DESC
+		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
+		FROM secrets
+		WHERE environment_id = $1
+		ORDER BY version DESC
 		LIMIT 1`, envID,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
@@ -80,11 +79,10 @@ func (s *SecretService) PullLatest(ctx context.Context, envID string) (*model.Se
 func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays int) ([]model.Secret, error) {
 	since := time.Now().AddDate(0, 0, -historyDays)
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT s.id, s.environment_id, s.version, u.username, s.created_at
-		FROM secrets s
-		JOIN users u ON u.id = s.pushed_by
-		WHERE s.environment_id = $1 AND s.created_at >= $2
-		ORDER BY s.version DESC`, envID, since,
+		SELECT id, environment_id, version, pushed_by, created_at
+		FROM secrets
+		WHERE environment_id = $1 AND created_at >= $2
+		ORDER BY version DESC`, envID, since,
 	)
 	if err != nil {
 		return nil, err
@@ -366,10 +364,9 @@ func (s *TeamService) UpdateRole(ctx context.Context, projectID, targetUserID, n
 func (s *SecretService) PullVersion(ctx context.Context, envID string, version int) (*model.Secret, error) {
 	var sec model.Secret
 	err := s.db.QueryRowContext(ctx, `
-		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.version, u.username, s.created_at
-		FROM secrets s
-		JOIN users u ON u.id = s.pushed_by
-		WHERE s.environment_id = $1 AND s.version = $2`,
+		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
+		FROM secrets
+		WHERE environment_id = $1 AND version = $2`,
 		envID, version,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
@@ -424,4 +421,27 @@ func (s *AuditService) GetLogs(ctx context.Context, projectID string, limit int)
 		logs = append(logs, entry)
 	}
 	return logs, rows.Err()
+}
+
+// GetEnvironments returns all environments for a project.
+func (s *ProjectService) GetEnvironments(ctx context.Context, projectID string) ([]map[string]any, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, name, created_at FROM environments WHERE project_id = $1 ORDER BY name`, projectID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var envs []map[string]any
+	for rows.Next() {
+		var id, name string
+		var createdAt time.Time
+		if err := rows.Scan(&id, &name, &createdAt); err != nil {
+			continue
+		}
+		envs = append(envs, map[string]any{
+			"id": id, "name": name, "created_at": createdAt,
+		})
+	}
+	return envs, rows.Err()
 }
