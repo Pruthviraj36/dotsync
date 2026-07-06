@@ -75,6 +75,20 @@ func Decrypt(key, ciphertext, nonce []byte) ([]byte, error) {
 	return plaintext, nil
 }
 
+// DeriveServerSubkey derives a per-project 256-bit AES key from the server's
+// master key using HMAC-SHA256. Unlike DeriveKey (which uses slow, memory-hard
+// Argon2id because it protects a user-supplied, possibly weak password),
+// SERVER_MASTER_KEY is already a high-entropy random value generated once at
+// deploy time — so a fast KDF is appropriate and correct here. Deriving a
+// distinct subkey per project means a single leaked ciphertext row never
+// exposes the raw master key, and rotating one project's key doesn't require
+// touching the master key itself.
+func DeriveServerSubkey(masterKey []byte, projectID string) []byte {
+	mac := hmac.New(sha256.New, masterKey)
+	mac.Write([]byte("dotsync-project-password-v1:" + projectID))
+	return mac.Sum(nil) // 32 bytes — exactly AES-256 key size
+}
+
 // GenerateRandomToken generates a cryptographically secure random hex token.
 func GenerateRandomToken(byteLen int) (string, error) {
 	b := make([]byte, byteLen)

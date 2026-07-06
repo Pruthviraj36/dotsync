@@ -549,6 +549,97 @@ func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// ============================================================
+// Password Handlers
+// ============================================================
+//
+// Stores/retrieves the E2EE project password server-side (encrypted with
+// SERVER_MASTER_KEY — see internal/service.PasswordService). This trades
+// pure end-to-end encryption for convenience: any authorized team member
+// can fetch the password on a new machine instead of it being re-typed by
+// hand every time. Every set/get is audit logged.
+
+type PasswordHandler struct {
+	passwordSvc *service.PasswordService
+	projectSvc  *service.ProjectService
+	teamSvc     *service.TeamService
+	auditSvc    *service.AuditService
+}
+
+func NewPasswordHandler(
+	pwSvc *service.PasswordService,
+	ps *service.ProjectService,
+	ts *service.TeamService,
+	as *service.AuditService,
+) *PasswordHandler {
+	return &PasswordHandler{passwordSvc: pwSvc, projectSvc: ps, teamSvc: ts, auditSvc: as}
+}
+
+// PUT /api/projects/{slug}/password — set or rotate the project password
+func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	// Only owner/admin can set or rotate the shared password.
+	role, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (role != "owner" && role != "admin") {
+		writeError(w, http.StatusForbidden, "only an owner or admin can set the project password")
+		return
+	}
+
+	var req struct {
+		Password string `json:"password"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Password == "" {
+		writeError(w, http.StatusBadRequest, "password required")
+		return
+	}
+
+	if err := h.passwordSvc.SetPassword(r.Context(), proj.ID, claims.UserID, req.Password); err != nil {
+		log.Printf("ERROR set password [project=%s user=%s]: %v", slug, claims.Username, err)
+		writeError(w, http.StatusInternalServerError, "failed to store password")
+		return
+	}
+
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "password_rotate", realIP(r), map[string]any{})
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "password saved"})
+}
+
+// GET /api/projects/{slug}/password — fetch the project password
+func (h *PasswordHandler) Get(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	isMember, _ := h.teamSvc.IsProjectMember(r.Context(), proj.ID, claims.UserID)
+	if !isMember {
+		writeError(w, http.StatusForbidden, "not a project member")
+		return
+	}
+
+	password, err := h.passwordSvc.GetPassword(r.Context(), proj.ID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, err.Error())
+		return
+	}
+
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "password_fetch", realIP(r), map[string]any{})
+
+	writeJSON(w, http.StatusOK, map[string]string{"password": password})
+}
+
 // GET /api/projects/{slug}/envs/{env}/pull?version=N — pull a specific version
 func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
@@ -636,109 +727,9 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================
-// Billing Handlers — simple hosted payment link approach
-// No API keys or webhooks required.
-// Plans are upgraded manually after payment confirmation.
+// (Billing handlers live in billing_handler.go — see BillingHandler there,
+// which wires to a payment.Provider so LemonSqueezy/PayPal are swappable.)
 // ============================================================
-
-type BillingHandler struct {
-	db *db.DB
-}
-
-func NewBillingHandler(database *db.DB) *BillingHandler {
-	return &BillingHandler{db: database}
-}
-
-// GET /api/billing/plans
-func (h *BillingHandler) Plans(w http.ResponseWriter, r *http.Request) {
-	writeJSON(w, http.StatusOK, map[string]any{
-		"plans": []map[string]any{
-			{"id": "free", "name": "Free", "price_usd": 0,
-				"max_projects": 1, "max_members": 3, "history_days": 7,
-				"audit_logs": false, "leak_detect": false},
-			{"id": "pro", "name": "Pro", "price_usd": 9,
-				"max_projects": -1, "max_members": 5, "history_days": 30,
-				"audit_logs": false, "leak_detect": true},
-			{"id": "team", "name": "Team", "price_usd": 29,
-				"max_projects": -1, "max_members": 10, "history_days": 90,
-				"audit_logs": false, "leak_detect": true},
-			{"id": "business", "name": "Business", "price_usd": 79,
-				"max_projects": -1, "max_members": -1, "history_days": 365,
-				"audit_logs": true, "leak_detect": true},
-		},
-	})
-}
-
-// GET /api/billing/status
-func (h *BillingHandler) Status(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromCtx(r.Context())
-
-	var plan string
-	_ = h.db.QueryRowContext(r.Context(),
-		`SELECT plan FROM users WHERE id = $1`, claims.UserID,
-	).Scan(&plan)
-	if plan == "" {
-		plan = "free"
-	}
-
-	limits := model.Plans[plan]
-	writeJSON(w, http.StatusOK, map[string]any{
-		"plan": plan,
-		"limits": map[string]any{
-			"max_projects":  limits.MaxProjects,
-			"max_members":   limits.MaxMembers,
-			"history_days":  limits.HistoryDays,
-			"audit_logs":    limits.HasAuditLogs,
-			"leak_detect":   limits.HasLeakDetect,
-		},
-	})
-}
-
-// POST /api/billing/upgrade — admin endpoint to manually set a user's plan
-// after payment is confirmed. Protected by ADMIN_SECRET header.
-func (h *BillingHandler) Upgrade(w http.ResponseWriter, r *http.Request) {
-	adminSecret := os.Getenv("ADMIN_SECRET")
-	if adminSecret == "" || r.Header.Get("X-Admin-Secret") != adminSecret {
-		writeError(w, http.StatusUnauthorized, "unauthorized")
-		return
-	}
-
-	var req struct {
-		Username string `json:"username"`
-		Plan     string `json:"plan"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request")
-		return
-	}
-
-	validPlans := map[string]bool{"free": true, "pro": true, "team": true, "business": true}
-	if !validPlans[req.Plan] {
-		writeError(w, http.StatusBadRequest, "invalid plan")
-		return
-	}
-
-	result, err := h.db.ExecContext(r.Context(),
-		`UPDATE users SET plan = $1, updated_at = NOW() WHERE username = $2`,
-		req.Plan, req.Username,
-	)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "update failed")
-		return
-	}
-	rows, _ := result.RowsAffected()
-	if rows == 0 {
-		writeError(w, http.StatusNotFound, "user not found")
-		return
-	}
-
-	log.Printf("admin: upgraded @%s to %s plan", req.Username, req.Plan)
-	writeJSON(w, http.StatusOK, map[string]string{
-		"username": req.Username,
-		"plan":     req.Plan,
-		"status":   "upgraded",
-	})
-}
 
 // GET /api/projects/{slug}/envs — list environments for a project
 func (h *ProjectHandler) ListEnvironments(w http.ResponseWriter, r *http.Request) {

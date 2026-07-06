@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/Pruthviraj36/dotsync/internal/crypto"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/google/uuid"
@@ -218,11 +219,83 @@ func NewAuditService(database *db.DB) *AuditService {
 
 func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action, ip string, meta map[string]any) {
 	metaJSON, _ := json.Marshal(meta)
+
+	// environment_id is a nullable FK — actions like password rotation
+	// aren't scoped to a single environment, so pass NULL rather than an
+	// empty string (which would fail the foreign key check silently).
+	var envIDArg any
+	if envID != "" {
+		envIDArg = envID
+	}
+
 	_, _ = s.db.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, user_id, project_id, environment_id, action, metadata, ip_address, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
-		uuid.New().String(), userID, projectID, envID, action, string(metaJSON), ip,
+		uuid.New().String(), userID, projectID, envIDArg, action, string(metaJSON), ip,
 	)
+}
+
+// --- Project Password Service ---
+//
+// Holds the E2EE project password server-side so authenticated team members
+// can fetch it instead of re-typing it on every new machine. The password is
+// never stored in plaintext: it's encrypted with a per-project subkey derived
+// from SERVER_MASTER_KEY (see internal/crypto.DeriveServerSubkey). Only the
+// server process holding that master key can ever decrypt it.
+
+type PasswordService struct {
+	db        *db.DB
+	masterKey []byte
+}
+
+func NewPasswordService(database *db.DB, masterKey []byte) *PasswordService {
+	return &PasswordService{db: database, masterKey: masterKey}
+}
+
+// SetPassword encrypts and upserts the password for a project.
+func (s *PasswordService) SetPassword(ctx context.Context, projectID, updatedBy, password string) error {
+	key := crypto.DeriveServerSubkey(s.masterKey, projectID)
+	ciphertext, nonce, err := crypto.Encrypt(key, []byte(password))
+	if err != nil {
+		return fmt.Errorf("encrypt password: %w", err)
+	}
+
+	_, err = s.db.ExecContext(ctx, `
+		INSERT INTO project_passwords (id, project_id, encrypted_password, password_nonce, updated_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		ON CONFLICT (project_id) DO UPDATE SET
+			encrypted_password = EXCLUDED.encrypted_password,
+			password_nonce     = EXCLUDED.password_nonce,
+			updated_by         = EXCLUDED.updated_by,
+			updated_at         = NOW()`,
+		uuid.New().String(), projectID, ciphertext, nonce, updatedBy,
+	)
+	if err != nil {
+		return fmt.Errorf("store password: %w", err)
+	}
+	return nil
+}
+
+// GetPassword decrypts and returns the stored password for a project.
+func (s *PasswordService) GetPassword(ctx context.Context, projectID string) (string, error) {
+	var ciphertext, nonce []byte
+	err := s.db.QueryRowContext(ctx,
+		`SELECT encrypted_password, password_nonce FROM project_passwords WHERE project_id = $1`,
+		projectID,
+	).Scan(&ciphertext, &nonce)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("no password set for this project yet — run: dotsync init --rotate-password")
+	}
+	if err != nil {
+		return "", fmt.Errorf("fetch password: %w", err)
+	}
+
+	key := crypto.DeriveServerSubkey(s.masterKey, projectID)
+	plaintext, err := crypto.Decrypt(key, ciphertext, nonce)
+	if err != nil {
+		return "", fmt.Errorf("decrypt password: %w", err)
+	}
+	return string(plaintext), nil
 }
 
 // --- Team Service ---

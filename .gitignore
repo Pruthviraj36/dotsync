@@ -30,6 +30,7 @@ go.sum.backup
 .DS_Store
 Thumbs.db
 
-# DotSync project config (this is SAFE to commit — it has no secrets)
-.dotsync.json — commit this
+dotsync.zip
+
+.dotsync.json
 render.yaml

@@ -54,12 +54,12 @@ If you just want to inspect an old version without pushing it:
 				return fmt.Errorf("version must be a positive integer, got: %s", args[0])
 			}
 
-			password, err := config.GetProjectPassword(projCfg.ProjectSlug)
+			client := api.New(cfg)
+
+			password, err := resolvePassword(client, projCfg.ProjectSlug)
 			if err != nil {
 				return err
 			}
-
-			client := api.New(cfg)
 
 			// Fetch current version so we can show what we're rolling back from
 			currentVersion, _, _ := client.GetLatestVersion(projCfg.ProjectSlug, env)
@@ -145,7 +145,7 @@ If you just want to inspect an old version without pushing it:
 
 			fmt.Println(green(" ✅"))
 			fmt.Println()
-			fmt.Printf("  "+green("✅ Rolled back successfully")+"\n")
+			fmt.Print("  " + green("✅ Rolled back successfully") + "\n")
 			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"      : %s\n", env)
 			fmt.Printf("  "+bold("Restored")+": "+green("v%d content")+"\n", version)

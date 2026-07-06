@@ -70,7 +70,7 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				return fmt.Errorf("fetch secrets: %w", err)
 			}
 
-			password, err := config.GetProjectPassword(projCfg.ProjectSlug)
+			password, err := resolvePassword(client, projCfg.ProjectSlug)
 			if err != nil {
 				return err
 			}

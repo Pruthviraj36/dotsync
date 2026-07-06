@@ -14,13 +14,19 @@ const (
 )
 
 // GlobalConfig stores credentials in ~/.dotsync/config.json
+//
+// NOTE: project passwords are no longer cached here. They live server-side,
+// encrypted with SERVER_MASTER_KEY (see internal/service.PasswordService),
+// and are fetched on demand via the API. This means a stale config.json can
+// no longer leak a project password if this file is copied, backed up, or
+// synced somewhere it shouldn't be — see cli/api/client.go's
+// GetProjectPassword/SetProjectPassword.
 type GlobalConfig struct {
-	AccessToken      string            `json:"access_token"`
-	RefreshToken     string            `json:"refresh_token"`
-	UserID           string            `json:"user_id"`
-	Username         string            `json:"username"`
-	ServerURL        string            `json:"server_url"`
-	ProjectPasswords map[string]string `json:"project_passwords,omitempty"`
+	AccessToken  string `json:"access_token"`
+	RefreshToken string `json:"refresh_token"`
+	UserID       string `json:"user_id"`
+	Username     string `json:"username"`
+	ServerURL    string `json:"server_url"`
 }
 
 // ProjectConfig stores project binding in .dotsync.json (project root)

@@ -37,6 +37,11 @@ services:
       - key: JWT_SECRET
         generateValue: true     # Render generates a secure random value
 
+      - key: SERVER_MASTER_KEY
+        generateValue: true     # 32-byte hex key used to encrypt project passwords at rest
+                                 # (server-side; see internal/service.PasswordService).
+                                 # If you ever need to set this manually: openssl rand -hex 32
+
       - key: GITHUB_CLIENT_ID
         sync: false             # set in Render dashboard
                                  # GITHUB_CLIENT_SECRET is NOT needed here — login uses
