@@ -58,20 +58,17 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return fmt.Errorf("%s is empty — nothing to push", envFile)
 			}
 
+			client := api.New(cfg)
+
 			// Determine encryption password
 			var password string
-			if cfg.ProjectPasswords != nil {
-				password = cfg.ProjectPasswords[projCfg.ProjectSlug]
-			}
-			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
-				password = envPass
-			}
 			if localFlag {
 				password = cfg.AccessToken
 				fmt.Printf(cyan("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...")+"\n", len(cliCrypto.ParseEnvFile(string(data))))
 			} else {
-				if password == "" {
-					return fmt.Errorf("missing project password. Please run 'dotsync init' again or set DOTSYNC_PASSWORD environment variable.")
+				password, err = resolvePassword(client, projCfg.ProjectSlug)
+				if err != nil {
+					return err
 				}
 				fmt.Printf(cyan("🔒 Encrypting %d secrets for team access (%s/%s)...")+"\n", len(cliCrypto.ParseEnvFile(string(data))), projCfg.ProjectSlug, env)
 			}
@@ -86,7 +83,6 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 
 			fmt.Print(dim("📤 Uploading..."))
 
-			client := api.New(cfg)
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
@@ -179,18 +175,13 @@ decrypts it locally, and writes your .env file.`,
 			}
 
 			var password string
-			if cfg.ProjectPasswords != nil {
-				password = cfg.ProjectPasswords[projCfg.ProjectSlug]
-			}
-			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
-				password = envPass
-			}
 			if localFlag {
 				password = cfg.AccessToken
 				fmt.Print(dim("🔓 Decrypting with personal access token..."))
 			} else {
-				if password == "" {
-					return fmt.Errorf("missing project password. Please run 'dotsync init' again or set DOTSYNC_PASSWORD environment variable.")
+				password, err = resolvePassword(client, projCfg.ProjectSlug)
+				if err != nil {
+					return err
 				}
 				fmt.Print(dim("🔓 Decrypting with team password..."))
 			}

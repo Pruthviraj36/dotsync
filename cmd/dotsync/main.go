@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/hex"
 	"log"
 	"net/http"
 	"os"
@@ -14,6 +15,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/handler"
 	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
+	"github.com/Pruthviraj36/dotsync/internal/payment"
 	"github.com/Pruthviraj36/dotsync/internal/service"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
@@ -39,6 +41,7 @@ func main() {
 		"GITHUB_CLIENT_ID",
 		"STRIPE_SECRET_KEY",
 		"STRIPE_WEBHOOK_SECRET",
+		"SERVER_MASTER_KEY",
 	)
 
 	// ── Database ────────────────────────────────────────────────────────────
@@ -68,12 +71,26 @@ func main() {
 	teamSvc := service.NewTeamService(database)
 	auditSvc := service.NewAuditService(database)
 
+	// SERVER_MASTER_KEY must decode to exactly 32 bytes (AES-256) — generate
+	// one with: openssl rand -hex 32
+	masterKey, err := hex.DecodeString(mustEnv("SERVER_MASTER_KEY"))
+	if err != nil || len(masterKey) != 32 {
+		log.Fatalf("SERVER_MASTER_KEY must be a 64-character hex string (32 bytes) — generate one with: openssl rand -hex 32")
+	}
+	passwordSvc := service.NewPasswordService(database, masterKey)
+
 	// ── Handlers ────────────────────────────────────────────────────────────
 	authHandler := handler.NewAuthHandler(authSvc, database)
 	projectHandler := handler.NewProjectHandler(projectSvc, teamSvc)
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
 	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
-	billingHandler := handler.NewBillingHandler(database)
+	passwordHandler := handler.NewPasswordHandler(passwordSvc, projectSvc, teamSvc, auditSvc)
+
+	paymentProvider, err := payment.New()
+	if err != nil {
+		log.Fatalf("payment provider: %v", err)
+	}
+	billingHandler := handler.NewBillingHandler(paymentProvider, database)
 
 	// ── Router ──────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -105,7 +122,10 @@ func main() {
 		w.Write([]byte(`{"status":"ok","service":"dotsync"}`))
 	})
 
-	// Stripe webhook — raw body required, no auth middleware
+	// Stripe/LemonSqueezy/PayPal webhook — raw body required, no auth middleware.
+	// The provider's own signature verification (inside WebhookHandler) is
+	// what actually authenticates these requests.
+	r.Post("/api/payment/webhook", handler.WebhookHandler(paymentProvider, database))
 
 	// ── Public billing route (unauthenticated) ──
 	r.Get("/api/billing/plans", billingHandler.Plans)
@@ -144,6 +164,10 @@ func main() {
 
 		// Audit logs (business plan)
 		r.Get("/projects/{slug}/audit", secretsHandler.AuditLogs)
+
+		// Project password (server-side encrypted, see PasswordService)
+		r.Put("/projects/{slug}/password", passwordHandler.Set)
+		r.Get("/projects/{slug}/password", passwordHandler.Get)
 
 		// Secrets (stricter rate limit for push/pull)
 		r.Get("/projects/{slug}/envs", projectHandler.ListEnvironments)

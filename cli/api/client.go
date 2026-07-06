@@ -227,6 +227,34 @@ func (c *Client) ListProjects() ([]map[string]any, error) {
 	return result, decodeResponse(resp, &result)
 }
 
+// SetProjectPassword stores/rotates the E2EE project password on the server.
+// Requires owner or admin role on the project.
+func (c *Client) SetProjectPassword(slug, password string) error {
+	resp, err := c.do("PUT", fmt.Sprintf("/api/projects/%s/password", slug), map[string]string{
+		"password": password,
+	})
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
+// GetProjectPassword fetches the E2EE project password from the server.
+// Any project member can call this.
+func (c *Client) GetProjectPassword(slug string) (string, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/password", slug), nil)
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		Password string `json:"password"`
+	}
+	if err := decodeResponse(resp, &result); err != nil {
+		return "", err
+	}
+	return result.Password, nil
+}
+
 func (c *Client) AddTeamMember(slug, username string) error {
 	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/team", slug), map[string]string{
 		"username": username,

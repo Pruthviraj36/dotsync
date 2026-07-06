@@ -114,15 +114,9 @@ Only shows which keys changed — values are never displayed.`,
 				return fmt.Errorf("fetch remote: %w", err)
 			}
 
-			var diffPassword string
-			if cfg.ProjectPasswords != nil {
-				diffPassword = cfg.ProjectPasswords[projCfg.ProjectSlug]
-			}
-			if envPass := os.Getenv("DOTSYNC_PASSWORD"); envPass != "" {
-				diffPassword = envPass
-			}
-			if diffPassword == "" {
-				return fmt.Errorf("missing project password — run: dotsync init --rotate-password or set DOTSYNC_PASSWORD")
+			diffPassword, err := resolvePassword(client, projCfg.ProjectSlug)
+			if err != nil {
+				return err
 			}
 			remotePlain, err := cliCrypto.DecryptEnvFile(
 				remote.EncryptedData, remote.Nonce,
@@ -249,18 +243,19 @@ func statusCmd() *cobra.Command {
 			fmt.Printf("  "+bold("Project")+" : "+cyan("%s")+" "+green("✅")+"\n", projCfg.ProjectSlug)
 			fmt.Printf("  Env     : %s (default)\n", projCfg.DefaultEnv)
 
-			// Keychain password state
-			_, pwErr := config.GetProjectPassword(projCfg.ProjectSlug)
+			// Sync state — compare remote version with local .env existence
+			client := api.New(cfg)
+
+			// Server-side password state
+			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
 			if pwErr != nil {
-				fmt.Println("  "+bold("Password")+": "+red("❌ not in keychain")+" — run: "+cyan("dotsync init --rotate-password"))
+				fmt.Println("  "+bold("Password")+": "+red("❌ not set")+" — run: "+cyan("dotsync init --rotate-password"))
 			} else {
-				fmt.Println("  "+bold("Password")+": "+green("🔑 in OS keychain ✅"))
+				fmt.Println("  "+bold("Password")+": "+green("🔑 available ✅"))
 			}
 
 			fmt.Println()
 
-			// Sync state — compare remote version with local .env existence
-			client := api.New(cfg)
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {

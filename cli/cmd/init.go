@@ -37,7 +37,7 @@ without touching the project slug or env config.`,
 			// --rotate-password: re-enter password on a new machine without
 			// re-doing the full init flow.
 			if rotatePassword {
-				return rotateProjectPassword()
+				return rotateProjectPassword(cfg)
 			}
 
 			client := api.New(cfg)
@@ -114,7 +114,7 @@ without touching the project slug or env config.`,
 				return fmt.Errorf("save project config: %w", err)
 			}
 
-			if err := config.SetProjectPassword(slug, password); err != nil {
+			if err := setPassword(client, slug, password); err != nil {
 				return err
 			}
 
@@ -143,7 +143,7 @@ without touching the project slug or env config.`,
 // rotateProjectPassword lets the user re-enter the password for an already-linked
 // project. This is the primary workflow for setting up a second machine:
 // clone the repo (which has .dotsync.json), then run dotsync init --rotate-password.
-func rotateProjectPassword() error {
+func rotateProjectPassword(cfg *config.GlobalConfig) error {
 	projCfg, err := config.LoadProject()
 	if err != nil {
 		return fmt.Errorf("no project linked in this directory — run 'dotsync init' first")
@@ -159,7 +159,8 @@ func rotateProjectPassword() error {
 		return err
 	}
 
-	if err := config.SetProjectPassword(projCfg.ProjectSlug, password); err != nil {
+	client := api.New(cfg)
+	if err := setPassword(client, projCfg.ProjectSlug, password); err != nil {
 		return err
 	}
 
@@ -220,7 +221,7 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("save project config: %w", err)
 	}
 
-	if err := config.SetProjectPassword(actualSlug, password); err != nil {
+	if err := setPassword(client, actualSlug, password); err != nil {
 		return err
 	}
 
