@@ -2,6 +2,7 @@ package cliCrypto
 
 import (
 	"fmt"
+	"regexp"
 	"strings"
 
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
@@ -25,6 +26,37 @@ func DecryptEnvFile(ciphertext, nonce []byte, password, projectSlug string) (str
 	return string(plain), nil
 }
 
+var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
+
+// ParseEnvFileStrict parses a .env file and rejects any line that is not:
+//   - blank
+//   - a comment (starts with '#')
+//   - a KEY=VALUE pair with a valid key name
+func ParseEnvFileStrict(content string) (map[string]string, error) {
+	result := make(map[string]string)
+	lines := strings.Split(content, "\n")
+	for i, raw := range lines {
+		line := strings.TrimSpace(raw)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+
+		idx := strings.Index(line, "=")
+		if idx <= 0 {
+			return nil, fmt.Errorf("line %d: only comments and KEY=VALUE are allowed", i+1)
+		}
+
+		key := strings.TrimSpace(line[:idx])
+		if !envKeyPattern.MatchString(key) {
+			return nil, fmt.Errorf("line %d: invalid key %q", i+1, key)
+		}
+
+		value := strings.TrimSpace(line[idx+1:])
+		result[key] = stripOptionalQuotes(value)
+	}
+	return result, nil
+}
+
 // ParseEnvFile parses a .env file into key-value pairs.
 // Supports comments (#), blank lines, quoted values, and KEY=VALUE format.
 func ParseEnvFile(content string) map[string]string {
@@ -40,14 +72,17 @@ func ParseEnvFile(content string) map[string]string {
 		}
 		key := strings.TrimSpace(line[:idx])
 		value := strings.TrimSpace(line[idx+1:])
-		// Strip surrounding quotes
-		if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') ||
-			(value[0] == '\'' && value[len(value)-1] == '\'')) {
-			value = value[1 : len(value)-1]
-		}
-		result[key] = value
+		result[key] = stripOptionalQuotes(value)
 	}
 	return result
+}
+
+func stripOptionalQuotes(value string) string {
+	if len(value) >= 2 && ((value[0] == '"' && value[len(value)-1] == '"') ||
+		(value[0] == '\'' && value[len(value)-1] == '\'')) {
+		return value[1 : len(value)-1]
+	}
+	return value
 }
 
 // DiffEnvFiles returns keys that were added, removed, or changed between two env maps.

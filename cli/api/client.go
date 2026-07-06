@@ -63,7 +63,7 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
+		return nil, fmt.Errorf("request failed")
 	}
 
 	// If 401, try to refresh and retry once
@@ -285,7 +285,7 @@ func GetAuthConfig(serverURL string) (*AuthConfig, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(serverURL + "/api/auth/config")
 	if err != nil {
-		return nil, fmt.Errorf("connect to server: %w", err)
+		return nil, fmt.Errorf("connect to server failed")
 	}
 	defer resp.Body.Close()
 
@@ -448,7 +448,7 @@ func ExchangeGitHubDeviceToken(serverURL, githubAccessToken string) (*LoginRespo
 
 	resp, err := client.Post(serverURL+"/api/auth/github/device", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("connect to server: %w", err)
+		return nil, fmt.Errorf("connect to server failed")
 	}
 	defer resp.Body.Close()
 
@@ -557,7 +557,7 @@ func (c *Client) BillingPlans() (map[string]any, error) {
 	// Plans endpoint is unauthenticated — use raw http to avoid token refresh
 	httpResp, err := c.httpClient.Get(c.baseURL + "/api/billing/plans")
 	if err != nil {
-		return nil, fmt.Errorf("fetch plans: %w", err)
+		return nil, fmt.Errorf("fetch plans failed")
 	}
 	var result map[string]any
 	return result, decodeResponse(httpResp, &result)
@@ -576,6 +576,31 @@ func (c *Client) BillingCheckout(plan string) (map[string]any, error) {
 // BillingPortal creates a Stripe Customer Portal session.
 func (c *Client) BillingPortal() (map[string]any, error) {
 	resp, err := c.do("POST", "/api/billing/portal", map[string]string{})
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	return result, decodeResponse(resp, &result)
+}
+
+// BillingCreateGiftCard creates a new gift card (server-admin only).
+func (c *Client) BillingCreateGiftCard(valueUSD int, plan string, maxRedemptions int) (map[string]any, error) {
+	req := map[string]any{
+		"value_usd":       valueUSD,
+		"plan":            plan,
+		"max_redemptions": maxRedemptions,
+	}
+	resp, err := c.do("POST", "/api/billing/gift-cards", req)
+	if err != nil {
+		return nil, err
+	}
+	var result map[string]any
+	return result, decodeResponse(resp, &result)
+}
+
+// BillingRedeemGiftCard redeems a gift card code for the current user.
+func (c *Client) BillingRedeemGiftCard(code string) (map[string]any, error) {
+	resp, err := c.do("POST", "/api/billing/redeem", map[string]string{"code": code})
 	if err != nil {
 		return nil, err
 	}

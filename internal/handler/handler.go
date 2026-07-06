@@ -159,7 +159,12 @@ func NewProjectHandler(ps *service.ProjectService, ts *service.TeamService) *Pro
 // POST /api/projects
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
-	limits := model.Plans[claims.Plan]
+	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid user session")
+		return
+	}
+	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
 
 	// Enforce plan project limit
 	if limits.MaxProjects != -1 {
@@ -325,7 +330,12 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
-	limits := model.Plans[claims.Plan]
+	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid user session")
+		return
+	}
+	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
 
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
@@ -399,11 +409,12 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce plan member limit on the project owner
-	var ownerPlan string
+	var ownerPlan, ownerUsername string
 	_ = h.db.QueryRowContext(r.Context(),
-		`SELECT plan FROM users WHERE id = $1`, proj.OwnerID,
-	).Scan(&ownerPlan)
-	limits := model.Plans[ownerPlan]
+		`SELECT plan, username FROM users WHERE id = $1`, proj.OwnerID,
+	).Scan(&ownerPlan, &ownerUsername)
+	ownerClaims := &auth.Claims{Username: ownerUsername}
+	limits := planLimitsFor(effectivePlanForRequest(ownerClaims, ownerPlan))
 	if limits.MaxMembers != -1 {
 		count, _ := h.teamSvc.CountMembers(r.Context(), proj.ID)
 		if count >= limits.MaxMembers {
@@ -635,6 +646,12 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
+	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid user session")
+		return
+	}
+	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
 
 	versionStr := r.URL.Query().Get("version")
 	if versionStr == "" {
@@ -665,7 +682,7 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.secretSvc.PullVersion(r.Context(), env.ID, version)
+	secret, err := h.secretSvc.PullVersion(r.Context(), env.ID, version, limits.HistoryDays)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -688,7 +705,12 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 
-	limits := model.Plans[claims.Plan]
+	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusUnauthorized, "invalid user session")
+		return
+	}
+	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
 	if !limits.HasAuditLogs {
 		writeError(w, http.StatusPaymentRequired,
 			"audit logs require the Business plan — upgrade at dotsync.onrender.com")

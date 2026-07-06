@@ -151,6 +151,8 @@ func main() {
 		r.Post("/billing/checkout", billingHandler.Checkout)
 		r.Post("/billing/portal", billingHandler.Portal)
 		r.Get("/billing/status", billingHandler.Status)
+		r.Post("/billing/gift-cards", billingHandler.CreateGiftCard)
+		r.Post("/billing/redeem", billingHandler.RedeemGiftCard)
 
 		// Projects
 		r.Post("/projects", projectHandler.Create)

@@ -2,18 +2,25 @@ package handler
 
 import (
 	"context"
+	"crypto/rand"
+	"crypto/sha256"
+	"database/sql"
+	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
 	"strings"
+	"time"
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/Pruthviraj36/dotsync/internal/payment"
+	"github.com/google/uuid"
 )
 
 // BillingHandler handles all payment-related HTTP routes.
@@ -173,9 +180,10 @@ func (h *BillingHandler) Status(w http.ResponseWriter, r *http.Request) {
 		`SELECT plan, COALESCE(stripe_subscription_id, '') FROM users WHERE id = $1`, claims.UserID,
 	).Scan(&plan, &subID)
 
-	limits := model.Plans[plan]
+	effectivePlan := effectivePlanForRequest(claims, plan)
+	limits := planLimitsFor(effectivePlan)
 	writeJSON(w, http.StatusOK, map[string]any{
-		"plan":             plan,
+		"plan":             effectivePlan,
 		"provider":         h.provider.Name(),
 		"has_subscription": subID != "",
 		"limits": map[string]any{
@@ -185,6 +193,185 @@ func (h *BillingHandler) Status(w http.ResponseWriter, r *http.Request) {
 			"audit_logs":   limits.HasAuditLogs,
 			"leak_detect":  limits.HasLeakDetect,
 		},
+	})
+}
+
+// POST /api/billing/gift-cards
+// Body: {"value_usd":79,"plan":"business","max_redemptions":1,"expires_days":30}
+func (h *BillingHandler) CreateGiftCard(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	if !hasAdminFeatureOverride(claims) {
+		writeError(w, http.StatusForbidden, "only server admins can create gift cards")
+		return
+	}
+
+	var req struct {
+		ValueUSD       int    `json:"value_usd"`
+		Plan           string `json:"plan"`
+		MaxRedemptions int    `json:"max_redemptions"`
+		ExpiresDays    int    `json:"expires_days"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	if req.ValueUSD <= 0 {
+		writeError(w, http.StatusBadRequest, "value_usd must be > 0")
+		return
+	}
+	if req.Plan == "" {
+		req.Plan = "business"
+	}
+	if _, ok := model.Plans[req.Plan]; !ok {
+		writeError(w, http.StatusBadRequest, "plan must be one of: free, pro, team, business")
+		return
+	}
+	if req.MaxRedemptions <= 0 {
+		req.MaxRedemptions = 1
+	}
+
+	code, err := generateGiftCardCode()
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to generate gift card code")
+		return
+	}
+	codeHash := hashGiftCardCode(code)
+
+	var expiresAt any = nil
+	if req.ExpiresDays > 0 {
+		expiresAt = time.Now().AddDate(0, 0, req.ExpiresDays)
+	}
+
+	_, err = h.db.ExecContext(r.Context(), `
+		INSERT INTO gift_cards (id, code_hash, value_usd, grant_plan, max_redemptions, redeemed_count, expires_at, created_by, created_at)
+		VALUES ($1, $2, $3, $4, $5, 0, $6, $7, NOW())`,
+		uuid.New().String(), codeHash, req.ValueUSD, req.Plan, req.MaxRedemptions, expiresAt, claims.UserID,
+	)
+	if err != nil {
+		log.Printf("giftcard create: %v", err)
+		writeError(w, http.StatusInternalServerError, "could not create gift card")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"code":            code,
+		"value_usd":       req.ValueUSD,
+		"plan":            req.Plan,
+		"max_redemptions": req.MaxRedemptions,
+		"expires_days":    req.ExpiresDays,
+		"message":         "gift card created",
+	})
+}
+
+// POST /api/billing/redeem
+// Body: {"code":"DSGIFT-..."}
+func (h *BillingHandler) RedeemGiftCard(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	var req struct {
+		Code string `json:"code"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	req.Code = strings.TrimSpace(req.Code)
+	if req.Code == "" {
+		writeError(w, http.StatusBadRequest, "gift card code required")
+		return
+	}
+
+	tx, err := h.db.BeginTx(r.Context(), nil)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "could not start transaction")
+		return
+	}
+	defer tx.Rollback()
+
+	var (
+		giftCardID     string
+		plan           string
+		valueUSD       int
+		maxRedemptions int
+		redeemedCount  int
+		expiresAt      sql.NullTime
+	)
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT id, grant_plan, value_usd, max_redemptions, redeemed_count, expires_at
+		FROM gift_cards
+		WHERE code_hash = $1
+		FOR UPDATE`,
+		hashGiftCardCode(req.Code),
+	).Scan(&giftCardID, &plan, &valueUSD, &maxRedemptions, &redeemedCount, &expiresAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		writeError(w, http.StatusNotFound, "invalid gift card code")
+		return
+	}
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to read gift card")
+		return
+	}
+
+	if expiresAt.Valid && time.Now().After(expiresAt.Time) {
+		writeError(w, http.StatusBadRequest, "gift card has expired")
+		return
+	}
+	if redeemedCount >= maxRedemptions {
+		writeError(w, http.StatusBadRequest, "gift card has no remaining redemptions")
+		return
+	}
+
+	var alreadyRedeemed bool
+	err = tx.QueryRowContext(r.Context(), `
+		SELECT EXISTS(
+			SELECT 1 FROM gift_card_redemptions WHERE gift_card_id = $1 AND user_id = $2
+		)`, giftCardID, claims.UserID,
+	).Scan(&alreadyRedeemed)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to check redemption status")
+		return
+	}
+	if alreadyRedeemed {
+		writeError(w, http.StatusBadRequest, "gift card already redeemed by this user")
+		return
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE users SET plan = $1, updated_at = NOW() WHERE id = $2`,
+		plan, claims.UserID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to apply gift card")
+		return
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `
+		INSERT INTO gift_card_redemptions (id, gift_card_id, user_id, redeemed_plan, value_usd, redeemed_at)
+		VALUES ($1, $2, $3, $4, $5, NOW())`,
+		uuid.New().String(), giftCardID, claims.UserID, plan, valueUSD,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to record redemption")
+		return
+	}
+
+	if _, err := tx.ExecContext(r.Context(), `
+		UPDATE gift_cards SET redeemed_count = redeemed_count + 1 WHERE id = $1`,
+		giftCardID,
+	); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to update gift card usage")
+		return
+	}
+
+	if err := tx.Commit(); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to finalize redemption")
+		return
+	}
+
+	effectivePlan := effectivePlanForRequest(claims, plan)
+	writeJSON(w, http.StatusOK, map[string]any{
+		"message":               "gift card redeemed",
+		"value_usd":             valueUSD,
+		"plan":                  effectivePlan,
+		"all_features_unlocked": effectivePlan == "business",
 	})
 }
 
@@ -328,4 +515,17 @@ func providerSignatureHeader(r *http.Request, providerName string) string {
 func readBody(r *http.Request, limit int64) ([]byte, error) {
 	defer r.Body.Close()
 	return io.ReadAll(io.LimitReader(r.Body, limit))
+}
+
+func generateGiftCardCode() (string, error) {
+	b := make([]byte, 8)
+	if _, err := rand.Read(b); err != nil {
+		return "", err
+	}
+	return "DSGIFT-" + strings.ToUpper(hex.EncodeToString(b)), nil
+}
+
+func hashGiftCardCode(code string) string {
+	sum := sha256.Sum256([]byte(strings.TrimSpace(code)))
+	return hex.EncodeToString(sum[:])
 }

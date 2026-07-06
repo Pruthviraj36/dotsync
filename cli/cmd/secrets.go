@@ -4,10 +4,10 @@ import (
 	"fmt"
 	"os"
 
-	"github.com/spf13/cobra"
 	"github.com/Pruthviraj36/dotsync/cli/api"
-	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
 	"github.com/Pruthviraj36/dotsync/cli/config"
+	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/spf13/cobra"
 )
 
 func pushCmd() *cobra.Command {
@@ -58,19 +58,27 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return fmt.Errorf("%s is empty — nothing to push", envFile)
 			}
 
+			parsedInput, err := cliCrypto.ParseEnvFileStrict(string(data))
+			if err != nil {
+				return fmt.Errorf(
+					"invalid %s format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
+					envFile, err,
+				)
+			}
+
 			client := api.New(cfg)
 
 			// Determine encryption password
 			var password string
 			if localFlag {
 				password = cfg.AccessToken
-				fmt.Printf(cyan("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...")+"\n", len(cliCrypto.ParseEnvFile(string(data))))
+				fmt.Printf(cyan("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...")+"\n", len(parsedInput))
 			} else {
 				password, err = resolvePassword(client, projCfg.ProjectSlug)
 				if err != nil {
 					return err
 				}
-				fmt.Printf(cyan("🔒 Encrypting %d secrets for team access (%s/%s)...")+"\n", len(cliCrypto.ParseEnvFile(string(data))), projCfg.ProjectSlug, env)
+				fmt.Printf(cyan("🔒 Encrypting %d secrets for team access (%s/%s)...")+"\n", len(parsedInput), projCfg.ProjectSlug, env)
 			}
 
 			// Client-side AES-256-GCM encryption
@@ -97,7 +105,7 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 			fmt.Printf("  "+bold("Project")+" : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"     : %s\n", env)
 			fmt.Printf("  "+bold("Version")+" : "+green("v%d")+"\n", result.Version)
-			fmt.Printf("  "+bold("Secrets")+" : "+green("%d keys encrypted")+"\n", len(cliCrypto.ParseEnvFile(string(data))))
+			fmt.Printf("  "+bold("Secrets")+" : "+green("%d keys encrypted")+"\n", len(parsedInput))
 			fmt.Println()
 			if localFlag {
 				fmt.Println("  You can now run: dotsync pull --local")
@@ -196,14 +204,21 @@ decrypts it locally, and writes your .env file.`,
 				return err
 			}
 
+			parsed, err := cliCrypto.ParseEnvFileStrict(plaintext)
+			if err != nil {
+				fmt.Println(" ❌")
+				return fmt.Errorf(
+					"remote payload is not a valid .env file: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
+					err,
+				)
+			}
+
 			fmt.Println(green(" ✅"))
 
 			// Write with secure permissions (owner read/write only)
 			if err := os.WriteFile(outputFile, []byte(plaintext), 0600); err != nil {
 				return fmt.Errorf("write %s: %w", outputFile, err)
 			}
-
-			parsed := cliCrypto.ParseEnvFile(plaintext)
 
 			fmt.Println()
 			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)

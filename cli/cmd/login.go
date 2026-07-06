@@ -33,17 +33,15 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	if config.IsLoggedIn(cfg) {
 		fmt.Println(green("✅ Already logged in as"), cyan(cfg.Username))
-		fmt.Println("   Server:", cfg.ServerURL)
 		fmt.Println("   Run 'dotsync logout' first to switch accounts.")
 		return nil
 	}
 
-	fmt.Println("Server:", cfg.ServerURL)
 	fmt.Print("Connecting... ")
 	authCfg, err := api.GetAuthConfig(cfg.ServerURL)
 	if err != nil {
 		fmt.Println("❌")
-		return fmt.Errorf("could not reach server at %s: %w", cfg.ServerURL, err)
+		return fmt.Errorf("could not reach server: %w", err)
 	}
 	if authCfg.GitHubClientID == "" {
 		fmt.Println("❌")
