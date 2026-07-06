@@ -4,9 +4,9 @@
 
 \---
 
-We've all been there. Someone joins the team and the first onboarding message is *"hey, check your DMs, I'm sending you the `.env` file."* Or someone commits a `.env` by accident. Or you're juggling five machines and can never remember which one has the up-to-date `DATABASE\_URL`.
-
-DotSync fixes that. One command to push. One command to pull. Everything encrypted on your machine before it touches the network.
+I built DotSync after one too many *"can someone send me the latest `.env`?"* messages.
+Between onboarding, new laptops, CI fixes, and accidental commits, secret sharing was always messy.
+DotSync keeps that workflow simple: one command to push, one to pull, and encryption happens on your machine before anything is uploaded.
 
 ```
 $ dotsync push
@@ -21,7 +21,7 @@ $ dotsync push
 
 \---
 
-## How it actually works
+## How it works (plain English)
 
 DotSync does **client-side encryption**. That means:
 
@@ -38,6 +38,40 @@ No trust required on our end. Even if the database leaked tomorrow, your secrets
 * **AES-256-GCM** encryption — authenticated, so tampered data fails loudly
 * **HMAC-SHA256** request signing — every API call is signed, replay attacks don't work
 * **JWT with refresh rotation** — short-lived access tokens, automatic refresh
+
+\---
+
+## Why DotSync is written in Go (and not another language)
+
+Short version: DotSync has two core jobs — a **CLI** people run everywhere and an **API server** that should be fast, simple, and cheap to operate. Go gave the best balance for both in one codebase.
+
+These are the main criteria I optimized for:
+
+1. **Single static binaries**: easy install for users, easy deploy for server, fewer runtime surprises.
+2. **Cross-platform CLI**: first-class support for Linux/macOS/Windows from one build pipeline.
+3. **Fast startup + low overhead**: important for short-lived CLI commands and autoscaled server instances.
+4. **Operational simplicity**: no VM/runtime management in production, fewer moving parts in containers.
+5. **Strong stdlib for networking/crypto**: HTTP, TLS, JSON, and crypto primitives are mature and built in.
+6. **Concurrency model that stays readable**: goroutines/channels fit IO-heavy API workloads well.
+7. **Type safety without heavy ceremony**: catches a lot at compile time while staying productive.
+8. **Small team velocity**: code is easier to onboard into than many low-level alternatives.
+9. **Predictable performance**: good enough throughput/latency without hand-tuning everything.
+10. **Release and CI ergonomics**: GoReleaser + cross-compile makes shipping straightforward.
+11. **Security posture**: fewer transitive runtime dependencies for the core path than typical JS stacks.
+12. **One language across CLI + server**: shared mental model, easier maintenance.
+
+That doesn’t mean other languages are bad. They’re excellent — just optimized for different tradeoffs:
+
+| Language | Great strengths | Why I didn’t choose it for DotSync core |
+| --- | --- | --- |
+| **TypeScript/Node.js** | Fast product iteration, huge package ecosystem | Runtime dependency + heavier supply-chain surface for security-sensitive core tooling |
+| **Python** | Rapid prototyping, superb scripting/data ecosystem | Packaging/distribution friction for polished cross-platform CLI binaries |
+| **Rust** | Maximum performance/control, strong safety | Higher complexity and slower iteration for a small team shipping quickly |
+| **Java/Kotlin** | Mature backend ecosystem, great tooling | Heavier runtime footprint/startup for this CLI-first use case |
+| **C#/.NET** | Excellent developer experience, strong cloud tooling | Larger runtime/distribution footprint than needed for this project shape |
+
+So this wasn’t ideology. It was a practical choice for **distribution, deployability, security, and maintenance cost**.
+If DotSync’s constraints change, the stack can change too.
 
 \---
 
