@@ -3,6 +3,8 @@ package handler
 import (
 	"encoding/json"
 	"net/http"
+
+	"github.com/Pruthviraj36/dotsync/internal/model"
 )
 
 // writeJSON encodes v as JSON and writes it with the given status code.
@@ -15,4 +17,12 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 // writeError writes a JSON error response: {"error": msg}.
 func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
+}
+
+func planLimitsFor(plan string) model.PlanLimits {
+	limits, ok := model.Plans[plan]
+	if !ok {
+		return model.Plans["free"]
+	}
+	return limits
 }

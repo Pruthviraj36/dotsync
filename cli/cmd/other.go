@@ -126,8 +126,20 @@ Only shows which keys changed — values are never displayed.`,
 				return fmt.Errorf("decrypt remote: %w", err)
 			}
 
-			localMap := cliCrypto.ParseEnvFile(string(localData))
-			remoteMap := cliCrypto.ParseEnvFile(remotePlain)
+			localMap, err := cliCrypto.ParseEnvFileStrict(string(localData))
+			if err != nil {
+				return fmt.Errorf(
+					"local .env has invalid format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
+					err,
+				)
+			}
+			remoteMap, err := cliCrypto.ParseEnvFileStrict(remotePlain)
+			if err != nil {
+				return fmt.Errorf(
+					"remote secrets have invalid .env format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
+					err,
+				)
+			}
 
 			// local vs remote: what would change if you pushed?
 			added, removed, changed := cliCrypto.DiffEnvFiles(remoteMap, localMap)
@@ -137,7 +149,7 @@ Only shows which keys changed — values are never displayed.`,
 			fmt.Println(strings.Repeat("─", 50))
 
 			if len(added)+len(removed)+len(changed) == 0 {
-				fmt.Println("  "+green("✅ No differences — your .env is in sync."))
+				fmt.Println("  " + green("✅ No differences — your .env is in sync."))
 				fmt.Println()
 				return nil
 			}
@@ -223,7 +235,7 @@ func statusCmd() *cobra.Command {
 				fmt.Printf("  "+bold("User")+"    : "+cyan("@%s")+" "+green("✅")+"\n", cfg.Username)
 				fmt.Printf("  Server  : %s\n", cfg.ServerURL)
 			} else {
-				fmt.Println("  "+bold("User")+"    : "+red("not logged in ❌"))
+				fmt.Println("  " + bold("User") + "    : " + red("not logged in ❌"))
 				fmt.Println("  Run: dotsync login")
 				fmt.Println(strings.Repeat("─", 44))
 				fmt.Println()
@@ -233,7 +245,7 @@ func statusCmd() *cobra.Command {
 			fmt.Println()
 
 			if projErr != nil {
-				fmt.Println("  "+bold("Project")+" : "+red("not linked ❌"))
+				fmt.Println("  " + bold("Project") + " : " + red("not linked ❌"))
 				fmt.Println("  Run: dotsync init")
 				fmt.Println(strings.Repeat("─", 44))
 				fmt.Println()
@@ -249,9 +261,9 @@ func statusCmd() *cobra.Command {
 			// Server-side password state
 			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
 			if pwErr != nil {
-				fmt.Println("  "+bold("Password")+": "+red("❌ not set")+" — run: "+cyan("dotsync init --rotate-password"))
+				fmt.Println("  " + bold("Password") + ": " + red("❌ not set") + " — run: " + cyan("dotsync init --rotate-password"))
 			} else {
-				fmt.Println("  "+bold("Password")+": "+green("🔑 available ✅"))
+				fmt.Println("  " + bold("Password") + ": " + green("🔑 available ✅"))
 			}
 
 			fmt.Println()
@@ -259,7 +271,7 @@ func statusCmd() *cobra.Command {
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {
-				fmt.Println("  "+bold("Sync")+"    : "+yellow("⚠️  could not reach server"))
+				fmt.Println("  " + bold("Sync") + "    : " + yellow("⚠️  could not reach server"))
 			} else if remoteVer == 0 {
 				fmt.Println("  Sync    : no secrets pushed yet")
 				fmt.Println("  Run: dotsync push")

@@ -89,7 +89,13 @@ If you just want to inspect an old version without pushing it:
 				return fmt.Errorf("could not decrypt v%d: %w", version, err)
 			}
 
-			parsed := cliCrypto.ParseEnvFile(plaintext)
+			parsed, err := cliCrypto.ParseEnvFileStrict(plaintext)
+			if err != nil {
+				return fmt.Errorf(
+					"cannot roll back: version %d is not valid .env format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
+					version, err,
+				)
+			}
 			fmt.Printf("   Contains : %d secrets (pushed by @%s)\n\n", len(parsed), old.PushedBy)
 
 			// Write to a temp preview file if specified
@@ -163,7 +169,7 @@ If you just want to inspect an old version without pushing it:
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
 					os.WriteFile(".env", []byte(plaintext), 0600)
-					fmt.Println("  "+green("✅ Local .env updated"))
+					fmt.Println("  " + green("✅ Local .env updated"))
 				}
 			}
 

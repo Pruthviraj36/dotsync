@@ -86,6 +86,8 @@ dotsync pull
 
 That's it for most use cases.
 
+**.env format rule:** DotSync accepts only blank lines, comment lines (`# ...`), and `KEY=VALUE` entries. Any other syntax is rejected on push/pull/diff/run/rollback to prevent malformed secret files.
+
 \---
 
 ## Command reference
@@ -215,4 +217,3 @@ If you're one of the first 100 people to open a meaningful PR or file a real bug
 
 
 *Built out of frustration with copy-pasting `.env` files into Slack. If you've felt the same pain, give it a try.*
-
