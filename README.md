@@ -86,6 +86,8 @@ dotsync pull
 
 That's it for most use cases.
 
+**.env format rule:** DotSync accepts only blank lines, comment lines (`# ...`), and `KEY=VALUE` entries. Any other syntax is rejected on push/pull/diff/run/rollback to prevent malformed secret files.
+
 \---
 
 ## Command reference
@@ -153,9 +155,13 @@ dotsync scan                          # Scan codebase for accidentally committed
 dotsync audit                         # View audit log (Business plan)
 dotsync billing plans                 # Compare plans
 dotsync billing upgrade               # Upgrade your plan
+dotsync billing giftcard create       # Create a gift card (server admin)
+dotsync billing giftcard redeem CODE  # Redeem a gift card to unlock features
 dotsync update                        # Update the CLI to latest
 dotsync version                       # Show current version
 ```
+
+Server admins are configured with `DOTSYNC_ADMIN_USERS` (comma-separated GitHub usernames, with or without `@`). Admin users get full feature access and can create gift cards.
 
 \---
 
@@ -215,4 +221,3 @@ If you're one of the first 100 people to open a meaningful PR or file a real bug
 
 
 *Built out of frustration with copy-pasting `.env` files into Slack. If you've felt the same pain, give it a try.*
-

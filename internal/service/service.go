@@ -198,6 +198,23 @@ func (s *ProjectService) CountForUser(ctx context.Context, userID string) (int, 
 	return count, err
 }
 
+func (s *ProjectService) GetUserPlan(ctx context.Context, userID string) (string, error) {
+	var plan string
+	err := s.db.QueryRowContext(ctx,
+		`SELECT COALESCE(plan, 'free') FROM users WHERE id = $1`, userID,
+	).Scan(&plan)
+	if errors.Is(err, sql.ErrNoRows) {
+		return "", fmt.Errorf("user not found")
+	}
+	if err != nil {
+		return "", err
+	}
+	if _, ok := model.Plans[plan]; !ok {
+		return "free", nil
+	}
+	return plan, nil
+}
+
 func (s *ProjectService) GetEnvironment(ctx context.Context, projectID, envName string) (*model.Environment, error) {
 	var env model.Environment
 	err := s.db.QueryRowContext(ctx,
@@ -433,20 +450,22 @@ func (s *TeamService) UpdateRole(ctx context.Context, projectID, targetUserID, n
 
 // --- Secret version pull ---
 
-// PullVersion returns a specific version of secrets for an environment.
-func (s *SecretService) PullVersion(ctx context.Context, envID string, version int) (*model.Secret, error) {
+// PullVersion returns a specific version of secrets for an environment, only if
+// that version falls inside the caller's plan history window.
+func (s *SecretService) PullVersion(ctx context.Context, envID string, version, historyDays int) (*model.Secret, error) {
 	var sec model.Secret
+	since := time.Now().AddDate(0, 0, -historyDays)
 	err := s.db.QueryRowContext(ctx, `
 		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
 		FROM secrets
-		WHERE environment_id = $1 AND version = $2`,
-		envID, version,
+		WHERE environment_id = $1 AND version = $2 AND created_at >= $3`,
+		envID, version, since,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
 		&sec.DataNonce, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("version %d not found", version)
+		return nil, fmt.Errorf("version %d not found or outside your plan history window", version)
 	}
 	return &sec, nil
 }

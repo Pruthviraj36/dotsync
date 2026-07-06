@@ -13,9 +13,12 @@ import (
 )
 
 // Payment links — create these for free on:
-//   https://app.lemonsqueezy.com  (signup free, works in India, instant)
+//
+//	https://app.lemonsqueezy.com  (signup free, works in India, instant)
+//
 // Or:
-//   https://gumroad.com           (signup free, global, no approval needed)
+//
+//	https://gumroad.com           (signup free, global, no approval needed)
 //
 // Just create a product → set recurring price → copy the checkout link.
 // No API keys, no webhooks, no SDK. Update these constants after you create them.
@@ -35,6 +38,7 @@ func billingCmd() *cobra.Command {
 		billingPlansCmd(),
 		billingUpgradeCmd(),
 		billingManageCmd(),
+		billingGiftCardCmd(),
 	)
 	return c
 }
@@ -143,11 +147,11 @@ func billingPlansCmd() *cobra.Command {
 				if row.audit {
 					audit = green("v")
 				}
-				paddedName     := fmt.Sprintf("%-10s", row.name)
-				paddedPrice    := fmt.Sprintf("%-10s", row.price)
+				paddedName := fmt.Sprintf("%-10s", row.name)
+				paddedPrice := fmt.Sprintf("%-10s", row.price)
 				paddedProjects := fmt.Sprintf("%-12s", row.projects)
-				paddedMembers  := fmt.Sprintf("%-11s", row.members)
-				paddedHistory  := fmt.Sprintf("%-12s", row.history)
+				paddedMembers := fmt.Sprintf("%-11s", row.members)
+				paddedHistory := fmt.Sprintf("%-12s", row.history)
 
 				var coloredName string
 				switch row.name {
@@ -175,9 +179,9 @@ func billingPlansCmd() *cobra.Command {
 // dotsync billing upgrade [plan]
 func billingUpgradeCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:     "upgrade [plan]",
-		Short:   "Upgrade your plan (pro, team, business)",
-		Args:    cobra.MaximumNArgs(1),
+		Use:   "upgrade [plan]",
+		Short: "Upgrade your plan (pro, team, business)",
+		Args:  cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.LoadGlobal()
 			if err != nil || !config.IsLoggedIn(cfg) {
@@ -253,6 +257,89 @@ func billingManageCmd() *cobra.Command {
 			fmt.Printf("  %s\n", dim("Log in with the email you used to subscribe."))
 			fmt.Println()
 			_ = openBrowser(manageURL)
+			return nil
+		},
+	}
+}
+
+func billingGiftCardCmd() *cobra.Command {
+	c := &cobra.Command{
+		Use:   "giftcard",
+		Short: "Create or redeem DotSync gift cards",
+	}
+	c.AddCommand(
+		billingGiftCardCreateCmd(),
+		billingGiftCardRedeemCmd(),
+	)
+	return c
+}
+
+func billingGiftCardCreateCmd() *cobra.Command {
+	var valueUSD int
+	var plan string
+	var uses int
+
+	cmd := &cobra.Command{
+		Use:   "create",
+		Short: "Create a gift card (server admin only)",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadGlobal()
+			if err != nil || !config.IsLoggedIn(cfg) {
+				return fmt.Errorf("not logged in — run: dotsync login")
+			}
+			if valueUSD <= 0 {
+				return fmt.Errorf("--value must be > 0")
+			}
+			if plan == "" {
+				plan = "business"
+			}
+			client := api.New(cfg)
+			out, err := client.BillingCreateGiftCard(valueUSD, strings.ToLower(plan), uses)
+			if err != nil {
+				return err
+			}
+
+			fmt.Println()
+			fmt.Println(bold("🎁 Gift card created"))
+			fmt.Printf("  %-12s %v\n", "Code:", cyan(fmt.Sprintf("%v", out["code"])))
+			fmt.Printf("  %-12s $%v\n", "Value:", out["value_usd"])
+			fmt.Printf("  %-12s %s\n", "Plan:", planBadge(fmt.Sprintf("%v", out["plan"])))
+			fmt.Printf("  %-12s %v\n", "Max uses:", out["max_redemptions"])
+			fmt.Println()
+			return nil
+		},
+	}
+
+	cmd.Flags().IntVar(&valueUSD, "value", 79, "gift card value in USD")
+	cmd.Flags().StringVar(&plan, "plan", "business", "plan to grant (free|pro|team|business)")
+	cmd.Flags().IntVar(&uses, "uses", 1, "maximum number of redemptions")
+	return cmd
+}
+
+func billingGiftCardRedeemCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:   "redeem <code>",
+		Short: "Redeem a gift card to unlock plan features",
+		Args:  cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadGlobal()
+			if err != nil || !config.IsLoggedIn(cfg) {
+				return fmt.Errorf("not logged in — run: dotsync login")
+			}
+			client := api.New(cfg)
+			out, err := client.BillingRedeemGiftCard(strings.TrimSpace(args[0]))
+			if err != nil {
+				return err
+			}
+
+			plan := fmt.Sprintf("%v", out["plan"])
+			fmt.Println()
+			fmt.Println(green("✅ Gift card redeemed"))
+			fmt.Printf("  %-12s %s\n", "Plan:", planBadge(plan))
+			if unlocked, _ := out["all_features_unlocked"].(bool); unlocked {
+				fmt.Printf("  %-12s %s\n", "Access:", green("All features unlocked"))
+			}
+			fmt.Println()
 			return nil
 		},
 	}
