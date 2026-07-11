@@ -63,5 +63,10 @@ const (
 	EventSubscriptionDeleted EventType = "subscription.deleted"
 	EventPaymentFailed       EventType = "payment.failed"
 	EventPaymentSucceeded    EventType = "payment.succeeded"
-	EventUnknown             EventType = "unknown"
+	// EventOrderCompleted is a one-time purchase (e.g. the on-premise
+	// license), as opposed to a recurring subscription. Deliberately
+	// separate from the subscription events above so that nothing ever
+	// "cancels" or "expires" a one-time purchase the way a subscription can.
+	EventOrderCompleted EventType = "order.completed"
+	EventUnknown        EventType = "unknown"
 )

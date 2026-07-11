@@ -11,6 +11,7 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/Pruthviraj36/dotsync/internal/assets"
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/handler"
@@ -85,6 +86,7 @@ func main() {
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
 	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
 	passwordHandler := handler.NewPasswordHandler(passwordSvc, projectSvc, teamSvc, auditSvc)
+	identityHandler := handler.NewIdentityHandler(database)
 
 	paymentProvider, err := payment.New()
 	if err != nil {
@@ -122,6 +124,14 @@ func main() {
 		w.Write([]byte(`{"status":"ok","service":"dotsync"}`))
 	})
 
+	// Install script — `curl -fsSL https://dotsync.onrender.com/install.sh | bash`
+	// Served straight out of the binary via go:embed (see internal/assets),
+	// so there's nothing extra to deploy alongside the server.
+	r.Get("/install.sh", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/x-sh; charset=utf-8")
+		w.Write(assets.InstallScript)
+	})
+
 	// Stripe/LemonSqueezy/PayPal webhook — raw body required, no auth middleware.
 	// The provider's own signature verification (inside WebhookHandler) is
 	// what actually authenticates these requests.
@@ -147,12 +157,13 @@ func main() {
 		r.Post("/auth/logout", authHandler.Logout)
 		r.Get("/auth/me", authHandler.Me)
 
+		// Identity (ed25519 pubkey for verifying signed pushes)
+		r.Put("/me/pubkey", identityHandler.SetPubKey)
+
 		// Billing
 		r.Post("/billing/checkout", billingHandler.Checkout)
 		r.Post("/billing/portal", billingHandler.Portal)
 		r.Get("/billing/status", billingHandler.Status)
-		r.Post("/billing/gift-cards", billingHandler.CreateGiftCard)
-		r.Post("/billing/redeem", billingHandler.RedeemGiftCard)
 
 		// Projects
 		r.Post("/projects", projectHandler.Create)

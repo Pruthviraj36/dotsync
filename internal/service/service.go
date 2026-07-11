@@ -23,8 +23,9 @@ func NewSecretService(database *db.DB) *SecretService {
 }
 
 // PushSecrets stores a new version of encrypted secrets for an environment.
-// The ciphertext and nonce are already encrypted on the client — we store blobs only.
-func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce []byte) (*model.Secret, error) {
+// The ciphertext, nonce, and signature are already produced client-side —
+// we store blobs only and never see plaintext or private key material.
+func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce, signature []byte) (*model.Secret, error) {
 	// Get current version
 	var currentVersion int
 	err := s.db.QueryRowContext(ctx,
@@ -39,16 +40,17 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 		EnvironmentID: envID,
 		EncryptedData: encryptedData,
 		DataNonce:     nonce,
+		Signature:     signature,
 		Version:       currentVersion + 1,
 		PushedBy:      pushedBy,
 		CreatedAt:     time.Now(),
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO secrets (id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
+		INSERT INTO secrets (id, environment_id, encrypted_data, data_nonce, signature, version, pushed_by, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
 		secret.ID, secret.EnvironmentID, secret.EncryptedData,
-		secret.DataNonce, secret.Version, secret.PushedBy, secret.CreatedAt,
+		secret.DataNonce, secret.Signature, secret.Version, secret.PushedBy, secret.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert secret: %w", err)
@@ -57,34 +59,60 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 	return secret, nil
 }
 
-// PullLatest returns the most recent encrypted secret blob for an environment.
-func (s *SecretService) PullLatest(ctx context.Context, envID string) (*model.Secret, error) {
-	var sec model.Secret
+// PulledSecret bundles a secret with the pusher's resolved username and
+// ed25519 public key (if they've ever set one), so callers can hand the
+// CLI everything it needs to verify the push's signature in one call.
+type PulledSecret struct {
+	model.Secret
+	PushedByUsername string
+	PushedByPubKey   string // hex-encoded ed25519 public key, "" if none on file
+}
+
+// PullLatest returns the most recent encrypted secret blob for an environment,
+// along with the pusher's username and public key for signature verification.
+func (s *SecretService) PullLatest(ctx context.Context, envID string) (*PulledSecret, error) {
+	var sec PulledSecret
+	var pubkey sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
-		FROM secrets
-		WHERE environment_id = $1
-		ORDER BY version DESC
+		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.signature,
+		       s.version, s.pushed_by, s.created_at, u.username, u.ed25519_pubkey
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1
+		ORDER BY s.version DESC
 		LIMIT 1`, envID,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
-		&sec.DataNonce, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
+		&sec.DataNonce, &sec.Signature, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
+		&sec.PushedByUsername, &pubkey,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("no secrets found for this environment")
 	}
+	sec.PushedByPubKey = pubkey.String
 	return &sec, err
 }
 
 // GetHistory returns the version history within the plan's history window.
 func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays int) ([]model.Secret, error) {
-	since := time.Now().AddDate(0, 0, -historyDays)
-	rows, err := s.db.QueryContext(ctx, `
+	// historyDays <= 0 means "no limit" — don't filter by date at all.
+	// (Naively doing time.Now().AddDate(0, 0, -historyDays) with a negative
+	// historyDays used as a sentinel would compute a cutoff in the FUTURE,
+	// silently hiding everything instead of showing everything.)
+	query := `
 		SELECT id, environment_id, version, pushed_by, created_at
 		FROM secrets
-		WHERE environment_id = $1 AND created_at >= $2
-		ORDER BY version DESC`, envID, since,
-	)
+		WHERE environment_id = $1`
+	args := []any{envID}
+
+	if historyDays > 0 {
+		since := time.Now().AddDate(0, 0, -historyDays)
+		query += ` AND created_at >= $2`
+		args = append(args, since)
+	}
+	query += ` ORDER BY version DESC`
+
+	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
 		return nil, err
 	}
@@ -196,23 +224,6 @@ func (s *ProjectService) CountForUser(ctx context.Context, userID string) (int, 
 		`SELECT COUNT(*) FROM team_members WHERE user_id = $1 AND role = 'owner'`, userID,
 	).Scan(&count)
 	return count, err
-}
-
-func (s *ProjectService) GetUserPlan(ctx context.Context, userID string) (string, error) {
-	var plan string
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COALESCE(plan, 'free') FROM users WHERE id = $1`, userID,
-	).Scan(&plan)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("user not found")
-	}
-	if err != nil {
-		return "", err
-	}
-	if _, ok := model.Plans[plan]; !ok {
-		return "free", nil
-	}
-	return plan, nil
 }
 
 func (s *ProjectService) GetEnvironment(ctx context.Context, projectID, envName string) (*model.Environment, error) {
@@ -450,23 +461,27 @@ func (s *TeamService) UpdateRole(ctx context.Context, projectID, targetUserID, n
 
 // --- Secret version pull ---
 
-// PullVersion returns a specific version of secrets for an environment, only if
-// that version falls inside the caller's plan history window.
-func (s *SecretService) PullVersion(ctx context.Context, envID string, version, historyDays int) (*model.Secret, error) {
-	var sec model.Secret
-	since := time.Now().AddDate(0, 0, -historyDays)
+// PullVersion returns a specific version of secrets for an environment,
+// along with the pusher's username and public key for signature verification.
+func (s *SecretService) PullVersion(ctx context.Context, envID string, version int) (*PulledSecret, error) {
+	var sec PulledSecret
+	var pubkey sql.NullString
 	err := s.db.QueryRowContext(ctx, `
-		SELECT id, environment_id, encrypted_data, data_nonce, version, pushed_by, created_at
-		FROM secrets
-		WHERE environment_id = $1 AND version = $2 AND created_at >= $3`,
-		envID, version, since,
+		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.signature,
+		       s.version, s.pushed_by, s.created_at, u.username, u.ed25519_pubkey
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1 AND s.version = $2`,
+		envID, version,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
-		&sec.DataNonce, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
+		&sec.DataNonce, &sec.Signature, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
+		&sec.PushedByUsername, &pubkey,
 	)
 	if err != nil {
-		return nil, fmt.Errorf("version %d not found or outside your plan history window", version)
+		return nil, fmt.Errorf("version %d not found", version)
 	}
+	sec.PushedByPubKey = pubkey.String
 	return &sec, nil
 }
 

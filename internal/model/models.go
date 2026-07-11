@@ -3,16 +3,16 @@ package model
 import "time"
 
 type User struct {
-	ID              string    `db:"id" json:"id"`
-	GitHubID        int64     `db:"github_id" json:"github_id"`
-	Username        string    `db:"username" json:"username"`
-	Email           string    `db:"email" json:"email"`
-	AvatarURL       string    `db:"avatar_url" json:"avatar_url"`
-	Plan            string    `db:"plan" json:"plan"` // free | pro | team | business
-	StripeCustomerID string   `db:"stripe_customer_id" json:"stripe_customer_id,omitempty"`
-	StripeSubID     string    `db:"stripe_subscription_id" json:"stripe_subscription_id,omitempty"`
-	CreatedAt       time.Time `db:"created_at" json:"created_at"`
-	UpdatedAt       time.Time `db:"updated_at" json:"updated_at"`
+	ID               string    `db:"id" json:"id"`
+	GitHubID         int64     `db:"github_id" json:"github_id"`
+	Username         string    `db:"username" json:"username"`
+	Email            string    `db:"email" json:"email"`
+	AvatarURL        string    `db:"avatar_url" json:"avatar_url"`
+	Plan             string    `db:"plan" json:"plan"` // free | onpremise
+	StripeCustomerID string    `db:"stripe_customer_id" json:"stripe_customer_id,omitempty"`
+	StripeSubID      string    `db:"stripe_subscription_id" json:"stripe_subscription_id,omitempty"`
+	CreatedAt        time.Time `db:"created_at" json:"created_at"`
+	UpdatedAt        time.Time `db:"updated_at" json:"updated_at"`
 }
 
 type Project struct {
@@ -37,6 +37,7 @@ type Secret struct {
 	EnvironmentID string    `db:"environment_id" json:"environment_id"`
 	EncryptedData []byte    `db:"encrypted_data" json:"-"`
 	DataNonce     []byte    `db:"data_nonce" json:"-"`
+	Signature     []byte    `db:"signature" json:"-"` // ed25519 sig over sha256(encrypted_data), client-verified
 	Version       int       `db:"version" json:"version"`
 	PushedBy      string    `db:"pushed_by" json:"pushed_by"`
 	CreatedAt     time.Time `db:"created_at" json:"created_at"`
@@ -72,17 +73,25 @@ type RefreshToken struct {
 }
 
 // Plan limits
+//
+// dotsync is free for everyone, with every feature unlocked (unlimited
+// projects/members/history, audit logs, leak detection). The only paid
+// option is a one-time $500 license to self-host the server on your own
+// infrastructure instead of using the hosted dotsync.onrender.com — same
+// feature set either way, "onpremise" is a licensing distinction, not a
+// feature tier.
 type PlanLimits struct {
-	MaxProjects    int
-	MaxMembers     int
-	HistoryDays    int
-	HasAuditLogs   bool
-	HasLeakDetect  bool
+	MaxProjects   int
+	MaxMembers    int
+	HistoryDays   int
+	HasAuditLogs  bool
+	HasLeakDetect bool
 }
 
+// OnPremisePriceUSD is the one-time self-hosting license fee.
+const OnPremisePriceUSD = 500
+
 var Plans = map[string]PlanLimits{
-	"free":     {MaxProjects: 1, MaxMembers: 3, HistoryDays: 7, HasAuditLogs: false, HasLeakDetect: false},
-	"pro":      {MaxProjects: -1, MaxMembers: 5, HistoryDays: 30, HasAuditLogs: false, HasLeakDetect: true},
-	"team":     {MaxProjects: -1, MaxMembers: 10, HistoryDays: 90, HasAuditLogs: false, HasLeakDetect: true},
-	"business": {MaxProjects: -1, MaxMembers: -1, HistoryDays: 365, HasAuditLogs: true, HasLeakDetect: true},
+	"free":      {MaxProjects: -1, MaxMembers: -1, HistoryDays: -1, HasAuditLogs: true, HasLeakDetect: true},
+	"onpremise": {MaxProjects: -1, MaxMembers: -1, HistoryDays: -1, HasAuditLogs: true, HasLeakDetect: true},
 }

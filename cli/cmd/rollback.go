@@ -10,6 +10,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/identity"
 )
 
 func rollbackCmd() *cobra.Command {
@@ -81,6 +82,12 @@ If you just want to inspect an old version without pushing it:
 				return fmt.Errorf("could not fetch version %d: %w", version, err)
 			}
 
+			if verified, vErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); vErr != nil {
+				return fmt.Errorf("✗ %w\nRefusing to roll back to a version that fails verification", vErr)
+			} else if verified {
+				fmt.Printf(green("✓ signature ok (%s, ed25519)")+"\n", old.PushedBy)
+			}
+
 			// Decrypt it to show the user what they're rolling back to
 			plaintext, err := cliCrypto.DecryptEnvFile(
 				old.EncryptedData, old.Nonce, password, projCfg.ProjectSlug,
@@ -89,13 +96,7 @@ If you just want to inspect an old version without pushing it:
 				return fmt.Errorf("could not decrypt v%d: %w", version, err)
 			}
 
-			parsed, err := cliCrypto.ParseEnvFileStrict(plaintext)
-			if err != nil {
-				return fmt.Errorf(
-					"cannot roll back: version %d is not valid .env format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
-					version, err,
-				)
-			}
+			parsed := cliCrypto.ParseEnvFile(plaintext)
 			fmt.Printf("   Contains : %d secrets (pushed by @%s)\n\n", len(parsed), old.PushedBy)
 
 			// Write to a temp preview file if specified
@@ -140,9 +141,22 @@ If you just want to inspect an old version without pushing it:
 				return fmt.Errorf("re-encryption failed: %w", err)
 			}
 
+			signature, identityCreated, pub, err := ensureIdentityAndSign(ciphertext)
+			if err != nil {
+				fmt.Println(" ❌")
+				return err
+			}
+			if identityCreated {
+				fmt.Printf("\n"+green("✓ ed25519 identity created — %s")+"\n", identity.PubKeyPath())
+			}
+			if err := client.SetPubKey(identity.Hex(pub)); err != nil {
+				fmt.Println(dim("  (could not sync public key — signature may not verify for teammates yet)"))
+			}
+
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
+				Signature:     signature,
 			})
 			if err != nil {
 				fmt.Println(" ❌")
