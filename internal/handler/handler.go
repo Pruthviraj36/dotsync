@@ -1,6 +1,8 @@
 package handler
 
 import (
+	"crypto/ed25519"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -14,6 +16,16 @@ import (
 	"github.com/Pruthviraj36/dotsync/internal/service"
 	"github.com/go-chi/chi/v5"
 )
+
+func writeJSON(w http.ResponseWriter, status int, v any) {
+	w.Header().Set("Content-Type", "application/json")
+	w.WriteHeader(status)
+	json.NewEncoder(w).Encode(v)
+}
+
+func writeError(w http.ResponseWriter, status int, msg string) {
+	writeJSON(w, status, map[string]string{"error": msg})
+}
 
 func realIP(r *http.Request) string {
 	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
@@ -159,12 +171,7 @@ func NewProjectHandler(ps *service.ProjectService, ts *service.TeamService) *Pro
 // POST /api/projects
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
-	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid user session")
-		return
-	}
-	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
+	limits := model.Plans[claims.Plan]
 
 	// Enforce plan project limit
 	if limits.MaxProjects != -1 {
@@ -257,6 +264,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 	var req struct {
 		EncryptedData []byte `json:"encrypted_data"` // base64 decoded by json.Unmarshal
 		Nonce         []byte `json:"nonce"`
+		Signature     []byte `json:"signature,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -267,7 +275,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce)
+	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce, req.Signature)
 	if err != nil {
 		log.Printf("ERROR push [project=%s env=%s user=%s]: %v", slug, envName, claims.Username, err)
 		writeError(w, http.StatusInternalServerError, "push failed")
@@ -317,11 +325,13 @@ func (h *SecretsHandler) Pull(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"version": secret.Version, "env": envName})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"encrypted_data": secret.EncryptedData,
-		"nonce":          secret.DataNonce,
-		"version":        secret.Version,
-		"pushed_by":      secret.PushedBy,
-		"created_at":     secret.CreatedAt,
+		"encrypted_data":   secret.EncryptedData,
+		"nonce":            secret.DataNonce,
+		"signature":        secret.Signature,
+		"version":          secret.Version,
+		"pushed_by":        secret.PushedByUsername,
+		"pushed_by_pubkey": secret.PushedByPubKey,
+		"created_at":       secret.CreatedAt,
 	})
 }
 
@@ -330,12 +340,7 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
-	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid user session")
-		return
-	}
-	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
+	limits := model.Plans[claims.Plan]
 
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
@@ -409,12 +414,11 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// Enforce plan member limit on the project owner
-	var ownerPlan, ownerUsername string
+	var ownerPlan string
 	_ = h.db.QueryRowContext(r.Context(),
-		`SELECT plan, username FROM users WHERE id = $1`, proj.OwnerID,
-	).Scan(&ownerPlan, &ownerUsername)
-	ownerClaims := &auth.Claims{Username: ownerUsername}
-	limits := planLimitsFor(effectivePlanForRequest(ownerClaims, ownerPlan))
+		`SELECT plan FROM users WHERE id = $1`, proj.OwnerID,
+	).Scan(&ownerPlan)
+	limits := model.Plans[ownerPlan]
 	if limits.MaxMembers != -1 {
 		count, _ := h.teamSvc.CountMembers(r.Context(), proj.ID)
 		if count >= limits.MaxMembers {
@@ -646,12 +650,6 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
-	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid user session")
-		return
-	}
-	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
 
 	versionStr := r.URL.Query().Get("version")
 	if versionStr == "" {
@@ -682,7 +680,7 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	secret, err := h.secretSvc.PullVersion(r.Context(), env.ID, version, limits.HistoryDays)
+	secret, err := h.secretSvc.PullVersion(r.Context(), env.ID, version)
 	if err != nil {
 		writeError(w, http.StatusNotFound, err.Error())
 		return
@@ -692,11 +690,13 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 		map[string]any{"version": secret.Version, "env": envName, "specific_version": true})
 
 	writeJSON(w, http.StatusOK, map[string]any{
-		"encrypted_data": secret.EncryptedData,
-		"nonce":          secret.DataNonce,
-		"version":        secret.Version,
-		"pushed_by":      secret.PushedBy,
-		"created_at":     secret.CreatedAt,
+		"encrypted_data":   secret.EncryptedData,
+		"nonce":            secret.DataNonce,
+		"signature":        secret.Signature,
+		"version":          secret.Version,
+		"pushed_by":        secret.PushedByUsername,
+		"pushed_by_pubkey": secret.PushedByPubKey,
+		"created_at":       secret.CreatedAt,
 	})
 }
 
@@ -705,12 +705,7 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 
-	plan, err := h.projectSvc.GetUserPlan(r.Context(), claims.UserID)
-	if err != nil {
-		writeError(w, http.StatusUnauthorized, "invalid user session")
-		return
-	}
-	limits := planLimitsFor(effectivePlanForRequest(claims, plan))
+	limits := model.Plans[claims.Plan]
 	if !limits.HasAuditLogs {
 		writeError(w, http.StatusPaymentRequired,
 			"audit logs require the Business plan — upgrade at dotsync.onrender.com")
@@ -742,6 +737,53 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 // (Billing handlers live in billing_handler.go — see BillingHandler there,
 // which wires to a payment.Provider so LemonSqueezy/PayPal are swappable.)
 // ============================================================
+
+// ============================================================
+// Identity Handler
+// ============================================================
+//
+// Stores each user's ed25519 public key so teammates can verify who
+// actually pushed a given version (see cli/identity and cli/cmd/manifest.go
+// for the client-side signing/verification). Only the public key is ever
+// stored here — private keys never leave the machine that generated them.
+
+type IdentityHandler struct {
+	db *db.DB
+}
+
+func NewIdentityHandler(database *db.DB) *IdentityHandler {
+	return &IdentityHandler{db: database}
+}
+
+// PUT /api/me/pubkey — upload/update this account's ed25519 public key
+func (h *IdentityHandler) SetPubKey(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+
+	var req struct {
+		PubKey string `json:"pubkey"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+
+	decoded, err := hex.DecodeString(req.PubKey)
+	if err != nil || len(decoded) != ed25519.PublicKeySize {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("pubkey must be %d bytes hex-encoded", ed25519.PublicKeySize))
+		return
+	}
+
+	_, err = h.db.ExecContext(r.Context(),
+		`UPDATE users SET ed25519_pubkey = $1, updated_at = NOW() WHERE id = $2`,
+		req.PubKey, claims.UserID,
+	)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to store public key")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "public key saved"})
+}
 
 // GET /api/projects/{slug}/envs — list environments for a project
 func (h *ProjectHandler) ListEnvironments(w http.ResponseWriter, r *http.Request) {

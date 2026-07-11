@@ -11,6 +11,8 @@ import (
 
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
+	"github.com/Pruthviraj36/dotsync/cli/identity"
+	"github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 func initCmd() *cobra.Command {
@@ -225,7 +227,33 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return err
 	}
 
+	// Derive once now (and discard the result) purely so the parameters
+	// below are describing something that actually just happened, not a
+	// promise about what will happen later at push/pull time.
+	_ = crypto.DeriveKey(password, actualSlug)
+
+	// Local ed25519 identity — every future push from this machine gets
+	// signed with it, so teammates can verify who pushed what.
+	_, pub, identityCreated, err := identity.Ensure()
+	if err != nil {
+		return fmt.Errorf("ed25519 identity: %w", err)
+	}
+	if err := client.SetPubKey(identity.Hex(pub)); err != nil {
+		fmt.Println(dim("  (could not sync public key yet — will retry on next push)"))
+	}
+
 	ensureGitignore()
+
+	fmt.Println()
+	fmt.Println(green("✓ argon2id key derived (mem=64MiB, t=3, p=4)"))
+	if identityCreated {
+		fmt.Printf(green("✓ ed25519 identity created — %s")+"\n", identity.PubKeyPath())
+	}
+	// Not "zero-knowledge" — the shared project password is held server-side,
+	// encrypted at rest, precisely so a new teammate can fetch it instead of
+	// you re-typing it on every machine (see: dotsync init --rotate-password).
+	// The .env contents themselves never leave this machine unencrypted.
+	fmt.Println(green("✓ project registered · secrets encrypted client-side"))
 
 	fmt.Printf("\n"+green("✅ Project '%s' created and linked!")+"\n", name)
 	fmt.Println("\n  3 environments auto-created: dev, staging, production")
@@ -289,7 +317,7 @@ func ensureGitignore() {
 		f.WriteString(entry + "\n")
 	}
 
-	fmt.Println("  "+dim("📝 Added .env to .gitignore"))
+	fmt.Println("  " + dim("📝 Added .env to .gitignore"))
 }
 
 // requireLogin loads config and validates login state.

@@ -70,6 +70,12 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				return fmt.Errorf("fetch secrets: %w", err)
 			}
 
+			if verified, vErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey); vErr != nil {
+				return fmt.Errorf("✗ %w\nRefusing to run with unverified secrets", vErr)
+			} else if verified {
+				fmt.Fprintf(os.Stderr, dim("✓ signature ok (%s, ed25519)")+"\n", result.PushedBy)
+			}
+
 			password, err := resolvePassword(client, projCfg.ProjectSlug)
 			if err != nil {
 				return err
@@ -83,14 +89,8 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				return fmt.Errorf("decrypt secrets: %w", err)
 			}
 
-			// Parse decrypted secrets into key=value pairs.
-			secrets, err := cliCrypto.ParseEnvFileStrict(plaintext)
-			if err != nil {
-				return fmt.Errorf(
-					"invalid remote .env format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
-					err,
-				)
-			}
+			// Parse decrypted secrets into key=value pairs
+			secrets := cliCrypto.ParseEnvFile(plaintext)
 
 			// Build subprocess environment: start from current shell env,
 			// overlay with DotSync secrets. DotSync values win on conflict.

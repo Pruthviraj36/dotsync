@@ -126,20 +126,8 @@ Only shows which keys changed — values are never displayed.`,
 				return fmt.Errorf("decrypt remote: %w", err)
 			}
 
-			localMap, err := cliCrypto.ParseEnvFileStrict(string(localData))
-			if err != nil {
-				return fmt.Errorf(
-					"local .env has invalid format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
-					err,
-				)
-			}
-			remoteMap, err := cliCrypto.ParseEnvFileStrict(remotePlain)
-			if err != nil {
-				return fmt.Errorf(
-					"remote secrets have invalid .env format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
-					err,
-				)
-			}
+			localMap := cliCrypto.ParseEnvFile(string(localData))
+			remoteMap := cliCrypto.ParseEnvFile(remotePlain)
 
 			// local vs remote: what would change if you pushed?
 			added, removed, changed := cliCrypto.DiffEnvFiles(remoteMap, localMap)
@@ -233,6 +221,7 @@ func statusCmd() *cobra.Command {
 			// Auth state
 			if config.IsLoggedIn(cfg) {
 				fmt.Printf("  "+bold("User")+"    : "+cyan("@%s")+" "+green("✅")+"\n", cfg.Username)
+				fmt.Printf("  Server  : %s\n", cfg.ServerURL)
 			} else {
 				fmt.Println("  " + bold("User") + "    : " + red("not logged in ❌"))
 				fmt.Println("  Run: dotsync login")

@@ -2,25 +2,17 @@ package handler
 
 import (
 	"context"
-	"crypto/rand"
-	"crypto/sha256"
-	"database/sql"
-	"encoding/hex"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"io"
 	"log"
 	"net/http"
 	"os"
-	"strings"
-	"time"
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/Pruthviraj36/dotsync/internal/payment"
-	"github.com/google/uuid"
 )
 
 // BillingHandler handles all payment-related HTTP routes.
@@ -41,34 +33,22 @@ func (h *BillingHandler) Plans(w http.ResponseWriter, r *http.Request) {
 		"provider": h.provider.Name(),
 		"plans": []map[string]any{
 			{
-				"id": "free", "name": "Free", "price_usd": 0,
-				"max_projects": 1, "max_members": 3, "history_days": 7,
-				"audit_logs": false, "leak_detect": false,
-			},
-			{
-				"id": "pro", "name": "Pro", "price_usd": 9,
-				"max_projects": -1, "max_members": 5, "history_days": 30,
-				"audit_logs": false, "leak_detect": true,
-				"price_id": providerPriceID("pro"),
-			},
-			{
-				"id": "team", "name": "Team", "price_usd": 29,
-				"max_projects": -1, "max_members": 10, "history_days": 90,
-				"audit_logs": false, "leak_detect": true,
-				"price_id": providerPriceID("team"),
-			},
-			{
-				"id": "business", "name": "Business", "price_usd": 79,
-				"max_projects": -1, "max_members": -1, "history_days": 365,
+				"id": "free", "name": "Free", "price_usd": 0, "billing": "hosted",
+				"max_projects": -1, "max_members": -1, "history_days": -1,
 				"audit_logs": true, "leak_detect": true,
-				"price_id": providerPriceID("business"),
+			},
+			{
+				"id": "onpremise", "name": "On-Premise", "price_usd": model.OnPremisePriceUSD, "billing": "one-time",
+				"max_projects": -1, "max_members": -1, "history_days": -1,
+				"audit_logs": true, "leak_detect": true,
+				"price_id": providerPriceID("onpremise"),
 			},
 		},
 	})
 }
 
 // POST /api/billing/checkout
-// Body: {"plan": "pro"|"team"|"business"}
+// Body: {"plan": "onpremise"}
 func (h *BillingHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 
@@ -76,24 +56,17 @@ func (h *BillingHandler) Checkout(w http.ResponseWriter, r *http.Request) {
 		Plan string `json:"plan"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Plan == "" {
-		writeError(w, http.StatusBadRequest, "plan required (pro, team, business)")
+		writeError(w, http.StatusBadRequest, "plan required — the only purchasable plan is \"onpremise\" ($500 one-time)")
+		return
+	}
+	if req.Plan != "onpremise" {
+		writeError(w, http.StatusBadRequest, "dotsync is free for hosted use — the only purchasable plan is \"onpremise\" ($500 one-time, for self-hosting)")
 		return
 	}
 
 	priceID := providerPriceID(req.Plan)
-	if priceID == "" {
-		providerName := os.Getenv("PAYMENT_PROVIDER")
-		if providerName == "" {
-			providerName = "lemonsqueezy"
-		}
-		var hint string
-		switch providerName {
-		case "paypal":
-			hint = fmt.Sprintf("set PAYPAL_PLAN_%s in your environment", strings.ToUpper(req.Plan))
-		default: // lemonsqueezy
-			hint = fmt.Sprintf("set LS_VARIANT_%s in your environment", strings.ToUpper(req.Plan))
-		}
-		writeError(w, http.StatusServiceUnavailable, "billing not configured for plan "+req.Plan+" — "+hint)
+	if priceID == "" && h.provider.Name() == "lemonsqueezy" {
+		writeError(w, http.StatusServiceUnavailable, "billing not configured — set LS_VARIANT_ONPREMISE in your environment")
 		return
 	}
 
@@ -180,10 +153,9 @@ func (h *BillingHandler) Status(w http.ResponseWriter, r *http.Request) {
 		`SELECT plan, COALESCE(stripe_subscription_id, '') FROM users WHERE id = $1`, claims.UserID,
 	).Scan(&plan, &subID)
 
-	effectivePlan := effectivePlanForRequest(claims, plan)
-	limits := planLimitsFor(effectivePlan)
+	limits := model.Plans[plan]
 	writeJSON(w, http.StatusOK, map[string]any{
-		"plan":             effectivePlan,
+		"plan":             plan,
 		"provider":         h.provider.Name(),
 		"has_subscription": subID != "",
 		"limits": map[string]any{
@@ -193,185 +165,6 @@ func (h *BillingHandler) Status(w http.ResponseWriter, r *http.Request) {
 			"audit_logs":   limits.HasAuditLogs,
 			"leak_detect":  limits.HasLeakDetect,
 		},
-	})
-}
-
-// POST /api/billing/gift-cards
-// Body: {"value_usd":79,"plan":"business","max_redemptions":1,"expires_days":30}
-func (h *BillingHandler) CreateGiftCard(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromCtx(r.Context())
-	if !hasAdminFeatureOverride(claims) {
-		writeError(w, http.StatusForbidden, "only server admins can create gift cards")
-		return
-	}
-
-	var req struct {
-		ValueUSD       int    `json:"value_usd"`
-		Plan           string `json:"plan"`
-		MaxRedemptions int    `json:"max_redemptions"`
-		ExpiresDays    int    `json:"expires_days"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-
-	if req.ValueUSD <= 0 {
-		writeError(w, http.StatusBadRequest, "value_usd must be > 0")
-		return
-	}
-	if req.Plan == "" {
-		req.Plan = "business"
-	}
-	if _, ok := model.Plans[req.Plan]; !ok {
-		writeError(w, http.StatusBadRequest, "plan must be one of: free, pro, team, business")
-		return
-	}
-	if req.MaxRedemptions <= 0 {
-		req.MaxRedemptions = 1
-	}
-
-	code, err := generateGiftCardCode()
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to generate gift card code")
-		return
-	}
-	codeHash := hashGiftCardCode(code)
-
-	var expiresAt any = nil
-	if req.ExpiresDays > 0 {
-		expiresAt = time.Now().AddDate(0, 0, req.ExpiresDays)
-	}
-
-	_, err = h.db.ExecContext(r.Context(), `
-		INSERT INTO gift_cards (id, code_hash, value_usd, grant_plan, max_redemptions, redeemed_count, expires_at, created_by, created_at)
-		VALUES ($1, $2, $3, $4, $5, 0, $6, $7, NOW())`,
-		uuid.New().String(), codeHash, req.ValueUSD, req.Plan, req.MaxRedemptions, expiresAt, claims.UserID,
-	)
-	if err != nil {
-		log.Printf("giftcard create: %v", err)
-		writeError(w, http.StatusInternalServerError, "could not create gift card")
-		return
-	}
-
-	writeJSON(w, http.StatusCreated, map[string]any{
-		"code":            code,
-		"value_usd":       req.ValueUSD,
-		"plan":            req.Plan,
-		"max_redemptions": req.MaxRedemptions,
-		"expires_days":    req.ExpiresDays,
-		"message":         "gift card created",
-	})
-}
-
-// POST /api/billing/redeem
-// Body: {"code":"DSGIFT-..."}
-func (h *BillingHandler) RedeemGiftCard(w http.ResponseWriter, r *http.Request) {
-	claims := auth.ClaimsFromCtx(r.Context())
-	var req struct {
-		Code string `json:"code"`
-	}
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(w, http.StatusBadRequest, "invalid request body")
-		return
-	}
-	req.Code = strings.TrimSpace(req.Code)
-	if req.Code == "" {
-		writeError(w, http.StatusBadRequest, "gift card code required")
-		return
-	}
-
-	tx, err := h.db.BeginTx(r.Context(), nil)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "could not start transaction")
-		return
-	}
-	defer tx.Rollback()
-
-	var (
-		giftCardID     string
-		plan           string
-		valueUSD       int
-		maxRedemptions int
-		redeemedCount  int
-		expiresAt      sql.NullTime
-	)
-	err = tx.QueryRowContext(r.Context(), `
-		SELECT id, grant_plan, value_usd, max_redemptions, redeemed_count, expires_at
-		FROM gift_cards
-		WHERE code_hash = $1
-		FOR UPDATE`,
-		hashGiftCardCode(req.Code),
-	).Scan(&giftCardID, &plan, &valueUSD, &maxRedemptions, &redeemedCount, &expiresAt)
-	if errors.Is(err, sql.ErrNoRows) {
-		writeError(w, http.StatusNotFound, "invalid gift card code")
-		return
-	}
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to read gift card")
-		return
-	}
-
-	if expiresAt.Valid && time.Now().After(expiresAt.Time) {
-		writeError(w, http.StatusBadRequest, "gift card has expired")
-		return
-	}
-	if redeemedCount >= maxRedemptions {
-		writeError(w, http.StatusBadRequest, "gift card has no remaining redemptions")
-		return
-	}
-
-	var alreadyRedeemed bool
-	err = tx.QueryRowContext(r.Context(), `
-		SELECT EXISTS(
-			SELECT 1 FROM gift_card_redemptions WHERE gift_card_id = $1 AND user_id = $2
-		)`, giftCardID, claims.UserID,
-	).Scan(&alreadyRedeemed)
-	if err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to check redemption status")
-		return
-	}
-	if alreadyRedeemed {
-		writeError(w, http.StatusBadRequest, "gift card already redeemed by this user")
-		return
-	}
-
-	if _, err := tx.ExecContext(r.Context(), `
-		UPDATE users SET plan = $1, updated_at = NOW() WHERE id = $2`,
-		plan, claims.UserID,
-	); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to apply gift card")
-		return
-	}
-
-	if _, err := tx.ExecContext(r.Context(), `
-		INSERT INTO gift_card_redemptions (id, gift_card_id, user_id, redeemed_plan, value_usd, redeemed_at)
-		VALUES ($1, $2, $3, $4, $5, NOW())`,
-		uuid.New().String(), giftCardID, claims.UserID, plan, valueUSD,
-	); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to record redemption")
-		return
-	}
-
-	if _, err := tx.ExecContext(r.Context(), `
-		UPDATE gift_cards SET redeemed_count = redeemed_count + 1 WHERE id = $1`,
-		giftCardID,
-	); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to update gift card usage")
-		return
-	}
-
-	if err := tx.Commit(); err != nil {
-		writeError(w, http.StatusInternalServerError, "failed to finalize redemption")
-		return
-	}
-
-	effectivePlan := effectivePlanForRequest(claims, plan)
-	writeJSON(w, http.StatusOK, map[string]any{
-		"message":               "gift card redeemed",
-		"value_usd":             valueUSD,
-		"plan":                  effectivePlan,
-		"all_features_unlocked": effectivePlan == "business",
 	})
 }
 
@@ -408,6 +201,34 @@ func WebhookHandler(p payment.Provider, database *db.DB) http.HandlerFunc {
 
 func processWebhookEvent(ctx context.Context, database *db.DB, p payment.Provider, event *payment.WebhookEvent) error {
 	switch event.Type {
+	case payment.EventOrderCompleted:
+		// One-time on-premise license purchase. This is deliberately NOT
+		// wired to any subscription-cancel/expire path below — once bought,
+		// it stays bought. There's nothing recurring to fail or lapse.
+		result, err := database.ExecContext(ctx, `
+			UPDATE users SET plan = 'onpremise', updated_at = NOW()
+			WHERE stripe_customer_id = $1`,
+			event.CustomerID,
+		)
+		if err != nil {
+			return fmt.Errorf("update plan by customer: %w", err)
+		}
+		rows, _ := result.RowsAffected()
+
+		// PayPal/LS may hand back our own user_id as the "customer" — try
+		// a direct user ID match if the customer-ID match found nothing.
+		if rows == 0 && event.CustomerID != "" {
+			_, err = database.ExecContext(ctx, `
+				UPDATE users SET plan = 'onpremise', updated_at = NOW()
+				WHERE id = $1`,
+				event.CustomerID,
+			)
+			if err != nil {
+				return fmt.Errorf("update plan by user id: %w", err)
+			}
+		}
+		log.Printf("webhook [%s]: customer %s → onpremise license activated", p.Name(), event.CustomerID)
+
 	case payment.EventSubscriptionCreated, payment.EventSubscriptionUpdated:
 		plan := planFromEvent(p, event)
 		if event.Status != "active" && event.Status != "trialing" {
@@ -460,23 +281,23 @@ func processWebhookEvent(ctx context.Context, database *db.DB, p payment.Provide
 	return nil
 }
 
-// providerPriceID reads the right env var for the given plan + active provider.
+// providerPriceID reads the LS variant ID for the on-premise product.
+// PayPal doesn't need a price ID at all (it's a fixed-amount Orders v2
+// purchase, not a plan-based subscription), so this returns a non-empty
+// placeholder for PayPal so callers don't mistake it for "not configured".
 func providerPriceID(plan string) string {
+	if plan != "onpremise" {
+		return ""
+	}
 	provider := os.Getenv("PAYMENT_PROVIDER")
 	if provider == "" {
 		provider = "lemonsqueezy"
 	}
 	switch provider {
 	case "lemonsqueezy", "ls":
-		return map[string]string{
-			"pro": os.Getenv("LS_VARIANT_PRO"), "team": os.Getenv("LS_VARIANT_TEAM"),
-			"business": os.Getenv("LS_VARIANT_BUSINESS"),
-		}[plan]
+		return os.Getenv("LS_VARIANT_ONPREMISE")
 	case "paypal":
-		return map[string]string{
-			"pro": os.Getenv("PAYPAL_PLAN_PRO"), "team": os.Getenv("PAYPAL_PLAN_TEAM"),
-			"business": os.Getenv("PAYPAL_PLAN_BUSINESS"),
-		}[plan]
+		return "onpremise" // fixed $500 order — no provider-side price ID needed
 	}
 	return ""
 }
@@ -515,17 +336,4 @@ func providerSignatureHeader(r *http.Request, providerName string) string {
 func readBody(r *http.Request, limit int64) ([]byte, error) {
 	defer r.Body.Close()
 	return io.ReadAll(io.LimitReader(r.Body, limit))
-}
-
-func generateGiftCardCode() (string, error) {
-	b := make([]byte, 8)
-	if _, err := rand.Read(b); err != nil {
-		return "", err
-	}
-	return "DSGIFT-" + strings.ToUpper(hex.EncodeToString(b)), nil
-}
-
-func hashGiftCardCode(code string) string {
-	sum := sha256.Sum256([]byte(strings.TrimSpace(code)))
-	return hex.EncodeToString(sum[:])
 }

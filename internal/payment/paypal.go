@@ -11,33 +11,33 @@ import (
 	"os"
 	"strings"
 	"time"
+
+	"github.com/Pruthviraj36/dotsync/internal/model"
 )
 
-// PayPal implements Provider using PayPal's Subscriptions API v2.
+// PayPal implements Provider using PayPal's Orders API v2 for a single
+// one-time purchase — the $500 on-premise license. (dotsync itself has no
+// recurring subscription anymore; hosted use is free.)
 //
 // PayPal has the widest global reach — available in 200+ countries/regions
 // including India — making it the best fallback when Stripe or LS aren't
 // available locally.
 //
 // Setup:
-//   PAYMENT_PROVIDER=paypal
-//   PAYPAL_CLIENT_ID=...      (from developer.paypal.com → My Apps)
-//   PAYPAL_CLIENT_SECRET=...
-//   PAYPAL_WEBHOOK_ID=...     (from the webhook you create in the dashboard)
-//   PAYPAL_ENV=sandbox        (or "live")
-//   PAYPAL_PLAN_PRO=...       (PayPal Plan ID, e.g. P-8ML...)
-//   PAYPAL_PLAN_TEAM=...
-//   PAYPAL_PLAN_BUSINESS=...
 //
-// Note: PayPal subscriptions use "Plan IDs" (not price IDs). Create these
-// in the PayPal dashboard under Catalog → Subscription Plans.
+//	PAYMENT_PROVIDER=paypal
+//	PAYPAL_CLIENT_ID=...      (from developer.paypal.com → My Apps)
+//	PAYPAL_CLIENT_SECRET=...
+//	PAYPAL_WEBHOOK_ID=...     (from the webhook you create in the dashboard)
+//	PAYPAL_ENV=sandbox        (or "live")
+//
+// Docs: https://developer.paypal.com/docs/api/orders/v2/
 type PayPal struct {
 	clientID     string
 	clientSecret string
 	webhookID    string
 	baseURL      string
 	httpClient   *http.Client
-	planToDotSync map[string]string // PayPal plan ID → dotsync plan name
 }
 
 func NewPayPal() *PayPal {
@@ -46,24 +46,12 @@ func NewPayPal() *PayPal {
 		baseURL = "https://api-m.sandbox.paypal.com"
 	}
 
-	planToDotSync := map[string]string{}
-	for env, plan := range map[string]string{
-		"PAYPAL_PLAN_PRO":      "pro",
-		"PAYPAL_PLAN_TEAM":     "team",
-		"PAYPAL_PLAN_BUSINESS": "business",
-	} {
-		if id := os.Getenv(env); id != "" {
-			planToDotSync[id] = plan
-		}
-	}
-
 	return &PayPal{
-		clientID:      os.Getenv("PAYPAL_CLIENT_ID"),
-		clientSecret:  os.Getenv("PAYPAL_CLIENT_SECRET"),
-		webhookID:     os.Getenv("PAYPAL_WEBHOOK_ID"),
-		baseURL:       baseURL,
-		httpClient:    &http.Client{Timeout: 20 * time.Second},
-		planToDotSync: planToDotSync,
+		clientID:     os.Getenv("PAYPAL_CLIENT_ID"),
+		clientSecret: os.Getenv("PAYPAL_CLIENT_SECRET"),
+		webhookID:    os.Getenv("PAYPAL_WEBHOOK_ID"),
+		baseURL:      baseURL,
+		httpClient:   &http.Client{Timeout: 20 * time.Second},
 	}
 }
 
@@ -76,9 +64,12 @@ func (pp *PayPal) GetOrCreateCustomer(_ context.Context, req CustomerRequest) (s
 	return req.DotSyncUserID, nil // use our own user ID as the customer key
 }
 
-// CreateCheckoutSession creates a PayPal subscription and returns the
-// approval URL — the user clicks this to log into PayPal and approve.
-// Docs: https://developer.paypal.com/docs/api/subscriptions/v1/#subscriptions_create
+// CreateCheckoutSession creates a one-time PayPal order for the on-premise
+// license and returns the approval URL — the user clicks this to log into
+// PayPal and approve the $500 payment. This is a single fixed-price
+// purchase, not a subscription, so it uses the Orders v2 API rather than
+// Subscriptions v2.
+// Docs: https://developer.paypal.com/docs/api/orders/v2/#orders_create
 func (pp *PayPal) CreateCheckoutSession(ctx context.Context, req CheckoutRequest) (string, error) {
 	token, err := pp.getAccessToken(ctx)
 	if err != nil {
@@ -86,35 +77,39 @@ func (pp *PayPal) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	}
 
 	body := map[string]any{
-		"plan_id": req.PriceID, // PriceID holds the PayPal Plan ID for this provider
-		"subscriber": map[string]any{
-			"name": map[string]string{
-				"given_name": req.Username,
+		"intent": "CAPTURE",
+		"purchase_units": []map[string]any{
+			{
+				"custom_id":   req.UserID, // stored as custom_id, returned in webhooks
+				"description": "dotsync on-premise license (one-time)",
+				"amount": map[string]any{
+					"currency_code": "USD",
+					"value":         fmt.Sprintf("%d.00", model.OnPremisePriceUSD),
+				},
 			},
 		},
 		"application_context": map[string]any{
 			"brand_name":          "DotSync",
 			"locale":              "en-US",
 			"shipping_preference": "NO_SHIPPING",
-			"user_action":         "SUBSCRIBE_NOW",
+			"user_action":         "PAY_NOW",
 			"return_url":          req.SuccessURL,
 			"cancel_url":          req.CancelURL,
 		},
-		"custom_id": req.UserID, // stored as custom_id, returned in webhooks
 	}
 
 	b, _ := json.Marshal(body)
-	httpReq, err := http.NewRequestWithContext(ctx, "POST", pp.baseURL+"/v1/billing/subscriptions", bytes.NewReader(b))
+	httpReq, err := http.NewRequestWithContext(ctx, "POST", pp.baseURL+"/v2/checkout/orders", bytes.NewReader(b))
 	if err != nil {
 		return "", err
 	}
 	httpReq.Header.Set("Authorization", "Bearer "+token)
 	httpReq.Header.Set("Content-Type", "application/json")
-	httpReq.Header.Set("PayPal-Request-Id", req.UserID+"-"+req.PriceID) // idempotency key
+	httpReq.Header.Set("PayPal-Request-Id", req.UserID+"-onpremise") // idempotency key
 
 	resp, err := pp.httpClient.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("paypal create subscription: %w", err)
+		return "", fmt.Errorf("paypal create order: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -137,15 +132,10 @@ func (pp *PayPal) CreateCheckoutSession(ctx context.Context, req CheckoutRequest
 	return "", fmt.Errorf("paypal: no approval URL in response")
 }
 
-// CreatePortalSession — PayPal doesn't have a managed portal.
-// We return a deep link to the PayPal subscription management page.
+// CreatePortalSession — there's no subscription to manage since the
+// on-premise license is a one-time purchase. Point people at support instead.
 func (pp *PayPal) CreatePortalSession(_ context.Context, customerID string, _ string) (string, error) {
-	// customerID here is the PayPal subscription ID (captured from webhook)
-	if customerID == "" {
-		return "", fmt.Errorf("no active PayPal subscription found")
-	}
-	// PayPal's subscription management deep link
-	return "https://www.paypal.com/myaccount/autopay/", nil
+	return "", fmt.Errorf("the on-premise license is a one-time purchase — there's no subscription to manage. Need a receipt or help? Email support@dotsync.dev")
 }
 
 // VerifyWebhook verifies a PayPal webhook using their verification API.
@@ -195,40 +185,43 @@ func (pp *PayPal) VerifyWebhook(payload []byte, signature string) (*WebhookEvent
 		return nil, fmt.Errorf("paypal: webhook verification failed: %s", verifyResult.VerificationStatus)
 	}
 
-	// Parse the actual event
+	// Parse the actual event. One-time orders carry the buyer's user ID in
+	// resource.purchase_units[].custom_id rather than resource.custom_id
+	// directly (that field is subscription-shaped) — check both.
 	var raw struct {
 		EventType string `json:"event_type"`
 		Resource  struct {
-			ID       string `json:"id"`   // subscription ID
-			PlanID   string `json:"plan_id"`
-			CustomID string `json:"custom_id"` // our user_id
-			Status   string `json:"status"`
+			ID            string `json:"id"`
+			PlanID        string `json:"plan_id"`
+			CustomID      string `json:"custom_id"`
+			Status        string `json:"status"`
+			PurchaseUnits []struct {
+				CustomID string `json:"custom_id"`
+			} `json:"purchase_units"`
 		} `json:"resource"`
 	}
 	if err := json.Unmarshal(payload, &raw); err != nil {
 		return nil, fmt.Errorf("paypal: unmarshal event: %w", err)
 	}
 
+	customID := raw.Resource.CustomID
+	if customID == "" && len(raw.Resource.PurchaseUnits) > 0 {
+		customID = raw.Resource.PurchaseUnits[0].CustomID
+	}
+
 	event := &WebhookEvent{
 		SubscriptionID: raw.Resource.ID,
-		CustomerID:     raw.Resource.CustomID, // we stored user_id here
+		CustomerID:     customID, // we stored our user_id here
 		PlanID:         raw.Resource.PlanID,
 		Status:         strings.ToLower(raw.Resource.Status),
 		Raw:            payload,
 	}
 
 	switch raw.EventType {
-	case "BILLING.SUBSCRIPTION.CREATED":
-		event.Type = EventSubscriptionCreated
-	case "BILLING.SUBSCRIPTION.UPDATED", "BILLING.SUBSCRIPTION.ACTIVATED":
-		event.Type = EventSubscriptionUpdated
-	case "BILLING.SUBSCRIPTION.CANCELLED", "BILLING.SUBSCRIPTION.EXPIRED",
-		"BILLING.SUBSCRIPTION.SUSPENDED":
-		event.Type = EventSubscriptionDeleted
-	case "PAYMENT.SALE.DENIED", "BILLING.SUBSCRIPTION.PAYMENT.FAILED":
+	case "CHECKOUT.ORDER.APPROVED", "PAYMENT.CAPTURE.COMPLETED":
+		event.Type = EventOrderCompleted
+	case "PAYMENT.CAPTURE.DENIED", "PAYMENT.CAPTURE.DECLINED":
 		event.Type = EventPaymentFailed
-	case "PAYMENT.SALE.COMPLETED":
-		event.Type = EventPaymentSucceeded
 	default:
 		event.Type = EventUnknown
 	}
@@ -263,10 +256,8 @@ func (pp *PayPal) getAccessToken(ctx context.Context) (string, error) {
 	return result.AccessToken, nil
 }
 
-// PlanFromPayPalPlan maps a PayPal plan ID to a dotsync plan name.
+// PlanFromPayPalPlan always returns "onpremise" — there's only one
+// purchasable product now, so no plan-ID lookup table is needed.
 func (pp *PayPal) PlanFromPayPalPlan(planID string) string {
-	if p, ok := pp.planToDotSync[planID]; ok {
-		return p
-	}
-	return "free"
+	return "onpremise"
 }

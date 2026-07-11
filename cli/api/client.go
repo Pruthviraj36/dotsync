@@ -63,7 +63,7 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
-		return nil, fmt.Errorf("request failed")
+		return nil, fmt.Errorf("request failed: %w", err)
 	}
 
 	// If 401, try to refresh and retry once
@@ -159,6 +159,7 @@ func (c *Client) GetMe() (map[string]any, error) {
 type PushRequest struct {
 	EncryptedData []byte `json:"encrypted_data"`
 	Nonce         []byte `json:"nonce"`
+	Signature     []byte `json:"signature,omitempty"` // ed25519 sig over sha256(encrypted_data)
 }
 
 type PushResponse struct {
@@ -176,11 +177,13 @@ func (c *Client) Push(slug, env string, req PushRequest) (*PushResponse, error) 
 }
 
 type PullResponse struct {
-	EncryptedData []byte `json:"encrypted_data"`
-	Nonce         []byte `json:"nonce"`
-	Version       int    `json:"version"`
-	PushedBy      string `json:"pushed_by"`
-	CreatedAt     string `json:"created_at"`
+	EncryptedData  []byte `json:"encrypted_data"`
+	Nonce          []byte `json:"nonce"`
+	Signature      []byte `json:"signature,omitempty"`
+	Version        int    `json:"version"`
+	PushedBy       string `json:"pushed_by"` // username, resolved server-side
+	PushedByPubKey string `json:"pushed_by_pubkey,omitempty"`
+	CreatedAt      string `json:"created_at"`
 }
 
 func (c *Client) Pull(slug, env string) (*PullResponse, error) {
@@ -190,6 +193,16 @@ func (c *Client) Pull(slug, env string) (*PullResponse, error) {
 	}
 	var result PullResponse
 	return &result, decodeResponse(resp, &result)
+}
+
+// SetPubKey uploads this machine's ed25519 public key so teammates can
+// verify signatures on anything this account pushes.
+func (c *Client) SetPubKey(pubkeyHex string) error {
+	resp, err := c.do("PUT", "/api/me/pubkey", map[string]string{"pubkey": pubkeyHex})
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
 }
 
 type HistoryEntry struct {
@@ -285,7 +298,7 @@ func GetAuthConfig(serverURL string) (*AuthConfig, error) {
 	client := &http.Client{Timeout: 15 * time.Second}
 	resp, err := client.Get(serverURL + "/api/auth/config")
 	if err != nil {
-		return nil, fmt.Errorf("connect to server failed")
+		return nil, fmt.Errorf("connect to server: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -448,7 +461,7 @@ func ExchangeGitHubDeviceToken(serverURL, githubAccessToken string) (*LoginRespo
 
 	resp, err := client.Post(serverURL+"/api/auth/github/device", "application/json", bytes.NewReader(body))
 	if err != nil {
-		return nil, fmt.Errorf("connect to server failed")
+		return nil, fmt.Errorf("connect to server: %w", err)
 	}
 	defer resp.Body.Close()
 
@@ -557,7 +570,7 @@ func (c *Client) BillingPlans() (map[string]any, error) {
 	// Plans endpoint is unauthenticated — use raw http to avoid token refresh
 	httpResp, err := c.httpClient.Get(c.baseURL + "/api/billing/plans")
 	if err != nil {
-		return nil, fmt.Errorf("fetch plans failed")
+		return nil, fmt.Errorf("fetch plans: %w", err)
 	}
 	var result map[string]any
 	return result, decodeResponse(httpResp, &result)
@@ -576,31 +589,6 @@ func (c *Client) BillingCheckout(plan string) (map[string]any, error) {
 // BillingPortal creates a Stripe Customer Portal session.
 func (c *Client) BillingPortal() (map[string]any, error) {
 	resp, err := c.do("POST", "/api/billing/portal", map[string]string{})
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	return result, decodeResponse(resp, &result)
-}
-
-// BillingCreateGiftCard creates a new gift card (server-admin only).
-func (c *Client) BillingCreateGiftCard(valueUSD int, plan string, maxRedemptions int) (map[string]any, error) {
-	req := map[string]any{
-		"value_usd":       valueUSD,
-		"plan":            plan,
-		"max_redemptions": maxRedemptions,
-	}
-	resp, err := c.do("POST", "/api/billing/gift-cards", req)
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	return result, decodeResponse(resp, &result)
-}
-
-// BillingRedeemGiftCard redeems a gift card code for the current user.
-func (c *Client) BillingRedeemGiftCard(code string) (map[string]any, error) {
-	resp, err := c.do("POST", "/api/billing/redeem", map[string]string{"code": code})
 	if err != nil {
 		return nil, err
 	}

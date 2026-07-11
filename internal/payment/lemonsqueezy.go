@@ -20,17 +20,16 @@ const lsBaseURL = "https://api.lemonsqueezy.com/v1"
 // No SDK needed — their API is simple enough to call directly.
 //
 // Setup:
-//   PAYMENT_PROVIDER=lemonsqueezy
-//   LEMONSQUEEZY_API_KEY=...        (from app.lemonsqueezy.com → Settings → API)
-//   LEMONSQUEEZY_WEBHOOK_SECRET=... (from app.lemonsqueezy.com → Webhooks)
-//   LEMONSQUEEZY_STORE_ID=...       (numeric store ID)
-//   LS_VARIANT_PRO=...              (variant ID for the Pro plan product)
-//   LS_VARIANT_TEAM=...
-//   LS_VARIANT_BUSINESS=...
+//
+//	PAYMENT_PROVIDER=lemonsqueezy
+//	LEMONSQUEEZY_API_KEY=...        (from app.lemonsqueezy.com → Settings → API)
+//	LEMONSQUEEZY_WEBHOOK_SECRET=... (from app.lemonsqueezy.com → Webhooks)
+//	LEMONSQUEEZY_STORE_ID=...       (numeric store ID)
+//	LS_VARIANT_ONPREMISE=...        (variant ID for the one-time $500 on-premise license product)
 //
 // Lemon Squeezy doesn't have a separate "customer" concept during checkout —
 // the customer is created automatically on first purchase. We store the
-// customer ID from the webhook's first subscription event.
+// customer ID from the webhook's first order/subscription event.
 type LemonSqueezy struct {
 	apiKey        string
 	webhookSecret string
@@ -42,9 +41,7 @@ type LemonSqueezy struct {
 func NewLemonSqueezy() *LemonSqueezy {
 	variantToPlan := map[string]string{}
 	for env, plan := range map[string]string{
-		"LS_VARIANT_PRO":      "pro",
-		"LS_VARIANT_TEAM":     "team",
-		"LS_VARIANT_BUSINESS": "business",
+		"LS_VARIANT_ONPREMISE": "onpremise",
 	} {
 		if id := os.Getenv(env); id != "" {
 			variantToPlan[id] = plan
@@ -154,13 +151,15 @@ func (ls *LemonSqueezy) VerifyWebhook(payload []byte, signature string) (*Webhoo
 		return nil, fmt.Errorf("lemonsqueezy: invalid webhook signature")
 	}
 
-	// Parse event
+	// Parse event. Subscription events carry variant_id directly on
+	// attributes; one-time order events nest it under first_order_item —
+	// so we read both and use whichever is present.
 	var raw struct {
 		Meta struct {
 			EventName string `json:"event_name"`
 		} `json:"meta"`
 		Data struct {
-			ID         string `json:"id"` // subscription ID
+			ID         string `json:"id"` // subscription or order ID
 			Attributes struct {
 				Status     string `json:"status"`
 				CustomerID int64  `json:"customer_id"`
@@ -168,6 +167,9 @@ func (ls *LemonSqueezy) VerifyWebhook(payload []byte, signature string) (*Webhoo
 				Urls       struct {
 					CustomerPortal string `json:"customer_portal"`
 				} `json:"urls"`
+				FirstOrderItem struct {
+					VariantID int64 `json:"variant_id"`
+				} `json:"first_order_item"`
 			} `json:"attributes"`
 		} `json:"data"`
 	}
@@ -176,15 +178,28 @@ func (ls *LemonSqueezy) VerifyWebhook(payload []byte, signature string) (*Webhoo
 		return nil, fmt.Errorf("lemonsqueezy: unmarshal webhook: %w", err)
 	}
 
+	variantID := raw.Data.Attributes.VariantID
+	if variantID == 0 {
+		variantID = raw.Data.Attributes.FirstOrderItem.VariantID
+	}
+
 	event := &WebhookEvent{
 		SubscriptionID: raw.Data.ID,
 		CustomerID:     fmt.Sprintf("%d", raw.Data.Attributes.CustomerID),
-		PlanID:         fmt.Sprintf("%d", raw.Data.Attributes.VariantID),
+		PlanID:         fmt.Sprintf("%d", variantID),
 		Status:         raw.Data.Attributes.Status,
 		Raw:            payload,
 	}
 
 	switch raw.Meta.EventName {
+	case "order_created":
+		// One-time purchase (e.g. the $500 on-premise license). LS marks
+		// paid orders with status "paid" — refunded/partial ones won't match.
+		if raw.Data.Attributes.Status == "paid" {
+			event.Type = EventOrderCompleted
+		} else {
+			event.Type = EventUnknown
+		}
 	case "subscription_created":
 		event.Type = EventSubscriptionCreated
 	case "subscription_updated":

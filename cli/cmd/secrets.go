@@ -7,6 +7,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/identity"
 	"github.com/spf13/cobra"
 )
 
@@ -58,27 +59,21 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return fmt.Errorf("%s is empty — nothing to push", envFile)
 			}
 
-			parsedInput, err := cliCrypto.ParseEnvFileStrict(string(data))
-			if err != nil {
-				return fmt.Errorf(
-					"invalid %s format: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
-					envFile, err,
-				)
-			}
-
 			client := api.New(cfg)
+
+			keys := cliCrypto.ParseEnvFile(string(data))
 
 			// Determine encryption password
 			var password string
 			if localFlag {
 				password = cfg.AccessToken
-				fmt.Printf(cyan("🔒 Encrypting %d secrets (PERSONAL MODE - only you can read this)...")+"\n", len(parsedInput))
+				fmt.Printf(dim("encrypting %d keys …")+"\n", len(keys))
 			} else {
 				password, err = resolvePassword(client, projCfg.ProjectSlug)
 				if err != nil {
 					return err
 				}
-				fmt.Printf(cyan("🔒 Encrypting %d secrets for team access (%s/%s)...")+"\n", len(parsedInput), projCfg.ProjectSlug, env)
+				fmt.Printf(dim("encrypting %d keys …")+"\n", len(keys))
 			}
 
 			// Client-side AES-256-GCM encryption
@@ -89,23 +84,43 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return fmt.Errorf("encryption failed: %w", err)
 			}
 
-			fmt.Print(dim("📤 Uploading..."))
+			// Sign sha256(ciphertext) with this machine's ed25519 identity —
+			// proves *who* pushed, on top of the encryption's own tamper-evidence.
+			signature, identityCreated, pub, err := ensureIdentityAndSign(ciphertext)
+			if err != nil {
+				return err
+			}
+			if identityCreated {
+				fmt.Printf(green("✓ ed25519 identity created — %s")+"\n", identity.PubKeyPath())
+			}
+			fmt.Println(dim("signing manifest.sig …"))
+
+			// Keep the server's copy of our public key current so teammates
+			// can verify this signature. Best-effort: a failure here shouldn't
+			// block the push itself.
+			if err := client.SetPubKey(identity.Hex(pub)); err != nil {
+				fmt.Println(dim("  (could not sync public key — signature may not verify for teammates yet)"))
+			}
+
+			rev := revString(digestOf(ciphertext))
+			fmt.Printf(dim("uploading ciphertext (%s) …")+"\n", humanSize(len(ciphertext)))
 
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
+				Signature:     signature,
 			})
 			if err != nil {
-				fmt.Println(" ❌")
 				return err
 			}
 
-			fmt.Println(green(" ✅"))
+			fmt.Println()
+			fmt.Printf(green("✓ pushed · rev %s · server sees ciphertext only")+"\n", rev)
 			fmt.Println()
 			fmt.Printf("  "+bold("Project")+" : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"     : %s\n", env)
 			fmt.Printf("  "+bold("Version")+" : "+green("v%d")+"\n", result.Version)
-			fmt.Printf("  "+bold("Secrets")+" : "+green("%d keys encrypted")+"\n", len(parsedInput))
+			fmt.Printf("  "+bold("Secrets")+" : "+green("%d keys encrypted")+"\n", len(keys))
 			fmt.Println()
 			if localFlag {
 				fmt.Println("  You can now run: dotsync pull --local")
@@ -129,6 +144,7 @@ func pullCmd() *cobra.Command {
 	var outputFlag string
 	var forceFlag bool
 	var localFlag bool
+	var verifyFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "pull",
@@ -174,24 +190,38 @@ decrypts it locally, and writes your .env file.`,
 				}
 			}
 
-			fmt.Printf(dim("📥 Fetching secrets for %s/%s...")+"\n", projCfg.ProjectSlug, env)
-
 			client := api.New(cfg)
 			result, err := client.Pull(projCfg.ProjectSlug, env)
 			if err != nil {
 				return err
 			}
 
+			// Verify who pushed this, before we even decrypt it. On by
+			// default; --verify=false skips it (e.g. for a push made before
+			// signing existed on an old server).
+			if verifyFlag {
+				verified, verifyErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey)
+				if verifyErr != nil {
+					return fmt.Errorf("✗ %w\nRefusing to write %s — pull again, and if this keeps happening, tell your team", verifyErr, outputFile)
+				}
+				switch {
+				case verified:
+					fmt.Printf(green("✓ signature ok (%s, ed25519)")+"\n", result.PushedBy)
+				case len(result.Signature) == 0:
+					fmt.Println(dim("  (no signature on this push — pushed before signing was enabled)"))
+				default:
+					fmt.Printf(dim("  (no public key on file for %s — signature not verified)")+"\n", result.PushedBy)
+				}
+			}
+
 			var password string
 			if localFlag {
 				password = cfg.AccessToken
-				fmt.Print(dim("🔓 Decrypting with personal access token..."))
 			} else {
 				password, err = resolvePassword(client, projCfg.ProjectSlug)
 				if err != nil {
 					return err
 				}
-				fmt.Print(dim("🔓 Decrypting with team password..."))
 			}
 
 			// Client-side decryption
@@ -200,32 +230,24 @@ decrypts it locally, and writes your .env file.`,
 				password, projCfg.ProjectSlug,
 			)
 			if err != nil {
-				fmt.Println(" ❌")
 				return err
 			}
-
-			parsed, err := cliCrypto.ParseEnvFileStrict(plaintext)
-			if err != nil {
-				fmt.Println(" ❌")
-				return fmt.Errorf(
-					"remote payload is not a valid .env file: %w\n  Allowed lines: comments (#...), blank lines, or KEY=VALUE",
-					err,
-				)
-			}
-
-			fmt.Println(green(" ✅"))
 
 			// Write with secure permissions (owner read/write only)
 			if err := os.WriteFile(outputFile, []byte(plaintext), 0600); err != nil {
 				return fmt.Errorf("write %s: %w", outputFile, err)
 			}
 
+			parsed := cliCrypto.ParseEnvFile(plaintext)
+			rev := revString(digestOf(result.EncryptedData))
+
+			fmt.Printf(green("✓ decrypted %d keys → %s")+"\n", len(parsed), outputFile)
+			fmt.Println(green("✓ integrity verified — nothing tampered"))
 			fmt.Println()
 			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"      : %s\n", env)
-			fmt.Printf("  "+bold("Version")+"  : "+green("v%d")+"\n", result.Version)
+			fmt.Printf("  "+bold("Version")+"  : "+green("v%d")+" (rev %s)\n", result.Version, rev)
 			fmt.Printf("  "+bold("Pushed by")+": "+cyan("%s")+"\n", result.PushedBy)
-			fmt.Printf("  "+bold("Secrets")+"  : "+green("%d keys written to %s")+"\n", len(parsed), outputFile)
 			fmt.Println()
 
 			return nil
@@ -236,5 +258,6 @@ decrypts it locally, and writes your .env file.`,
 	cmd.Flags().StringVarP(&outputFlag, "output", "o", "", "output file path (default: .env)")
 	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "overwrite without confirmation")
 	cmd.Flags().BoolVar(&localFlag, "local", false, "decrypt with personal access token instead of team password")
+	cmd.Flags().BoolVar(&verifyFlag, "verify", true, "verify the pusher's ed25519 signature")
 	return cmd
 }
