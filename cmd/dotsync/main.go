@@ -153,12 +153,15 @@ func main() {
 	})
 
 	// Install script — `curl -fsSL https://dotsync.onrender.com/install.sh | bash`
-	// Served straight out of the binary via go:embed (see internal/assets),
-	// so there's nothing extra to deploy alongside the server.
-	r.Get("/install.sh", func(w http.ResponseWriter, r *http.Request) {
+	// (or the shorter `.../install` alias). Served straight out of the
+	// binary via go:embed (see internal/assets), so there's nothing extra
+	// to deploy alongside the server.
+	installHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/x-sh; charset=utf-8")
 		w.Write(assets.InstallScript)
-	})
+	}
+	r.Get("/install.sh", installHandler)
+	r.Get("/install", installHandler)
 
 	// Stripe/LemonSqueezy/PayPal webhook — raw body required, no auth middleware.
 	// The provider's own signature verification (inside WebhookHandler) is
