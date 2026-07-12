@@ -42,8 +42,8 @@ Available on the Business plan. Shows the last 50 events.`,
 				if strings.Contains(err.Error(), "Business plan") ||
 					strings.Contains(err.Error(), "402") {
 					fmt.Println()
-					fmt.Println(yellow("🔒 Audit logs require the Business plan."))
-					fmt.Println("   Upgrade at: https://dotsync.onrender.com/pricing")
+					fmt.Println(yellow("Audit logs require the Business plan."))
+					fmt.Println("Upgrade at: https://dotsync.onrender.com/pricing")
 					fmt.Println()
 					return nil
 				}
@@ -51,7 +51,7 @@ Available on the Business plan. Shows the last 50 events.`,
 			}
 
 			if len(logs) == 0 {
-				fmt.Printf("\n📋 No audit events yet for '%s'\n\n", projCfg.ProjectSlug)
+				fmt.Printf("\nNo audit events yet for '%s'\n\n", projCfg.ProjectSlug)
 				return nil
 			}
 
@@ -66,16 +66,11 @@ Available on the Business plan. Shows the last 50 events.`,
 				logs = filtered
 			}
 
-			fmt.Printf("\n"+bold("📋 Audit Log — %s"), projCfg.ProjectSlug)
-			if envFlag != "" {
-				fmt.Printf(" (%s)", envFlag)
+			type row struct {
+				when, who, action, env, detail string
 			}
-			fmt.Println()
-			fmt.Println(strings.Repeat("─", 65))
-			fmt.Printf("  "+bold("%-18s")+" "+bold("%-10s")+" "+bold("%-12s")+" "+bold("%-10s")+" "+bold("%s")+"\n",
-				"WHEN", "WHO", "ACTION", "ENV", "DETAIL")
-			fmt.Println(strings.Repeat("─", 65))
 
+			rows := make([]row, 0, len(logs))
 			for _, entry := range logs {
 				action, _ := entry["action"].(string)
 				username, _ := entry["username"].(string)
@@ -83,43 +78,60 @@ Available on the Business plan. Shows the last 50 events.`,
 				createdAtStr, _ := entry["created_at"].(string)
 				metaStr, _ := entry["metadata"].(string)
 
-				age := ""
+				when := ""
 				if createdAtStr != "" {
 					if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
-						age = formatAge(t)
+						when = formatAge(t)
 					}
 				}
 
-				detail := parseAuditDetail(action, metaStr)
-				icon := actionIcon(action)
-
-				fmt.Printf("  "+dim("%-18s")+" "+cyan("%-10s")+" %s "+yellow("%-8s")+" "+blue("%-12s")+" %s\n",
-				age, "@"+username, icon, action, envName, detail)
+				rows = append(rows, row{
+					when:   when,
+					who:    "@" + username,
+					action: action,
+					env:    envName,
+					detail: parseAuditDetail(action, metaStr),
+				})
 			}
 
-			fmt.Println(strings.Repeat("─", 65))
-			fmt.Printf("  %d event(s) shown\n\n", len(logs))
+			// Size each column to fit its longest value (including the
+			// header) rather than a fixed guess, so nothing gets truncated
+			// or drifts out of alignment with wider-than-expected data.
+			whenW, whoW, actionW, envW := len("WHEN"), len("WHO"), len("ACTION"), len("ENV")
+			for _, r := range rows {
+				whenW = max(whenW, len(r.when))
+				whoW = max(whoW, len(r.who))
+				actionW = max(actionW, len(r.action))
+				envW = max(envW, len(r.env))
+			}
+
+			title := fmt.Sprintf("Audit Log — %s", projCfg.ProjectSlug)
+			if envFlag != "" {
+				title += fmt.Sprintf(" (%s)", envFlag)
+			}
+			ruleWidth := whenW + whoW + actionW + envW + 20 // + spacing between columns
+			rule := strings.Repeat("─", ruleWidth)
+
+			fmt.Println()
+			fmt.Println(bold(title))
+			fmt.Println(rule)
+			fmt.Printf("  "+bold("%-*s")+"  "+bold("%-*s")+"  "+bold("%-*s")+"  "+bold("%-*s")+"  "+bold("%s")+"\n",
+				whenW, "WHEN", whoW, "WHO", actionW, "ACTION", envW, "ENV", "DETAIL")
+			fmt.Println(rule)
+
+			for _, r := range rows {
+				fmt.Printf("  "+dim("%-*s")+"  "+cyan("%-*s")+"  "+yellow("%-*s")+"  "+blue("%-*s")+"  %s\n",
+					whenW, r.when, whoW, r.who, actionW, r.action, envW, r.env, r.detail)
+			}
+
+			fmt.Println(rule)
+			fmt.Printf("  %d event(s) shown\n\n", len(rows))
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "filter by environment")
 	return cmd
-}
-
-func actionIcon(action string) string {
-	icons := map[string]string{
-		"push":   "📤",
-		"pull":   "📥",
-		"invite": "👤",
-		"revoke": "🚫",
-		"login":  "🔑",
-		"logout": "🚪",
-	}
-	if icon, ok := icons[action]; ok {
-		return icon
-	}
-	return "📝"
 }
 
 func parseAuditDetail(action, metaJSON string) string {

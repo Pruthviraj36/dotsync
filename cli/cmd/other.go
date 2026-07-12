@@ -47,23 +47,43 @@ func historyCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("\n"+bold("📜 History for %s/%s")+"\n", projCfg.ProjectSlug, env)
-			fmt.Println(strings.Repeat("─", 50))
-
+			// Size columns to fit the actual data rather than a fixed
+			// guess, so long usernames or ages never drift out of alignment.
+			verW, ageW, whoW := len("v0"), 0, 0
+			ages := make([]string, len(history))
 			for i, entry := range history {
 				t, _ := time.Parse(time.RFC3339, entry.CreatedAt)
-				age := formatAge(t)
-
-				prefix := "  "
-				if i == 0 {
-					prefix = green("→ ") // current version
+				ages[i] = formatAge(t)
+				if w := len(fmt.Sprintf("v%d", entry.Version)); w > verW {
+					verW = w
 				}
-
-				fmt.Printf("%s"+green("v%-3d")+"  "+dim("%-20s")+"  by "+cyan("@%s")+"\n",
-					prefix, entry.Version, age, entry.PushedBy)
+				if len(ages[i]) > ageW {
+					ageW = len(ages[i])
+				}
+				if w := len("@" + entry.PushedBy); w > whoW {
+					whoW = w
+				}
 			}
 
-			fmt.Println(strings.Repeat("─", 50))
+			title := fmt.Sprintf("History for %s/%s", projCfg.ProjectSlug, env)
+			rule := strings.Repeat("─", len(title)+2)
+
+			fmt.Println()
+			fmt.Println(bold(title))
+			fmt.Println(rule)
+
+			for i, entry := range history {
+				marker := "  "
+				if i == 0 {
+					marker = green("> ") // current version
+				}
+
+				version := fmt.Sprintf("v%d", entry.Version)
+				fmt.Printf("%s"+green("%-*s")+"  "+dim("%-*s")+"  by "+cyan("%-*s")+"\n",
+					marker, verW, version, ageW, ages[i], whoW, "@"+entry.PushedBy)
+			}
+
+			fmt.Println(rule)
 			fmt.Printf("  %d version(s) shown\n\n", len(history))
 			return nil
 		},
