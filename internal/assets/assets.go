@@ -7,3 +7,6 @@ import _ "embed"
 
 //go:embed install.sh
 var InstallScript []byte
+
+//go:embed install.ps1
+var InstallScriptPS1 []byte

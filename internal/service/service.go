@@ -93,24 +93,33 @@ func (s *SecretService) PullLatest(ctx context.Context, envID string) (*PulledSe
 	return &sec, err
 }
 
+// HistoryEntry bundles a secret's metadata with the pusher's resolved
+// username, so callers never have to display a raw user-ID UUID.
+type HistoryEntry struct {
+	Version   int       `json:"version"`
+	PushedBy  string    `json:"pushed_by"` // username, resolved via join — never a raw user ID
+	CreatedAt time.Time `json:"created_at"`
+}
+
 // GetHistory returns the version history within the plan's history window.
-func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays int) ([]model.Secret, error) {
+func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays int) ([]HistoryEntry, error) {
 	// historyDays <= 0 means "no limit" — don't filter by date at all.
 	// (Naively doing time.Now().AddDate(0, 0, -historyDays) with a negative
 	// historyDays used as a sentinel would compute a cutoff in the FUTURE,
 	// silently hiding everything instead of showing everything.)
 	query := `
-		SELECT id, environment_id, version, pushed_by, created_at
-		FROM secrets
-		WHERE environment_id = $1`
+		SELECT s.version, u.username, s.created_at
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1`
 	args := []any{envID}
 
 	if historyDays > 0 {
 		since := time.Now().AddDate(0, 0, -historyDays)
-		query += ` AND created_at >= $2`
+		query += ` AND s.created_at >= $2`
 		args = append(args, since)
 	}
-	query += ` ORDER BY version DESC`
+	query += ` ORDER BY s.version DESC`
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -118,13 +127,13 @@ func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDay
 	}
 	defer rows.Close()
 
-	var history []model.Secret
+	var history []HistoryEntry
 	for rows.Next() {
-		var sec model.Secret
-		if err := rows.Scan(&sec.ID, &sec.EnvironmentID, &sec.Version, &sec.PushedBy, &sec.CreatedAt); err != nil {
+		var entry HistoryEntry
+		if err := rows.Scan(&entry.Version, &entry.PushedBy, &entry.CreatedAt); err != nil {
 			return nil, err
 		}
-		history = append(history, sec)
+		history = append(history, entry)
 	}
 	return history, rows.Err()
 }

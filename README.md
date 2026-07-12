@@ -49,15 +49,24 @@ No trust required on our end. Even if the database leaked tomorrow, your secrets
 
 ## Install
 
+**macOS / Linux:**
+
 ```bash
 curl -fsSL https://dotsync.onrender.com/install | bash
 ```
 
-This downloads the right release binary for your OS/arch, verifies it
-against the published SHA-256 checksum, and installs it to
-`/usr/local/bin` — so it's on your `$PATH` immediately, no extra setup.
-Override the location with `DOTSYNC_INSTALL_DIR=/some/dir` if you want
-somewhere else.
+**Windows (PowerShell):**
+
+```powershell
+irm https://dotsync.onrender.com/install.ps1 | iex
+```
+
+Both download the right release binary for your OS/arch, verify it
+against the published SHA-256 checksum, and put it somewhere already on
+your `PATH` — `/usr/local/bin` on macOS/Linux, a user-level directory
+added to `PATH` automatically on Windows (no admin rights needed).
+Override the location with `DOTSYNC_INSTALL_DIR` (env var on macOS/Linux,
+`$env:DOTSYNC_INSTALL_DIR` on Windows) if you want somewhere else.
 
 ---
 

@@ -163,6 +163,12 @@ func main() {
 	r.Get("/install.sh", installHandler)
 	r.Get("/install", installHandler)
 
+	// Windows installer — `irm https://dotsync.onrender.com/install.ps1 | iex`
+	r.Get("/install.ps1", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
+		w.Write(assets.InstallScriptPS1)
+	})
+
 	// Stripe/LemonSqueezy/PayPal webhook — raw body required, no auth middleware.
 	// The provider's own signature verification (inside WebhookHandler) is
 	// what actually authenticates these requests.
