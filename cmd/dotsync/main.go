@@ -15,6 +15,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/handler"
+	"github.com/Pruthviraj36/dotsync/internal/license"
 	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
 	"github.com/Pruthviraj36/dotsync/internal/payment"
 	"github.com/Pruthviraj36/dotsync/internal/service"
@@ -44,6 +45,33 @@ func main() {
 		"STRIPE_WEBHOOK_SECRET",
 		"SERVER_MASTER_KEY",
 	)
+
+	// ── On-premise license check ────────────────────────────────────────────
+	// dotsync is free to use hosted at dotsync.onrender.com. Self-hosting
+	// elsewhere requires a paid on-premise license (see internal/license and
+	// cmd/licensegen). The official hosted deployment sets DOTSYNC_HOSTED=true
+	// (see render.yaml) to skip this — it isn't "on-premise" for anyone.
+	//
+	// This check is deliberately public source, same as the rest of this
+	// repo — see LICENSE (Elastic License 2.0) for why that's fine: verifying
+	// a signature only needs the public key above, never the private one, so
+	// publishing this code doesn't let anyone forge a valid license key. What
+	// the license terms add is the legal backstop: deleting this check and
+	// recompiling is exactly the kind of license-key circumvention ELv2
+	// prohibits, not merely an inconvenience to route around.
+	if os.Getenv("DOTSYNC_HOSTED") != "true" {
+		licenseKey := os.Getenv("DOTSYNC_LICENSE_KEY")
+		if licenseKey == "" {
+			log.Fatal("DOTSYNC_LICENSE_KEY is required to self-host dotsync. " +
+				"Buy an on-premise license at https://dotsync.onrender.com#pricing, " +
+				"or set DOTSYNC_HOSTED=true if this is the official hosted instance.")
+		}
+		claims, err := license.Verify(licenseKey)
+		if err != nil {
+			log.Fatalf("invalid on-premise license: %v", err)
+		}
+		log.Printf("✅ on-premise license valid — licensed to %s", claims.Licensee)
+	}
 
 	// ── Database ────────────────────────────────────────────────────────────
 	// DATABASE_URL: pooled connection (Neon PgBouncer) — used for normal app queries.

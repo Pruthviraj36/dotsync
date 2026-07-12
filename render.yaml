@@ -42,6 +42,11 @@ services:
                                  # (server-side; see internal/service.PasswordService).
                                  # If you ever need to set this manually: openssl rand -hex 32
 
+      - key: DOTSYNC_HOSTED
+        value: "true"            # This IS the official hosted instance — skips the
+                                 # on-premise license check (see internal/license).
+                                 # Do NOT set this on anyone else's deployment.
+
       - key: GITHUB_CLIENT_ID
         sync: false             # set in Render dashboard
                                  # GITHUB_CLIENT_SECRET is NOT needed here — login uses
@@ -62,26 +67,20 @@ services:
       - key: LEMONSQUEEZY_WEBHOOK_SECRET
         sync: false             # from app.lemonsqueezy.com → Webhooks
 
-      - key: LS_VARIANT_PRO
-        sync: false             # variant ID for the Pro plan product
-
-      - key: LS_VARIANT_TEAM
-        sync: false             # variant ID for the Team plan product
-
-      - key: LS_VARIANT_BUSINESS
-        sync: false             # variant ID for the Business plan product
+      - key: LS_VARIANT_ONPREMISE
+        sync: false             # variant ID for the one-time $500 on-premise license product
 
       # ── PayPal (alternative provider — set PAYMENT_PROVIDER=paypal) ──────
+      # No plan/price ID needed — the on-premise license is a fixed $500
+      # one-time Orders v2 purchase, not a subscription plan.
       # - key: PAYPAL_CLIENT_ID
       #   sync: false
       # - key: PAYPAL_CLIENT_SECRET
       #   sync: false
-      # - key: PAYPAL_PLAN_PRO
+      # - key: PAYPAL_WEBHOOK_ID
       #   sync: false
-      # - key: PAYPAL_PLAN_TEAM
-      #   sync: false
-      # - key: PAYPAL_PLAN_BUSINESS
-      #   sync: false
+      # - key: PAYPAL_ENV
+      #   value: sandbox        # or "live"
 
 # Database is hosted on Neon (https://neon.tech), not Render —
 # create a project there and paste both connection strings above.

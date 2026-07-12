@@ -228,6 +228,30 @@ dotsync pull --local   # only you can decrypt this
 ```
 ---
 
+## Licensing / self-hosting on-premise
+
+dotsync is free to use hosted at `dotsync.onrender.com` — every feature, no limits.
+
+The source is available in this repo under a modified Elastic License 2.0
+(see [`LICENSE`](./LICENSE)) — you can read it, audit it, modify it. What
+it doesn't grant for free is running your own deployment: self-hosting the
+server anywhere other than the official hosted instance requires a paid
+on-premise license key ($500, one-time). This is checked both technically
+(the server won't start without a valid key — see `internal/license`) and
+legally (the license terms prohibit removing that check and recompiling).
+
+**Buying a license**: `dotsync billing onpremise` from the CLI, or the
+pricing section on the landing page.
+
+**If you're the maintainer setting this up for the first time**: see
+`cmd/licensegen`'s doc comment — you need to generate a keypair once, keep
+the private half somewhere safe (never in this repo), and paste the public
+half into `internal/license.PublicKeyHex`. Until that's done, every
+self-hosted deployment (anything without `DOTSYNC_HOSTED=true`) will
+refuse to start — that's intentional, not a bug.
+
+---
+
 ## Contributing
 
 The project is still early. If something breaks or you find a security issue:
