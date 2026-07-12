@@ -49,38 +49,15 @@ No trust required on our end. Even if the database leaked tomorrow, your secrets
 
 ## Install
 
-**Recommended — installs to `/usr/local/bin`, so it's on your `$PATH` immediately:**
-
 ```bash
-curl -fsSL https://dotsync.onrender.com/install.sh | bash
+curl -fsSL https://dotsync.onrender.com/install | bash
 ```
 
 This downloads the right release binary for your OS/arch, verifies it
-against the published SHA-256 checksum, and installs it. Override the
-location with `DOTSYNC_INSTALL_DIR=/some/dir` if you don't want
-`/usr/local/bin`.
-
-**With Go:**
-
-```bash
-go install github.com/Pruthviraj36/dotsync@latest
-```
-
-⚠️ This installs to `$(go env GOPATH)/bin` (usually `~/go/bin`), **not**
-`/usr/local/bin` — and that directory often isn't on `$PATH` by default on
-a fresh Linux machine, which looks like "it installed with no error but
-`dotsync` isn't a recognized command." If that happens, either add it to
-your `$PATH`:
-
-```bash
-echo 'export PATH="$PATH:$(go env GOPATH)/bin"' >> ~/.bashrc && source ~/.bashrc
-```
-
-or just use the curl script above instead, which doesn't have this problem.
-
-**Download binary directly:**
-
-Head to [Releases](https://github.com/Pruthviraj36/dotsync/releases) and grab the binary for your platform. Cross-compiled for Linux, macOS, and Windows via GoReleaser.
+against the published SHA-256 checksum, and installs it to
+`/usr/local/bin` — so it's on your `$PATH` immediately, no extra setup.
+Override the location with `DOTSYNC_INSTALL_DIR=/some/dir` if you want
+somewhere else.
 
 ---
 
