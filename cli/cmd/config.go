@@ -61,7 +61,7 @@ after switching.`,
 			if err := config.SaveGlobal(cfg); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
-			fmt.Println("✅ Server URL set to", args[0])
+			fmt.Println(ok("Server URL set to"), args[0])
 			fmt.Println("   Run 'dotsync login' to authenticate with this server.")
 			return nil
 		},
