@@ -195,7 +195,8 @@ Run this before every commit, or better, install it as a pre-commit hook:
 				root = "."
 			}
 
-			fmt.Printf(bold("🔍 Scanning %s for secrets...")+"\n\n", root)
+			fmt.Println(info(fmt.Sprintf("Scanning %s for secrets...", root)))
+			fmt.Println()
 
 			var findings []scanFinding
 			var filesScanned int
@@ -268,7 +269,8 @@ Run this before every commit, or better, install it as a pre-commit hook:
 			}
 
 			if len(findings) == 0 {
-				fmt.Printf(green("✅ No secrets found in %d files scanned.")+"\n\n", filesScanned)
+				fmt.Println(ok(fmt.Sprintf("No secrets found in %d files scanned.", filesScanned)))
+				fmt.Println()
 				fmt.Println("  Good hygiene! Keep secrets in dotsync, not in source code.")
 				fmt.Println()
 				return nil
@@ -284,11 +286,12 @@ Run this before every commit, or better, install it as a pre-commit hook:
 				}
 			}
 
-			fmt.Printf(yellow("⚠️  Found %d potential secret(s) in %d file(s) scanned:")+"\n\n",
-				len(findings), filesScanned)
+			fmt.Println(warn(fmt.Sprintf("Found %d potential secret(s) in %d file(s) scanned.",
+				len(findings), filesScanned)))
+			fmt.Println()
 
 			if len(high) > 0 {
-				fmt.Println("  "+red(bold("🔴 HIGH SEVERITY")))
+				fmt.Println("  " + red(bold("HIGH SEVERITY")))
 				fmt.Println(strings.Repeat("─", 60))
 				for _, f := range high {
 					fmt.Printf("  "+bold("%s")+":"+yellow("%d")+"\n", f.file, f.line)
@@ -298,7 +301,7 @@ Run this before every commit, or better, install it as a pre-commit hook:
 			}
 
 			if len(medium) > 0 {
-				fmt.Println("  "+yellow(bold("🟡 MEDIUM SEVERITY")))
+				fmt.Println("  " + yellow(bold("MEDIUM SEVERITY")))
 				fmt.Println(strings.Repeat("─", 60))
 				for _, f := range medium {
 					fmt.Printf("  %s:%d\n", f.file, f.line)
