@@ -32,22 +32,20 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if config.IsLoggedIn(cfg) {
-		fmt.Println(green("✅ Already logged in as"), cyan(cfg.Username))
+		fmt.Println(ok("Already logged in as"), cyan(cfg.Username))
 		fmt.Println("   Run 'dotsync logout' first to switch accounts.")
 		return nil
 	}
 
-	fmt.Print("Connecting... ")
+	fmt.Println(spin("Connecting to server..."))
 	authCfg, err := api.GetAuthConfig(cfg.ServerURL)
 	if err != nil {
-		fmt.Println("❌")
 		return fmt.Errorf("could not reach server: %w", err)
 	}
 	if authCfg.GitHubClientID == "" {
-		fmt.Println("❌")
 		return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
 	}
-	fmt.Println("✅")
+	fmt.Println(ok("Connection established"))
 
 	// ── Step 1: request a device code from GitHub ──────────────────────────
 	dc, err := api.StartGitHubDeviceFlow(authCfg.GitHubClientID)
@@ -74,15 +72,14 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println(green("✅ Approved"))
-	fmt.Print("Finishing login... ")
+	fmt.Println(ok("Approved"))
+	fmt.Println(spin("Finishing login..."))
 
 	// ── Step 4: hand the verified GitHub token to our server, get DotSync
 	// tokens back. The server independently re-verifies this token against
 	// GitHub's own API — it never just trusts what the CLI claims. ─────────
 	result, err := api.ExchangeGitHubDeviceToken(cfg.ServerURL, ghToken)
 	if err != nil {
-		fmt.Println("❌")
 		return fmt.Errorf("login failed: %w", err)
 	}
 
@@ -99,9 +96,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 
-	fmt.Println(green("✅"))
+	fmt.Println(ok("Login complete"))
 	fmt.Println()
-	fmt.Printf(bold("Welcome, %s! 👋")+"\n", username)
+	fmt.Printf(bold("Welcome, %s!")+"\n", username)
 	fmt.Printf("Plan: "+cyan("%s")+"\n", plan)
 	fmt.Println()
 	fmt.Println("Next: cd into your project and run 'dotsync init'")
@@ -174,7 +171,7 @@ func logoutCmd() *cobra.Command {
 				return fmt.Errorf("clear credentials: %w", err)
 			}
 
-			fmt.Println(green("✅ Logged out. All sessions revoked."))
+			fmt.Println(ok("Logged out. All sessions revoked."))
 			return nil
 		},
 	}
