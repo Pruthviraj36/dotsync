@@ -49,7 +49,7 @@ func teamListCmd() *cobra.Command {
 				return nil
 			}
 
-			fmt.Printf("\n"+bold("👥 Team for project '%s'")+"\n", projCfg.ProjectSlug)
+			fmt.Printf("\n"+bold("Team for project '%s'")+"\n", projCfg.ProjectSlug)
 			fmt.Println(strings.Repeat("─", 50))
 			fmt.Printf("  "+bold("%-25s")+" "+bold("%-10s")+" "+bold("%s")+"\n", "USERNAME", "ROLE", "JOINED")
 			fmt.Println(strings.Repeat("─", 50))
@@ -68,7 +68,7 @@ func teamListCmd() *cobra.Command {
 				// Highlight the current user
 				marker := "  "
 				if username == cfg.Username {
-					marker = green("→ ")
+					marker = green(">> ")
 				}
 
 				fmt.Printf("%s"+cyan("%-25s")+" %-15s "+dim("%s")+"\n", marker, "@"+username, roleLabel, age)
@@ -106,8 +106,8 @@ func teamAddCmd() *cobra.Command {
 			username := args[0]
 			client := api.New(cfg)
 
-			fmt.Printf(dim("⏳ Inviting @%s to '%s' as %s...")+"\n",
-				username, projCfg.ProjectSlug, roleFlag)
+			fmt.Println(spin(fmt.Sprintf("Inviting @%s to '%s' as %s...",
+				username, projCfg.ProjectSlug, roleFlag)))
 
 			if err := client.AddTeamMember(projCfg.ProjectSlug, username); err != nil {
 				return err
@@ -116,13 +116,13 @@ func teamAddCmd() *cobra.Command {
 			// Set role if not the default "member"
 			if roleFlag != "member" {
 				if err := client.UpdateTeamRole(projCfg.ProjectSlug, username, roleFlag); err != nil {
-					fmt.Printf(yellow("⚠️  Added, but could not set role to %s: %v")+"\n", roleFlag, err)
+					fmt.Println(warn(fmt.Sprintf("Added, but could not set role to %s: %v", roleFlag, err)))
 					return nil
 				}
 			}
 
-			fmt.Printf(green("✅ @%s added to '%s' as %s")+"\n",
-				username, projCfg.ProjectSlug, roleWithIcon(roleFlag))
+			fmt.Println(ok(fmt.Sprintf("@%s added to '%s' as %s",
+				username, projCfg.ProjectSlug, roleWithIcon(roleFlag))))
 			fmt.Println()
 			fmt.Printf("  They'll need to run: dotsync init\n")
 			fmt.Printf("  Then share your project password with them securely.\n")
@@ -166,7 +166,7 @@ func teamRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf(green("✅ @%s removed from '%s'")+"\n", username, projCfg.ProjectSlug)
+			fmt.Println(ok(fmt.Sprintf("@%s removed from '%s'", username, projCfg.ProjectSlug)))
 			fmt.Println()
 			fmt.Println("  Note: they still have any locally pulled .env files.")
 			fmt.Println("  Rotate your project password if this was a security removal:")
@@ -210,22 +210,24 @@ func teamRoleCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Printf(green("✅ @%s is now %s in '%s'")+"\n",
-				username, roleWithIcon(role), projCfg.ProjectSlug)
+			fmt.Println(ok(fmt.Sprintf("@%s is now %s in '%s'",
+				username, roleWithIcon(role), projCfg.ProjectSlug)))
 			return nil
 		},
 	}
 }
 
 func roleWithIcon(role string) string {
-	icons := map[string]string{
-		"owner":  "👑 owner",
-		"admin":  "🔧 admin",
-		"member": "👤 member",
-		"viewer": "👁  viewer",
+	switch role {
+	case "owner":
+		return yellow(bold("owner"))
+	case "admin":
+		return cyan("admin")
+	case "member":
+		return green("member")
+	case "viewer":
+		return dim("viewer")
+	default:
+		return role
 	}
-	if label, ok := icons[role]; ok {
-		return label
-	}
-	return role
 }

@@ -91,7 +91,7 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 				return err
 			}
 			if identityCreated {
-				fmt.Printf(green("✓ ed25519 identity created — %s")+"\n", identity.PubKeyPath())
+				fmt.Println(ok(fmt.Sprintf("ed25519 identity created: %s", identity.PubKeyPath())))
 			}
 			fmt.Println(dim("signing manifest.sig …"))
 
@@ -115,7 +115,7 @@ and uploads the encrypted blob. The server never sees your raw secrets.`,
 			}
 
 			fmt.Println()
-			fmt.Printf(green("✓ pushed · rev %s · server sees ciphertext only")+"\n", rev)
+			fmt.Println(ok(fmt.Sprintf("Pushed. Rev %s. Server stores ciphertext only.", rev)))
 			fmt.Println()
 			fmt.Printf("  "+bold("Project")+" : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"     : %s\n", env)
@@ -180,7 +180,7 @@ decrypts it locally, and writes your .env file.`,
 			// Warn before overwriting
 			if !forceFlag {
 				if _, err := os.Stat(outputFile); err == nil {
-					fmt.Printf("⚠️  %s already exists. Overwrite? [y/N]: ", outputFile)
+					fmt.Printf("%s ", warn(fmt.Sprintf("%s already exists. Overwrite? [y/N]:", outputFile)))
 					var confirm string
 					fmt.Scanln(&confirm)
 					if confirm != "y" && confirm != "Y" {
@@ -202,11 +202,11 @@ decrypts it locally, and writes your .env file.`,
 			if verifyFlag {
 				verified, verifyErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey)
 				if verifyErr != nil {
-					return fmt.Errorf("✗ %w\nRefusing to write %s — pull again, and if this keeps happening, tell your team", verifyErr, outputFile)
+					return fmt.Errorf("signature verification failed: %w\nRefusing to write %s — pull again, and if this keeps happening, tell your team", verifyErr, outputFile)
 				}
 				switch {
 				case verified:
-					fmt.Printf(green("✓ signature ok (%s, ed25519)")+"\n", result.PushedBy)
+					fmt.Println(ok(fmt.Sprintf("Signature verified (%s, ed25519)", result.PushedBy)))
 				case len(result.Signature) == 0:
 					fmt.Println(dim("  (no signature on this push — pushed before signing was enabled)"))
 				default:
@@ -241,8 +241,8 @@ decrypts it locally, and writes your .env file.`,
 			parsed := cliCrypto.ParseEnvFile(plaintext)
 			rev := revString(digestOf(result.EncryptedData))
 
-			fmt.Printf(green("✓ decrypted %d keys → %s")+"\n", len(parsed), outputFile)
-			fmt.Println(green("✓ integrity verified — nothing tampered"))
+			fmt.Println(ok(fmt.Sprintf("Decrypted %d keys to %s", len(parsed), outputFile)))
+			fmt.Println(ok("Integrity verified; nothing tampered."))
 			fmt.Println()
 			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"      : %s\n", env)

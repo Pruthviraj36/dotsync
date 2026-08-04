@@ -28,7 +28,7 @@ func New(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("ping db: %w", err)
 	}
 
-	log.Println("✅ Database connected")
+	log.Println("[OK] Database connected")
 	return &DB{db}, nil
 }
 
@@ -45,6 +45,6 @@ func RunMigrations(dsn, migrationsPath string) error {
 		return fmt.Errorf("run migrations: %w", err)
 	}
 
-	log.Println("✅ Migrations applied")
+	log.Println("[OK] Migrations applied")
 	return nil
 }

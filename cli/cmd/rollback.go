@@ -66,26 +66,26 @@ If you just want to inspect an old version without pushing it:
 			currentVersion, _, _ := client.GetLatestVersion(projCfg.ProjectSlug, env)
 
 			if version == currentVersion {
-				fmt.Printf(green("✅ Already at version %d — nothing to roll back.")+"\n", version)
+				fmt.Println(ok(fmt.Sprintf("Already at version %d; nothing to roll back.", version)))
 				return nil
 			}
 
-			fmt.Printf("\n"+bold("⏮  Rolling back %s/%s")+"\n", projCfg.ProjectSlug, env)
+			fmt.Printf("\n%s\n", bold(fmt.Sprintf("Rolling back %s/%s", projCfg.ProjectSlug, env)))
 			fmt.Printf("   Current  : "+dim("v%d")+"\n", currentVersion)
 			fmt.Printf("   Target   : "+cyan("v%d")+"\n", version)
 			fmt.Println()
 
 			// Fetch the historical version
-			fmt.Printf(dim("⏳ Fetching v%d...")+"\n", version)
+			fmt.Println(spin(fmt.Sprintf("Fetching v%d...", version)))
 			old, err := client.PullVersion(projCfg.ProjectSlug, env, version)
 			if err != nil {
 				return fmt.Errorf("could not fetch version %d: %w", version, err)
 			}
 
 			if verified, vErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); vErr != nil {
-				return fmt.Errorf("✗ %w\nRefusing to roll back to a version that fails verification", vErr)
+				return fmt.Errorf("signature verification failed: %w\nRefusing to roll back to a version that fails verification", vErr)
 			} else if verified {
-				fmt.Printf(green("✓ signature ok (%s, ed25519)")+"\n", old.PushedBy)
+				fmt.Println(ok(fmt.Sprintf("Signature verified (%s, ed25519)", old.PushedBy)))
 			}
 
 			// Decrypt it to show the user what they're rolling back to
@@ -104,8 +104,8 @@ If you just want to inspect an old version without pushing it:
 				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
-				fmt.Printf(green("✅ Version %d written to %s (not pushed — inspect before committing)")+"\n",
-					version, outputFlag)
+				fmt.Println(ok(fmt.Sprintf("Version %d written to %s (not pushed; inspect before committing)",
+					version, outputFlag)))
 				return nil
 			}
 
@@ -117,7 +117,7 @@ If you just want to inspect an old version without pushing it:
 					keys = append(keys, k)
 				}
 				for _, k := range keys {
-					fmt.Printf("  • "+cyan("%s")+"\n", k)
+					fmt.Printf("  - "+cyan("%s")+"\n", k)
 				}
 				fmt.Println()
 				fmt.Printf("Re-encrypt v%d and push as v%d? [y/N]: ",
@@ -133,21 +133,19 @@ If you just want to inspect an old version without pushing it:
 			// Re-encrypt with the same project password and push as a new version
 			// This is important: we don't just re-upload the old ciphertext because
 			// re-encrypting generates a fresh nonce (AES-GCM nonce reuse is catastrophic).
-			fmt.Print(dim("🔒 Re-encrypting and pushing..."))
+			fmt.Println(spin("Re-encrypting and pushing..."))
 
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, projCfg.ProjectSlug)
 			if err != nil {
-				fmt.Println(" ❌")
 				return fmt.Errorf("re-encryption failed: %w", err)
 			}
 
 			signature, identityCreated, pub, err := ensureIdentityAndSign(ciphertext)
 			if err != nil {
-				fmt.Println(" ❌")
 				return err
 			}
 			if identityCreated {
-				fmt.Printf("\n"+green("✓ ed25519 identity created — %s")+"\n", identity.PubKeyPath())
+				fmt.Println(ok(fmt.Sprintf("ed25519 identity created: %s", identity.PubKeyPath())))
 			}
 			if err := client.SetPubKey(identity.Hex(pub)); err != nil {
 				fmt.Println(dim("  (could not sync public key — signature may not verify for teammates yet)"))
@@ -159,13 +157,11 @@ If you just want to inspect an old version without pushing it:
 				Signature:     signature,
 			})
 			if err != nil {
-				fmt.Println(" ❌")
 				return err
 			}
 
-			fmt.Println(green(" ✅"))
 			fmt.Println()
-			fmt.Print("  " + green("✅ Rolled back successfully") + "\n")
+			fmt.Println("  " + ok("Rolled back successfully"))
 			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
 			fmt.Printf("  "+bold("Env")+"      : %s\n", env)
 			fmt.Printf("  "+bold("Restored")+": "+green("v%d content")+"\n", version)
@@ -183,7 +179,7 @@ If you just want to inspect an old version without pushing it:
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
 					os.WriteFile(".env", []byte(plaintext), 0600)
-					fmt.Println("  " + green("✅ Local .env updated"))
+					fmt.Println("  " + ok("Local .env updated"))
 				}
 			}
 

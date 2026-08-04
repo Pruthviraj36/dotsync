@@ -9,9 +9,9 @@ import (
 
 // color codes
 const (
-	cReset  = "\033[0m"
-	cBold   = "\033[1m"
-	cDim    = "\033[2m"
+	cReset = "\033[0m"
+	cBold  = "\033[1m"
+	cDim   = "\033[2m"
 
 	cGreen  = "\033[32m"
 	cYellow = "\033[33m"
@@ -43,11 +43,19 @@ func bold(s string) string   { return colorize(cBold, s) }
 func dim(s string) string    { return colorize(cDim, s) }
 
 // Prefixed status lines
-func ok(s string) string   { return green("✅ " + s) }
-func fail(s string) string { return red("❌ " + s) }
-func info(s string) string { return cyan("→  " + s) }
-func warn(s string) string { return yellow("⚠️  " + s) }
-func spin(s string) string { return dim("⏳ " + s) }
+func statusLabel(code, label string) string {
+	prefix := "[" + label + "]"
+	if !isTTY {
+		return prefix
+	}
+	return colorize(cBold+code, prefix)
+}
+
+func ok(s string) string   { return statusLabel(cGreen, "OK") + " " + s }
+func fail(s string) string { return statusLabel(cRed, "ERR") + " " + s }
+func info(s string) string { return statusLabel(cCyan, "INFO") + " " + s }
+func warn(s string) string { return statusLabel(cYellow, "WARN") + " " + s }
+func spin(s string) string { return statusLabel(cBlue, "WAIT") + " " + s }
 
 // cfmt helpers — drop-in fmt.Print* replacements with color applied to the whole line.
 func cprintf(format string, a ...any) { fmt.Printf(format, a...) }

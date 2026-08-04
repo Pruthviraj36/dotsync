@@ -152,12 +152,12 @@ Only shows which keys changed — values are never displayed.`,
 			// local vs remote: what would change if you pushed?
 			added, removed, changed := cliCrypto.DiffEnvFiles(remoteMap, localMap)
 
-			fmt.Printf("\n"+bold("🔍 Diff: local .env ↔ remote %s/%s")+" ("+green("v%d")+")\n",
+			fmt.Printf("\n"+bold("Diff: local .env vs remote %s/%s")+" ("+green("v%d")+")\n",
 				projCfg.ProjectSlug, env, remote.Version)
 			fmt.Println(strings.Repeat("─", 50))
 
 			if len(added)+len(removed)+len(changed) == 0 {
-				fmt.Println("  " + green("✅ No differences — your .env is in sync."))
+				fmt.Println("  " + ok("No differences; your .env is in sync."))
 				fmt.Println()
 				return nil
 			}
@@ -208,11 +208,11 @@ func envsCmd() *cobra.Command {
 				envs = []string{"dev", "staging", "production"}
 			}
 
-			fmt.Printf("\n"+bold("🌍 Environments for '%s'")+"\n\n", projCfg.ProjectSlug)
+			fmt.Printf("\n"+bold("Environments for '%s'")+"\n\n", projCfg.ProjectSlug)
 			for _, e := range envs {
 				marker := "  "
 				if e == projCfg.DefaultEnv {
-					marker = green("→ ")
+					marker = green(">> ")
 				}
 				fmt.Printf("%s%s\n", marker, cyan(e))
 			}
@@ -235,15 +235,15 @@ func statusCmd() *cobra.Command {
 			projCfg, projErr := config.LoadProject()
 
 			fmt.Println()
-			fmt.Println(bold("📊 DotSync Status"))
+			fmt.Println(bold("DotSync Status"))
 			fmt.Println(strings.Repeat("─", 44))
 
 			// Auth state
 			if config.IsLoggedIn(cfg) {
-				fmt.Printf("  "+bold("User")+"    : "+cyan("@%s")+" "+green("✅")+"\n", cfg.Username)
+				fmt.Printf("  "+bold("User")+"    : "+cyan("@%s")+" "+green("connected")+"\n", cfg.Username)
 				fmt.Printf("  Server  : %s\n", cfg.ServerURL)
 			} else {
-				fmt.Println("  " + bold("User") + "    : " + red("not logged in ❌"))
+				fmt.Println("  " + bold("User") + "    : " + red("not logged in"))
 				fmt.Println("  Run: dotsync login")
 				fmt.Println(strings.Repeat("─", 44))
 				fmt.Println()
@@ -253,14 +253,14 @@ func statusCmd() *cobra.Command {
 			fmt.Println()
 
 			if projErr != nil {
-				fmt.Println("  " + bold("Project") + " : " + red("not linked ❌"))
+				fmt.Println("  " + bold("Project") + " : " + red("not linked"))
 				fmt.Println("  Run: dotsync init")
 				fmt.Println(strings.Repeat("─", 44))
 				fmt.Println()
 				return nil
 			}
 
-			fmt.Printf("  "+bold("Project")+" : "+cyan("%s")+" "+green("✅")+"\n", projCfg.ProjectSlug)
+			fmt.Printf("  "+bold("Project")+" : "+cyan("%s")+" "+green("linked")+"\n", projCfg.ProjectSlug)
 			fmt.Printf("  Env     : %s (default)\n", projCfg.DefaultEnv)
 
 			// Sync state — compare remote version with local .env existence
@@ -269,9 +269,9 @@ func statusCmd() *cobra.Command {
 			// Server-side password state
 			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
 			if pwErr != nil {
-				fmt.Println("  " + bold("Password") + ": " + red("❌ not set") + " — run: " + cyan("dotsync init --rotate-password"))
+				fmt.Println("  " + bold("Password") + ": " + red("not set") + " — run: " + cyan("dotsync init --rotate-password"))
 			} else {
-				fmt.Println("  " + bold("Password") + ": " + green("🔑 available ✅"))
+				fmt.Println("  " + bold("Password") + ": " + green("available"))
 			}
 
 			fmt.Println()
@@ -279,7 +279,7 @@ func statusCmd() *cobra.Command {
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {
-				fmt.Println("  " + bold("Sync") + "    : " + yellow("⚠️  could not reach server"))
+				fmt.Println("  " + bold("Sync") + "    : " + yellow("could not reach server"))
 			} else if remoteVer == 0 {
 				fmt.Println("  Sync    : no secrets pushed yet")
 				fmt.Println("  Run: dotsync push")
@@ -288,7 +288,7 @@ func statusCmd() *cobra.Command {
 				if _, err := os.Stat(".env"); err == nil {
 					fmt.Println("  Local   : .env exists — run 'dotsync diff' to compare")
 				} else {
-					fmt.Println("  Local   : no .env ⚠️  — run: dotsync pull")
+					fmt.Println("  Local   : no .env — run: dotsync pull")
 				}
 			}
 

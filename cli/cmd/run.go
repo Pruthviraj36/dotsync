@@ -71,9 +71,9 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 			}
 
 			if verified, vErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey); vErr != nil {
-				return fmt.Errorf("✗ %w\nRefusing to run with unverified secrets", vErr)
+				return fmt.Errorf("signature verification failed: %w\nRefusing to run with unverified secrets", vErr)
 			} else if verified {
-				fmt.Fprintf(os.Stderr, dim("✓ signature ok (%s, ed25519)")+"\n", result.PushedBy)
+				fmt.Fprintln(os.Stderr, ok(fmt.Sprintf("Signature verified (%s, ed25519)", result.PushedBy)))
 			}
 
 			password, err := resolvePassword(client, projCfg.ProjectSlug)
@@ -149,8 +149,8 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				}
 			}()
 
-			fmt.Fprintf(os.Stderr, dim("→ dotsync: injecting %d secrets (%s/%s v%d)")+"\n",
-				len(secrets), projCfg.ProjectSlug, env, result.Version)
+			fmt.Fprintln(os.Stderr, info(fmt.Sprintf("Injecting %d secrets (%s/%s v%d)",
+				len(secrets), projCfg.ProjectSlug, env, result.Version)))
 
 			if err := proc.Run(); err != nil {
 				// Propagate the exit code from the subprocess

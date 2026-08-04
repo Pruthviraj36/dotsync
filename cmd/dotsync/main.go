@@ -70,7 +70,7 @@ func main() {
 		if err != nil {
 			log.Fatalf("invalid on-premise license: %v", err)
 		}
-		log.Printf("✅ on-premise license valid — licensed to %s", claims.Licensee)
+		log.Printf("[OK] on-premise license valid — licensed to %s", claims.Licensee)
 	}
 
 	// ── Database ────────────────────────────────────────────────────────────
@@ -257,7 +257,7 @@ func main() {
 		close(done)
 	}()
 
-	log.Printf("🚀 DotSync server running on :%s", port)
+	log.Printf("[INFO] DotSync server running on :%s", port)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen: %v", err)
 	}

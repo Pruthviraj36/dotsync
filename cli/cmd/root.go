@@ -9,7 +9,7 @@ import (
 
 var rootCmd = &cobra.Command{
 	Use:   "dotsync",
-	Short: "🔐 Sync .env secrets securely across your team",
+	Short: "Sync .env secrets securely across your team",
 	Long: `DotSync — end-to-end encrypted secret sync for dev teams.
 
 Secrets are encrypted on your machine before they ever reach the server.

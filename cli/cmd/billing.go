@@ -45,17 +45,17 @@ func billingStatusCmd() *cobra.Command {
 			plan := fmt.Sprintf("%v", status["plan"])
 
 			fmt.Println()
-			fmt.Println(bold("💳 DotSync Billing Status"))
+			fmt.Println(bold("DotSync Billing Status"))
 			fmt.Println()
 			fmt.Printf("  %-16s %s\n", bold("Plan:"), planBadge(plan))
 			fmt.Println()
-			fmt.Printf("  %s\n", green("✓ Every feature is included — unlimited projects, members,"))
+			fmt.Printf("  %s\n", ok("Every feature is included: unlimited projects, members,"))
 			fmt.Printf("  %s\n", green("  history, audit logs, and leak detection. Free."))
 
 			if plan != "onpremise" {
 				fmt.Println()
 				fmt.Printf("  %s\n", dim("Want to run dotsync on your own infrastructure instead of"))
-				fmt.Printf("  %s\n", dim("the hosted service? → "+cyan("dotsync billing onpremise")))
+				fmt.Printf("  %s\n", dim("the hosted service? Run "+cyan("dotsync billing onpremise")))
 			}
 			fmt.Println()
 			return nil
@@ -70,7 +70,7 @@ func billingPlansCmd() *cobra.Command {
 		Short: "Show pricing",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println()
-			fmt.Println(bold("📋 DotSync Pricing"))
+			fmt.Println(bold("DotSync Pricing"))
 			fmt.Println()
 
 			fmt.Printf("  %s\n", dim(strings.Repeat("─", 60)))
