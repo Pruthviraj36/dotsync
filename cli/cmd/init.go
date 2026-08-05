@@ -93,11 +93,6 @@ without touching the project slug or env config.`,
 				}
 			}
 
-			password, err := readPassword("Project Password (for end-to-end encryption): ")
-			if err != nil {
-				return err
-			}
-
 			fmt.Print("Default environment [dev]: ")
 			env, _ := reader.ReadString('\n')
 			env = strings.TrimSpace(env)
@@ -116,20 +111,17 @@ without touching the project slug or env config.`,
 				return fmt.Errorf("save project config: %w", err)
 			}
 
-			if err := setPassword(client, slug, password); err != nil {
-				return err
-			}
+			// Joining an existing project — the password is fetched automatically
+			// from the server by resolvePassword() at push/pull time.
+			// Do NOT call setPassword here: only owners and admins can set it.
 
 			ensureGitignore()
 
 			fmt.Println()
 			fmt.Println(ok(fmt.Sprintf("Linked to project '%s' (env: %s)", slug, env)))
 			fmt.Println()
-			fmt.Println("  dotsync push    # upload your .env")
 			fmt.Println("  dotsync pull    # download latest .env")
-			fmt.Println()
-			fmt.Println("  On a new machine: run 'dotsync init --rotate-password'")
-			fmt.Println("  to enter the same password there.")
+			fmt.Println("  dotsync push    # upload your .env (if you have write access)")
 			fmt.Println()
 
 			return nil
