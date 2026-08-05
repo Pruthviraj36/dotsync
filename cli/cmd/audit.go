@@ -17,12 +17,12 @@ func auditCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "audit",
-		Short: "View the audit log for this project (Business plan)",
+		Short: "View the audit log for this project",
 		Long: `Shows who pushed, pulled, and changed team membership in this project.
 Each action is recorded server-side with the user, timestamp, IP address,
 and relevant metadata.
 
-Available on the Business plan. Shows the last 50 events.`,
+Available to all users. Shows the last 50 events.`,
 		Example: `  dotsync audit
   dotsync audit --env production`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -39,14 +39,6 @@ Available on the Business plan. Shows the last 50 events.`,
 			client := api.New(cfg)
 			logs, err := client.AuditLogs(projCfg.ProjectSlug)
 			if err != nil {
-				if strings.Contains(err.Error(), "Business plan") ||
-					strings.Contains(err.Error(), "402") {
-					fmt.Println()
-					fmt.Println(yellow("Audit logs require the Business plan."))
-					fmt.Println("Upgrade at: https://dotsync.onrender.com/pricing")
-					fmt.Println()
-					return nil
-				}
 				return err
 			}
 

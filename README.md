@@ -1,4 +1,4 @@
-# DotSync 🔐
+# DotSync
 
 **Encrypted `.env` sync for dev teams. Your secrets never leave your machine in plaintext — ever.**
 
@@ -10,247 +10,254 @@ DotSync fixes that. One command to push. One command to pull. Everything encrypt
 
 ```
 $ dotsync push
-🔒 Encrypting 10 secrets for team access (my-app/dev)...
-📤 Uploading... ✅
+success  Encrypting 12 secrets for team access (my-app/production)...
+success  Pushed. Rev a3f8c2d. Server stores ciphertext only.
+
   Project : my-app
-  Env     : dev
+  Env     : production
   Version : v7
-  Secrets : 10 keys encrypted
+  Secrets : 12 keys encrypted
+
   Teammates can now run: dotsync pull
 ```
 
 ---
 
-## How it actually works
+## How it works
 
 DotSync does **client-side encryption**. That means:
 
 1. Your `.env` is encrypted on your laptop using a key derived from your project password
-
 2. Only the ciphertext travels to the server
-
 3. The server stores an encrypted blob it can't read
-
 4. Your teammates decrypt it locally using the same password
 
 No trust required on our end. Even if the database leaked tomorrow, your secrets would be unreadable.
 
-**The crypto stack, if you care:**
+**The crypto stack:**
 
-- **Argon2id** key derivation (time=3, memory=64MB) — slow enough to make brute-force miserable
-
-- **AES-256-GCM** encryption — authenticated, so tampered data fails loudly
-
+- **Argon2id** key derivation (time=3, memory=64MB) — brute-force resistant
+- **AES-256-GCM** encryption — authenticated, tampered data fails loudly
+- **Ed25519** push signatures — every push is signed by the pusher's machine key
 - **HMAC-SHA256** request signing — every API call is signed, replay attacks don't work
-
 - **JWT with refresh rotation** — short-lived access tokens, automatic refresh
 
 ---
 
 ## Install
 
-**macOS / Linux:**
-
 ```bash
-curl -fsSL https://dotsync.onrender.com/install | bash
+curl -fsSL https://dotsync.onrender.com/install.sh | sh
 ```
 
-**Windows (PowerShell):**
-
-```powershell
-irm https://dotsync.onrender.com/install.ps1 | iex
-```
-
-Both download the right release binary for your OS/arch, verify it
-against the published SHA-256 checksum, and put it somewhere already on
-your `PATH` — `/usr/local/bin` on macOS/Linux, a user-level directory
-added to `PATH` automatically on Windows (no admin rights needed).
-Override the location with `DOTSYNC_INSTALL_DIR` (env var on macOS/Linux,
-`$env:DOTSYNC_INSTALL_DIR` on Windows) if you want somewhere else.
+Or download a binary directly from the [releases page](https://github.com/Pruthviraj36/dotsync/releases).
 
 ---
 
 ## Quick start
 
-### 1. Log in
-
 ```bash
-dotsync login
+dotsync login         # Authenticate with GitHub (OAuth device flow)
+dotsync init          # Link this folder to a DotSync project
+dotsync push          # Encrypt and upload your .env
+dotsync pull          # Download and decrypt the latest .env
 ```
-
-Opens a GitHub device flow — you'll see a short code to enter at `github.com/login/device`. No passwords to set up, no OAuth app to configure yourself.
-
-### 2. Link your project
-
-Run this inside your project folder:
-
-```bash
-dotsync init
-```
-
-It'll ask for a project slug and a shared password. The password is what encrypts your secrets — share it with teammates the same way you'd share a WiFi password, once, securely. After that, DotSync handles everything.
-
-### 3. Push and pull
-
-```bash
-# Encrypt and upload
-dotsync push
-# Download and decrypt to .env
-dotsync pull
-```
-
-That's it for most use cases.
 
 ---
 
-## Command reference
+## Commands
 
-### Secrets
+| Command | Description |
+|---------|-------------|
+| `dotsync login` | Authenticate with GitHub |
+| `dotsync logout` | Log out and revoke sessions |
+| `dotsync init` | Link this folder to a project |
+| `dotsync push` | Encrypt and upload your .env |
+| `dotsync pull` | Download and decrypt latest .env |
+| `dotsync run` | Run a command with secrets injected (nothing hits disk) |
+| `dotsync diff` | Show what changed between local and remote |
+| `dotsync history` | Version history for an environment |
+| `dotsync rollback` | Roll back to a previous version |
+| `dotsync audit` | Full audit log (who did what and when) |
+| `dotsync scan` | Scan for secrets accidentally left in source files |
+| `dotsync team` | Manage project team members |
+| `dotsync envs` | List environments for this project |
+| `dotsync status` | Show login, project, and sync state |
+| `dotsync integrate` | Generate CI/CD integration snippets |
 
-```bash
-dotsync push                          # Push current .env
-dotsync push --env production         # Push to a specific environment
-dotsync push --file .env.staging      # Push a different file
-dotsync push --local                  # Encrypt for yourself only (no team access)
-dotsync pull                          # Pull latest .env
-dotsync pull --env staging            # Pull a different environment
-dotsync pull --output .env.local      # Write to a specific file
-dotsync pull --force                  # Skip overwrite confirmation
-```
+---
 
-### History and diff
+## Injecting secrets without writing a file
 
-```bash
-dotsync history                       # See all versions and who pushed them
-dotsync diff                          # Compare your local .env with remote
-dotsync rollback --version 3          # Restore a previous version
-```
-
-The diff only shows which keys changed — never the values:
-
-```
-🔍 Diff: local .env ↔ remote my-app/dev (v7)
-──────────────────────────────────────────────────
-  + DATABASE_URL                  (new key, only in local)
-  ~ REDIS_URL                     (value changed)
-──────────────────────────────────────────────────
-  +1 added  -0 removed  ~1 changed
-  Run 'dotsync push' to upload your local changes.
-```
-
-### Run with secrets injected
+`dotsync run` injects secrets directly into process memory. No `.env` file is ever written to disk. This is especially important in 2026, where AI coding tools (Claude Code, Cursor, Copilot) read your project directory automatically.
 
 ```bash
-dotsync run -- node server.js
+dotsync run -- npm run dev
 dotsync run -- python manage.py runserver
-dotsync run --env staging -- ./scripts/migrate.sh
-```
-
-Secrets are injected into the subprocess environment and never written to disk. When the process exits, they're gone.
-
-### Team management
-
-```bash
-dotsync team list                     # See who's on the project
-dotsync team add @username            # Invite someone
-dotsync team remove @username         # Remove access
-dotsync team role @username admin     # Change role
-```
-
-Roles: `owner` → `admin` → `member` → `viewer`. Viewers can pull but not push.
-
-### Other
-
-```bash
-dotsync envs                          # List environments for this project
-dotsync status                        # Show login, project, and sync state
-dotsync scan                          # Scan codebase for accidentally committed secrets
-dotsync audit                         # View audit log (Business plan)
-dotsync billing plans                 # Compare plans
-dotsync billing upgrade               # Upgrade your plan
-dotsync update                        # Update the CLI to latest
-dotsync version                       # Show current version
+dotsync run --env production -- ./deploy.sh
 ```
 
 ---
 
-## CI/CD
+## CI/CD integrations
 
-Set `DOTSYNC_PASSWORD` in your pipeline and DotSync skips the interactive password prompt:
+DotSync generates ready-to-use snippets for all major platforms. Run:
 
-```yaml
-# GitHub Actions
-- name: Pull production secrets
-  env:
-    DOTSYNC_PASSWORD: ${{ secrets.DOTSYNC_PROJECT_PASSWORD }}
-  run: |
-    dotsync pull --env production
-    # your .env is now written and ready
+```bash
+dotsync integrate --help
 ```
 
-Works with GitHub Actions, GitLab CI, Vercel, Railway, Render — anything that supports environment variables.
+Supported integrations:
+
+```bash
+dotsync integrate github-actions   # GitHub Actions workflow step
+dotsync integrate vercel           # Vercel environment variable sync
+dotsync integrate railway          # Railway deployment
+dotsync integrate netlify          # Netlify build environment
+dotsync integrate docker           # Docker / Docker Compose
+dotsync integrate shell            # Bash, Zsh, or Fish export
+```
+
+### GitHub Actions example
+
+```bash
+dotsync integrate github-actions --env production
+```
+
+This generates a workflow YAML step that pulls secrets at CI runtime using a scoped service token. No secrets are stored in your repo.
+
+---
+
+## Audit logs
+
+Every push, pull, password rotation, and team change is logged with the user, timestamp, and IP address.
+
+```bash
+dotsync audit
+dotsync audit --env production
+```
+
+Audit logs are available to all users at no cost. Only owners and admins can view them.
+
+```
+Audit Log — my-app
+──────────────────────────────────────────────────────
+  WHEN        WHO           ACTION   ENV          DETAIL
+──────────────────────────────────────────────────────
+  2m ago      @alice        push     production   v12
+  1h ago      @bob          pull     staging      v11
+  2026-07-28  @alice        invite   —            @charlie
+──────────────────────────────────────────────────────
+  3 event(s) shown
+```
+
+---
+
+## Secret scanning
+
+`dotsync scan` checks your source files for secrets accidentally left in plaintext — API keys, tokens, database URLs, private keys.
+
+```bash
+dotsync scan
+dotsync scan --path ./src
+```
+
+It looks for common patterns: AWS keys, Stripe tokens, private keys, database connection strings, and generic high-entropy strings. Runs locally — nothing is sent to the server.
+
+---
+
+## Teams
+
+```bash
+dotsync team invite @alice          # Invite a GitHub user
+dotsync team invite @alice --role viewer
+dotsync team list                   # List all members and roles
+dotsync team revoke @alice          # Remove access
+```
+
+Roles: `owner`, `admin`, `member`, `viewer`.
 
 ---
 
 ## Environments
 
-Every project comes with three environments out of the box: `dev`, `staging`, `production`. Use `--env` to target any of them:
+Each project supports multiple environments. Common setup:
 
 ```bash
+dotsync push --env dev
+dotsync push --env staging
 dotsync push --env production
-dotsync pull --env staging --output .env.staging
-dotsync diff --env production
+
+dotsync pull --env production
 ```
 
 ---
 
-## Personal mode
+## Pricing
 
-Sometimes you want to push secrets only you can read — API keys for personal accounts, local overrides, stuff that shouldn't be shared even with your team:
+DotSync is **completely free**. Every feature — audit logs, secret scanning, version history, team management, unlimited projects — is available to all users at no cost.
+
+The only paid option is a **one-time $500 license** to self-host the DotSync server on your own infrastructure, if you have compliance or data-residency requirements.
+
+| | Free | Self-Hosted ($500 once) |
+|--|------|------------------------|
+| Users | Unlimited | Unlimited |
+| Projects | Unlimited | Unlimited |
+| Environments | Unlimited | Unlimited |
+| Version history | Unlimited | Unlimited |
+| Audit logs | Yes | Yes |
+| Secret scanning | Yes | Yes |
+| Team management | Yes | Yes |
+| CI/CD integrations | Yes | Yes |
+| Data location | dotsync.onrender.com | Your own server |
+
+---
+
+## Self-hosting
 
 ```bash
-dotsync push --local   # encrypted with your personal token
-dotsync pull --local   # only you can decrypt this
+git clone https://github.com/Pruthviraj36/dotsync
+cd dotsync
+
+# Set environment variables (see .env.example)
+export DATABASE_URL=postgres://...
+export GITHUB_CLIENT_ID=...
+export JWT_SECRET=...
+
+go run main.go
 ```
----
 
-## Licensing / self-hosting on-premise
+Deploy on Railway, Render, Fly, or any VPS. See [render.yaml](render.yaml) for the Render configuration.
 
-dotsync is free to use hosted at `dotsync.onrender.com` — every feature, no limits.
-
-The source is available in this repo under a modified Elastic License 2.0
-(see [`LICENSE`](./LICENSE)) — you can read it, audit it, modify it. What
-it doesn't grant for free is running your own deployment: self-hosting the
-server anywhere other than the official hosted instance requires a paid
-on-premise license key ($500, one-time). This is checked both technically
-(the server won't start without a valid key — see `internal/license`) and
-legally (the license terms prohibit removing that check and recompiling).
-
-**Buying a license**: `dotsync billing onpremise` from the CLI, or the
-pricing section on the landing page.
-
-**If you're the maintainer setting this up for the first time**: see
-`cmd/licensegen`'s doc comment — you need to generate a keypair once, keep
-the private half somewhere safe (never in this repo), and paste the public
-half into `internal/license.PublicKeyHex`. Until that's done, every
-self-hosted deployment (anything without `DOTSYNC_HOSTED=true`) will
-refuse to start — that's intentional, not a bug.
+A self-hosting license ($500, one-time) is required for production use outside of dotsync.onrender.com. [Purchase here](https://dotsync.onrender.com/billing).
 
 ---
 
-## Contributing
+## GitHub OAuth App setup
 
-The project is still early. If something breaks or you find a security issue:
+Create a GitHub OAuth App at https://github.com/settings/developers:
 
-- **Bug?** Open an issue with your OS, CLI version (`dotsync version`), and what happened
+- **Application name:** DotSync (or anything you like)
+- **Homepage URL:** your server URL
+- **Authorization callback URL:** `{your-server-url}/api/auth/github/callback`
 
-- **Security issue?** Email directly — don't open a public issue for vulns
-
-- **Want to contribute?** PRs are welcome. The codebase is straightforward Go — Chi router on the server, Cobra CLI on the client
-
-If you're one of the first 100 people to open a meaningful PR or file a real bug, you get free lifetime Premium. That's not marketing copy — it's just a thank you.
+Set `GITHUB_CLIENT_ID` in your server environment. The client secret is not needed — DotSync uses the OAuth Device Flow, which doesn't require a server-side secret.
 
 ---
 
+## Security
 
-*Built out of frustration with copy-pasting `.env` files into Slack. If you've felt the same pain, give it a try.*
+- The server never sees your plaintext secrets
+- All secrets are AES-256-GCM encrypted before leaving your machine
+- Every push is signed with an Ed25519 machine key; teammates can verify who pushed
+- Audit logs record every access with IP address and timestamp
+- HMAC-SHA256 signs every API request; replay attacks don't work
+- Short-lived JWTs with refresh token rotation and replay detection
+
+Found a security issue? Email the maintainer directly. Do not open a public GitHub issue.
+
+---
+
+## License
+
+MIT for personal and open-source use. A commercial self-hosting license is required for production deployment outside of the hosted service. See [LICENSE.md](LICENSE.md).

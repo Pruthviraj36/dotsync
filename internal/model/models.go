@@ -72,6 +72,19 @@ type RefreshToken struct {
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 }
 
+// ServiceToken is a long-lived, scoped, read-only token for CI/CD pipelines.
+// Only the SHA-256 hash is stored server-side; the raw token is shown once.
+type ServiceToken struct {
+	ID          string     `db:"id"           json:"id"`
+	ProjectID   string     `db:"project_id"   json:"project_id"`
+	Env         string     `db:"env"          json:"env"`  // dev | staging | production | *
+	Name        string     `db:"name"         json:"name"`
+	TokenHash   string     `db:"token_hash"   json:"-"`
+	CreatedBy   string     `db:"created_by"   json:"created_by"`
+	CreatedAt   time.Time  `db:"created_at"   json:"created_at"`
+	LastUsedAt  *time.Time `db:"last_used_at" json:"last_used_at,omitempty"`
+}
+
 // Plan limits
 //
 // dotsync is free for everyone, with every feature unlocked (unlimited
