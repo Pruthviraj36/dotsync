@@ -21,7 +21,15 @@ Get started:
   dotsync push        Upload your .env (encrypted)
   dotsync pull        Download latest .env
   dotsync run         Run a command with secrets injected (nothing hits disk)
-  dotsync scan        Scan for secrets accidentally left in source files`,
+  dotsync scan        Scan for secrets accidentally left in source files
+
+CI/CD integrations:
+  dotsync integrate github-actions   GitHub Actions workflow snippet
+  dotsync integrate vercel           Vercel environment sync
+  dotsync integrate railway          Railway deployment snippet
+  dotsync integrate netlify          Netlify build environment
+  dotsync integrate docker           Docker / Compose snippet
+  dotsync integrate shell            Bash/Zsh/Fish export snippet`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -53,5 +61,6 @@ func init() {
 		configCmd(),
 		updateCmd(),
 		teamCmd(),
+		integrateCmd(),
 	)
 }

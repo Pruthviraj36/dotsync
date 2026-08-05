@@ -99,6 +99,7 @@ func main() {
 	secretSvc := service.NewSecretService(database)
 	teamSvc := service.NewTeamService(database)
 	auditSvc := service.NewAuditService(database)
+	serviceTokenSvc := service.NewServiceTokenService(database)
 
 	// SERVER_MASTER_KEY must decode to exactly 32 bytes (AES-256) — generate
 	// one with: openssl rand -hex 32
@@ -115,6 +116,7 @@ func main() {
 	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
 	passwordHandler := handler.NewPasswordHandler(passwordSvc, projectSvc, teamSvc, auditSvc)
 	identityHandler := handler.NewIdentityHandler(database)
+	serviceTokenHandler := handler.NewServiceTokenHandler(serviceTokenSvc, projectSvc, teamSvc)
 
 	paymentProvider, err := payment.New()
 	if err != nil {
@@ -187,7 +189,7 @@ func main() {
 
 	// ── Protected routes ──
 	r.Route("/api", func(r chi.Router) {
-		r.Use(mw.Authenticate(authSvc))
+		r.Use(mw.Authenticate(authSvc, serviceTokenSvc))
 		r.Use(mw.RateLimitByUser(300, time.Minute))
 
 		// Auth
@@ -212,8 +214,13 @@ func main() {
 		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
 		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
 
-		// Audit logs (business plan)
+		// Audit logs
 		r.Get("/projects/{slug}/audit", secretsHandler.AuditLogs)
+
+		// Service tokens (CI/CD integrations)
+		r.Post("/projects/{slug}/tokens", serviceTokenHandler.Create)
+		r.Get("/projects/{slug}/tokens", serviceTokenHandler.List)
+		r.Delete("/projects/{slug}/tokens/{tokenID}", serviceTokenHandler.Revoke)
 
 		// Project password (server-side encrypted, see PasswordService)
 		r.Put("/projects/{slug}/password", passwordHandler.Set)
