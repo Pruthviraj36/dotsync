@@ -700,17 +700,10 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-// GET /api/projects/{slug}/audit — read audit logs (business plan only)
+// GET /api/projects/{slug}/audit — read audit logs (available to all users)
 func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
-
-	limits := model.Plans[claims.Plan]
-	if !limits.HasAuditLogs {
-		writeError(w, http.StatusPaymentRequired,
-			"audit logs require the Business plan — upgrade at dotsync.onrender.com")
-		return
-	}
 
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
@@ -803,4 +796,117 @@ func (h *ProjectHandler) ListEnvironments(w http.ResponseWriter, r *http.Request
 	}
 
 	writeJSON(w, http.StatusOK, map[string]any{"environments": rows})
+}
+
+// ============================================================
+// Service Token Handlers
+// ============================================================
+
+type ServiceTokenHandler struct {
+	tokenSvc   *service.ServiceTokenService
+	projectSvc *service.ProjectService
+	teamSvc    *service.TeamService
+}
+
+func NewServiceTokenHandler(ts *service.ServiceTokenService, ps *service.ProjectService, tms *service.TeamService) *ServiceTokenHandler {
+	return &ServiceTokenHandler{tokenSvc: ts, projectSvc: ps, teamSvc: tms}
+}
+
+// POST /api/projects/{slug}/tokens — create a service token (owners and admins only)
+func (h *ServiceTokenHandler) Create(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (callerRole != "owner" && callerRole != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can create service tokens")
+		return
+	}
+
+	var req struct {
+		Env  string `json:"env"`
+		Name string `json:"name"`
+	}
+	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if req.Env == "" {
+		req.Env = "*"
+	}
+	if req.Name == "" {
+		req.Name = "ci-" + req.Env
+	}
+
+	rawToken, record, err := h.tokenSvc.Create(r.Context(), proj.ID, req.Env, req.Name, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to create service token")
+		return
+	}
+
+	writeJSON(w, http.StatusCreated, map[string]any{
+		"token":      rawToken, // shown once, never stored
+		"id":         record.ID,
+		"env":        record.Env,
+		"name":       record.Name,
+		"created_at": record.CreatedAt,
+	})
+}
+
+// GET /api/projects/{slug}/tokens — list service tokens for a project
+func (h *ServiceTokenHandler) List(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (callerRole != "owner" && callerRole != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can list service tokens")
+		return
+	}
+
+	tokens, err := h.tokenSvc.List(r.Context(), proj.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to list service tokens")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]any{"tokens": tokens})
+}
+
+// DELETE /api/projects/{slug}/tokens/{tokenID} — revoke a service token
+func (h *ServiceTokenHandler) Revoke(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+	tokenID := chi.URLParam(r, "tokenID")
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+
+	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (callerRole != "owner" && callerRole != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can revoke service tokens")
+		return
+	}
+
+	if err := h.tokenSvc.Revoke(r.Context(), proj.ID, tokenID); err != nil {
+		writeError(w, http.StatusNotFound, "token not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, map[string]string{"message": "token revoked"})
 }

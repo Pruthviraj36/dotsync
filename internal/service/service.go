@@ -561,3 +561,105 @@ func (s *ProjectService) GetEnvironments(ctx context.Context, projectID string) 
 	}
 	return envs, rows.Err()
 }
+
+// --- Service Token Service ---
+
+type ServiceTokenService struct {
+	db *db.DB
+}
+
+func NewServiceTokenService(database *db.DB) *ServiceTokenService {
+	return &ServiceTokenService{db: database}
+}
+
+// Create generates a new service token scoped to a project+env, stores only
+// the SHA-256 hash, and returns the raw token (shown once, never stored).
+func (s *ServiceTokenService) Create(ctx context.Context, projectID, env, name, createdBy string) (rawToken string, record *model.ServiceToken, err error) {
+	rawToken, err = crypto.GenerateRandomToken(32)
+	if err != nil {
+		return "", nil, fmt.Errorf("generate token: %w", err)
+	}
+
+	hash := crypto.HashToken(rawToken)
+	id := uuid.New().String()
+
+	_, err = s.db.ExecContext(ctx,
+		`INSERT INTO service_tokens (id, project_id, env, name, token_hash, created_by, created_at)
+		 VALUES ($1, $2, $3, $4, $5, $6, NOW())`,
+		id, projectID, env, name, hash, createdBy,
+	)
+	if err != nil {
+		return "", nil, fmt.Errorf("insert service token: %w", err)
+	}
+
+	record = &model.ServiceToken{
+		ID:        id,
+		ProjectID: projectID,
+		Env:       env,
+		Name:      name,
+		TokenHash: hash,
+		CreatedBy: createdBy,
+		CreatedAt: time.Now(),
+	}
+	return rawToken, record, nil
+}
+
+// List returns all service tokens for a project (without hashes).
+func (s *ServiceTokenService) List(ctx context.Context, projectID string) ([]model.ServiceToken, error) {
+	rows, err := s.db.QueryContext(ctx,
+		`SELECT id, project_id, env, name, created_by, created_at, last_used_at
+		 FROM service_tokens WHERE project_id = $1 ORDER BY created_at DESC`,
+		projectID,
+	)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var tokens []model.ServiceToken
+	for rows.Next() {
+		var t model.ServiceToken
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Env, &t.Name, &t.CreatedBy, &t.CreatedAt, &t.LastUsedAt); err != nil {
+			return nil, err
+		}
+		tokens = append(tokens, t)
+	}
+	return tokens, rows.Err()
+}
+
+// Revoke deletes a service token by ID, verifying project ownership.
+func (s *ServiceTokenService) Revoke(ctx context.Context, projectID, tokenID string) error {
+	res, err := s.db.ExecContext(ctx,
+		`DELETE FROM service_tokens WHERE id = $1 AND project_id = $2`,
+		tokenID, projectID,
+	)
+	if err != nil {
+		return err
+	}
+	n, _ := res.RowsAffected()
+	if n == 0 {
+		return errors.New("token not found")
+	}
+	return nil
+}
+
+// LookupByRawToken validates a raw token string, updates last_used_at,
+// and returns the token record. Returns an error if the token is not found.
+func (s *ServiceTokenService) LookupByRawToken(ctx context.Context, rawToken string) (*model.ServiceToken, error) {
+	hash := crypto.HashToken(rawToken)
+
+	var t model.ServiceToken
+	err := s.db.QueryRowContext(ctx,
+		`UPDATE service_tokens SET last_used_at = NOW()
+		 WHERE token_hash = $1
+		 RETURNING id, project_id, env, name, created_by, created_at, last_used_at`,
+		hash,
+	).Scan(&t.ID, &t.ProjectID, &t.Env, &t.Name, &t.CreatedBy, &t.CreatedAt, &t.LastUsedAt)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, errors.New("invalid service token")
+		}
+		return nil, err
+	}
+	return &t, nil
+}

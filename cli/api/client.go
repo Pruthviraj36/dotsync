@@ -616,3 +616,26 @@ func (c *Client) ListEnvironments(slug string) ([]string, error) {
 	}
 	return names, nil
 }
+
+// CreateServiceToken creates a scoped read-only service token for CI/CD use.
+// Returns the token string on success. Falls back gracefully if the server
+// doesn't yet support this endpoint.
+func (c *Client) CreateServiceToken(projectSlug, env string) (string, error) {
+	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/tokens", projectSlug), map[string]string{
+		"env":  env,
+		"name": "ci-" + env,
+	})
+	if err != nil {
+		return "", err
+	}
+	var result struct {
+		Token string `json:"token"`
+	}
+	if err := decodeResponse(resp, &result); err != nil {
+		return "", err
+	}
+	if result.Token == "" {
+		return "", fmt.Errorf("server returned empty token")
+	}
+	return result.Token, nil
+}

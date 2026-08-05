@@ -42,20 +42,12 @@ func blue(s string) string   { return colorize(cBlue, s) }
 func bold(s string) string   { return colorize(cBold, s) }
 func dim(s string) string    { return colorize(cDim, s) }
 
-// Prefixed status lines
-func statusLabel(code, label string) string {
-	prefix := "[" + label + "]"
-	if !isTTY {
-		return prefix
-	}
-	return colorize(cBold+code, prefix)
-}
-
-func ok(s string) string   { return statusLabel(cGreen, "OK") + " " + s }
-func fail(s string) string { return statusLabel(cRed, "ERR") + " " + s }
-func info(s string) string { return statusLabel(cCyan, "INFO") + " " + s }
-func warn(s string) string { return statusLabel(cYellow, "WARN") + " " + s }
-func spin(s string) string { return statusLabel(cBlue, "WAIT") + " " + s }
+// Status line prefixes — clean, no brackets, Doppler-style.
+func ok(s string) string   { return green("success") + "  " + s }
+func fail(s string) string { return red("error") + "    " + s }
+func info(s string) string { return cyan("info") + "     " + s }
+func warn(s string) string { return yellow("warning") + "  " + s }
+func spin(s string) string { return dim("waiting") + "  " + s }
 
 // cfmt helpers — drop-in fmt.Print* replacements with color applied to the whole line.
 func cprintf(format string, a ...any) { fmt.Printf(format, a...) }
