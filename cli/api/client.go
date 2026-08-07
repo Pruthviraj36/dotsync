@@ -601,3 +601,18 @@ func (c *Client) RevokeServiceToken(projectSlug, tokenID string) error {
 	resp.Body.Close()
 	return nil
 }
+
+// ListEnvironments returns all environments for a project.
+func (c *Client) ListEnvironments(projectSlug string) ([]map[string]any, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs", projectSlug), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Environments []map[string]any `json:"environments"`
+	}
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result.Environments, nil
+}
