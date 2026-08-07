@@ -13,7 +13,7 @@ require (
 	github.com/lib/pq v1.10.9
 	github.com/minio/selfupdate v0.6.0
 	github.com/spf13/cobra v1.10.0
-	github.com/stripe/stripe-go/v86 v86.0.0
+
 	github.com/zalando/go-keyring v0.2.6
 	golang.org/x/crypto v0.39.0
 	golang.org/x/term v0.32.0
