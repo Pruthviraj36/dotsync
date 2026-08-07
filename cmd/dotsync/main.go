@@ -11,79 +11,43 @@ import (
 	"syscall"
 	"time"
 
-	"github.com/Pruthviraj36/dotsync/internal/assets"
-	"github.com/Pruthviraj36/dotsync/internal/auth"
-	"github.com/Pruthviraj36/dotsync/internal/db"
-	"github.com/Pruthviraj36/dotsync/internal/handler"
-	"github.com/Pruthviraj36/dotsync/internal/license"
-	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
-	"github.com/Pruthviraj36/dotsync/internal/payment"
-	"github.com/Pruthviraj36/dotsync/internal/service"
 	"github.com/go-chi/chi/v5"
 	chimiddleware "github.com/go-chi/chi/v5/middleware"
 	"github.com/go-chi/cors"
 	"github.com/joho/godotenv"
+
+	"github.com/Pruthviraj36/dotsync/internal/assets"
+	"github.com/Pruthviraj36/dotsync/internal/auth"
+	"github.com/Pruthviraj36/dotsync/internal/db"
+	"github.com/Pruthviraj36/dotsync/internal/handler"
+	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
+	"github.com/Pruthviraj36/dotsync/internal/service"
 )
 
 func main() {
-	// Load .env in development — Render injects env vars directly in production
+	// Load .env in development — production deployments inject env vars directly.
 	_ = godotenv.Load()
 
-	// ── Startup env validation ─────────────────────────────────────────────
-	// Fail immediately and loudly on missing config, rather than starting
-	// successfully and failing deep inside a request later (e.g. GitHub
-	// OAuth silently sending an empty client_id, or Stripe signature
-	// verification always failing with no clear cause).
-	// GITHUB_CLIENT_SECRET is intentionally NOT required — the device flow
-	// exchanges tokens directly between the CLI and GitHub; this server is
-	// never involved in that exchange and never needs the client secret.
+	// ── Startup validation ───────────────────────────────────────────────────
+	// Fail fast and loudly on missing config. All required vars must be set
+	// before any request is accepted. See .env.example for generation commands.
 	requireEnv(
-		"DATABASE_URL",
-		"JWT_SECRET",
-		"GITHUB_CLIENT_ID",
-		"STRIPE_SECRET_KEY",
-		"STRIPE_WEBHOOK_SECRET",
-		"SERVER_MASTER_KEY",
+		"DATABASE_URL",      // postgres://user:pass@host:5432/dbname
+		"JWT_SECRET",        // openssl rand -hex 32
+		"GITHUB_CLIENT_ID",  // from https://github.com/settings/developers
+		"SERVER_MASTER_KEY", // openssl rand -hex 32  (AES-256 for password encryption)
 	)
 
-	// ── On-premise license check ────────────────────────────────────────────
-	// dotsync is free to use hosted at dotsync.onrender.com. Self-hosting
-	// elsewhere requires a paid on-premise license (see internal/license and
-	// cmd/licensegen). The official hosted deployment sets DOTSYNC_HOSTED=true
-	// (see render.yaml) to skip this — it isn't "on-premise" for anyone.
-	//
-	// This check is deliberately public source, same as the rest of this
-	// repo — see LICENSE (Elastic License 2.0) for why that's fine: verifying
-	// a signature only needs the public key above, never the private one, so
-	// publishing this code doesn't let anyone forge a valid license key. What
-	// the license terms add is the legal backstop: deleting this check and
-	// recompiling is exactly the kind of license-key circumvention ELv2
-	// prohibits, not merely an inconvenience to route around.
-	if os.Getenv("DOTSYNC_HOSTED") != "true" {
-		licenseKey := os.Getenv("DOTSYNC_LICENSE_KEY")
-		if licenseKey == "" {
-			log.Fatal("DOTSYNC_LICENSE_KEY is required to self-host dotsync. " +
-				"Buy an on-premise license at https://dotsync.onrender.com#pricing, " +
-				"or set DOTSYNC_HOSTED=true if this is the official hosted instance.")
-		}
-		claims, err := license.Verify(licenseKey)
-		if err != nil {
-			log.Fatalf("invalid on-premise license: %v", err)
-		}
-		log.Printf("[OK] on-premise license valid — licensed to %s", claims.Licensee)
-	}
-
-	// ── Database ────────────────────────────────────────────────────────────
-	// DATABASE_URL: pooled connection (Neon PgBouncer) — used for normal app queries.
-	// DATABASE_URL_DIRECT: unpooled connection — required for migrations
-	// (DDL/advisory locks don't work reliably through a pooler). Falls back to
-	// DATABASE_URL if DATABASE_URL_DIRECT isn't set (e.g. plain Render Postgres).
+	// ── Database ─────────────────────────────────────────────────────────────
+	// DATABASE_URL_DIRECT is used for migrations (DDL/advisory locks don't
+	// work reliably through a connection pooler like Neon PgBouncer).
+	// Falls back to DATABASE_URL if not set (plain Postgres is fine).
 	dsn := mustEnv("DATABASE_URL")
 	migrationDSN := getEnv("DATABASE_URL_DIRECT", dsn)
 
 	database, err := db.New(dsn)
 	if err != nil {
-		log.Fatalf("database: %v", err)
+		log.Fatalf("database connect: %v", err)
 	}
 	defer database.Close()
 
@@ -92,7 +56,7 @@ func main() {
 		log.Fatalf("migrations: %v", err)
 	}
 
-	// ── Services ────────────────────────────────────────────────────────────
+	// ── Services ─────────────────────────────────────────────────────────────
 	jwtSecret := mustEnv("JWT_SECRET")
 	authSvc := auth.NewService(database, jwtSecret)
 	projectSvc := service.NewProjectService(database)
@@ -101,15 +65,15 @@ func main() {
 	auditSvc := service.NewAuditService(database)
 	serviceTokenSvc := service.NewServiceTokenService(database)
 
-	// SERVER_MASTER_KEY must decode to exactly 32 bytes (AES-256) — generate
-	// one with: openssl rand -hex 32
+	// SERVER_MASTER_KEY must be exactly 64 hex chars (32 bytes / AES-256).
+	// Generate: openssl rand -hex 32
 	masterKey, err := hex.DecodeString(mustEnv("SERVER_MASTER_KEY"))
 	if err != nil || len(masterKey) != 32 {
-		log.Fatalf("SERVER_MASTER_KEY must be a 64-character hex string (32 bytes) — generate one with: openssl rand -hex 32")
+		log.Fatal("SERVER_MASTER_KEY must be a 64-character hex string — generate with: openssl rand -hex 32")
 	}
 	passwordSvc := service.NewPasswordService(database, masterKey)
 
-	// ── Handlers ────────────────────────────────────────────────────────────
+	// ── Handlers ─────────────────────────────────────────────────────────────
 	authHandler := handler.NewAuthHandler(authSvc, database)
 	projectHandler := handler.NewProjectHandler(projectSvc, teamSvc)
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
@@ -118,24 +82,16 @@ func main() {
 	identityHandler := handler.NewIdentityHandler(database)
 	serviceTokenHandler := handler.NewServiceTokenHandler(serviceTokenSvc, projectSvc, teamSvc)
 
-	paymentProvider, err := payment.New()
-	if err != nil {
-		log.Fatalf("payment provider: %v", err)
-	}
-	billingHandler := handler.NewBillingHandler(paymentProvider, database)
-
-	// ── Router ──────────────────────────────────────────────────────────────
+	// ── Router ───────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
 
-	// Global middleware stack (order matters)
 	r.Use(chimiddleware.RealIP)
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(mw.SecurityHeaders)
-	r.Use(mw.RequestID)
 
-	// CORS — restrict to your frontend domain in production
+	// CORS — defaults to same origin; set FRONTEND_URL for web dashboards
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")
 	r.Use(cors.Handler(cors.Options{
 		AllowedOrigins:   []string{frontendURL},
@@ -145,19 +101,17 @@ func main() {
 		MaxAge:           300,
 	}))
 
-	// Global rate limit: 200 req/min per IP (brute force protection)
+	// Global rate limit: 200 req/min per IP
 	r.Use(mw.RateLimitByIP(200, time.Minute))
 
-	// Health check (unauthenticated)
+	// ── Public endpoints ─────────────────────────────────────────────────────
+
 	r.Get("/health", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(`{"status":"ok","service":"dotsync"}`))
 	})
 
-	// Install script — `curl -fsSL https://dotsync.onrender.com/install.sh | bash`
-	// (or the shorter `.../install` alias). Served straight out of the
-	// binary via go:embed (see internal/assets), so there's nothing extra
-	// to deploy alongside the server.
+	// Install scripts — curl -fsSL https://your-server/install.sh | sh
 	installHandler := func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/x-sh; charset=utf-8")
 		w.Write(assets.InstallScript)
@@ -165,21 +119,12 @@ func main() {
 	r.Get("/install.sh", installHandler)
 	r.Get("/install", installHandler)
 
-	// Windows installer — `irm https://dotsync.onrender.com/install.ps1 | iex`
 	r.Get("/install.ps1", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "text/plain; charset=utf-8")
 		w.Write(assets.InstallScriptPS1)
 	})
 
-	// Stripe/LemonSqueezy/PayPal webhook — raw body required, no auth middleware.
-	// The provider's own signature verification (inside WebhookHandler) is
-	// what actually authenticates these requests.
-	r.Post("/api/payment/webhook", handler.WebhookHandler(paymentProvider, database))
-
-	// ── Public billing route (unauthenticated) ──
-	r.Get("/api/billing/plans", billingHandler.Plans)
-
-	// ── Public auth routes ──
+	// ── Public auth routes ───────────────────────────────────────────────────
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(mw.RateLimitByIP(20, time.Minute))
 		r.Get("/config", authHandler.Config)
@@ -187,7 +132,7 @@ func main() {
 		r.Post("/refresh", authHandler.RefreshToken)
 	})
 
-	// ── Protected routes ──
+	// ── Protected routes ─────────────────────────────────────────────────────
 	r.Route("/api", func(r chi.Router) {
 		r.Use(mw.Authenticate(authSvc, serviceTokenSvc))
 		r.Use(mw.RateLimitByUser(300, time.Minute))
@@ -199,22 +144,17 @@ func main() {
 		// Identity (ed25519 pubkey for verifying signed pushes)
 		r.Put("/me/pubkey", identityHandler.SetPubKey)
 
-		// Billing
-		r.Post("/billing/checkout", billingHandler.Checkout)
-		r.Post("/billing/portal", billingHandler.Portal)
-		r.Get("/billing/status", billingHandler.Status)
-
 		// Projects
 		r.Post("/projects", projectHandler.Create)
 		r.Get("/projects", projectHandler.List)
 
-		// Teams
+		// Team management
 		r.Post("/projects/{slug}/team", teamHandler.AddMember)
 		r.Get("/projects/{slug}/team", teamHandler.ListMembers)
 		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
 		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
 
-		// Audit logs
+		// Audit logs (all users, no plan gate)
 		r.Get("/projects/{slug}/audit", secretsHandler.AuditLogs)
 
 		// Service tokens (CI/CD integrations)
@@ -222,11 +162,11 @@ func main() {
 		r.Get("/projects/{slug}/tokens", serviceTokenHandler.List)
 		r.Delete("/projects/{slug}/tokens/{tokenID}", serviceTokenHandler.Revoke)
 
-		// Project password (server-side encrypted, see PasswordService)
+		// Project password (server-side AES-256-GCM encrypted)
 		r.Put("/projects/{slug}/password", passwordHandler.Set)
 		r.Get("/projects/{slug}/password", passwordHandler.Get)
 
-		// Secrets (stricter rate limit for push/pull)
+		// Secrets — stricter rate limit
 		r.Get("/projects/{slug}/envs", projectHandler.ListEnvironments)
 		r.Route("/projects/{slug}/envs/{env}", func(r chi.Router) {
 			r.Use(mw.RateLimitByUser(100, time.Minute))
@@ -237,7 +177,7 @@ func main() {
 		})
 	})
 
-	// ── Server ──────────────────────────────────────────────────────────────
+	// ── HTTP server ──────────────────────────────────────────────────────────
 	port := getEnv("PORT", "8080")
 	srv := &http.Server{
 		Addr:         ":" + port,
@@ -247,28 +187,24 @@ func main() {
 		IdleTimeout:  60 * time.Second,
 	}
 
-	// Graceful shutdown
 	done := make(chan struct{})
 	go func() {
 		quit := make(chan os.Signal, 1)
 		signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
 		<-quit
-		log.Println("shutting down server...")
-
+		log.Println("shutting down...")
 		ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
 		defer cancel()
-
 		if err := srv.Shutdown(ctx); err != nil {
 			log.Fatalf("graceful shutdown failed: %v", err)
 		}
 		close(done)
 	}()
 
-	log.Printf("[INFO] DotSync server running on :%s", port)
+	log.Printf("[INFO] DotSync server listening on :%s", port)
 	if err := srv.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 		log.Fatalf("listen: %v", err)
 	}
-
 	<-done
 	log.Println("server stopped")
 }
@@ -276,14 +212,12 @@ func main() {
 func mustEnv(key string) string {
 	v := os.Getenv(key)
 	if v == "" {
-		log.Fatalf("required env var %s not set", key)
+		log.Fatalf("required env var %s is not set — see .env.example", key)
 	}
 	return v
 }
 
-// requireEnv checks all given env vars are set, and fails fast at startup
-// listing every missing one at once — rather than discovering them one at a
-// time, deep inside unrelated requests, after the server has already booted.
+// requireEnv checks all vars at startup and prints every missing one at once.
 func requireEnv(keys ...string) {
 	var missing []string
 	for _, k := range keys {
@@ -292,11 +226,8 @@ func requireEnv(keys ...string) {
 		}
 	}
 	if len(missing) > 0 {
-		log.Fatalf(
-			"missing required env var(s): %s\n"+
-				"Set these before starting the server — see .env.example for details.",
-			strings.Join(missing, ", "),
-		)
+		log.Fatalf("missing required env var(s): %s\nSee .env.example for setup instructions.",
+			strings.Join(missing, ", "))
 	}
 }
 

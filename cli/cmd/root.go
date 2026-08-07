@@ -29,7 +29,12 @@ CI/CD integrations:
   dotsync integrate railway          Railway deployment snippet
   dotsync integrate netlify          Netlify build environment
   dotsync integrate docker           Docker / Compose snippet
-  dotsync integrate shell            Bash/Zsh/Fish export snippet`,
+  dotsync integrate shell            Bash/Zsh/Fish export snippet
+
+Service tokens:
+  dotsync tokens create   Create a CI/CD service token
+  dotsync tokens list     List service tokens for this project
+  dotsync tokens revoke   Revoke a service token`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 }
@@ -44,7 +49,6 @@ func Execute() {
 func init() {
 	rootCmd.AddCommand(
 		versionCmd(),
-		billingCmd(),
 		loginCmd(),
 		logoutCmd(),
 		initCmd(),
@@ -62,5 +66,6 @@ func init() {
 		updateCmd(),
 		teamCmd(),
 		integrateCmd(),
+		tokensCmd(),
 	)
 }

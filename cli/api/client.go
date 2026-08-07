@@ -553,77 +553,14 @@ func (c *Client) GetLatestVersion(slug, env string) (int, string, error) {
 	return history[0].Version, history[0].PushedBy, nil
 }
 
-// ── Billing API methods ──────────────────────────────────────────────────────
+// ── Service Token API methods ────────────────────────────────────────────────
 
-// BillingStatus returns the current user's plan and limits.
-func (c *Client) BillingStatus() (map[string]any, error) {
-	resp, err := c.do("GET", "/api/billing/status", nil)
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	return result, decodeResponse(resp, &result)
-}
-
-// BillingPlans fetches the public plan matrix from the server.
-func (c *Client) BillingPlans() (map[string]any, error) {
-	// Plans endpoint is unauthenticated — use raw http to avoid token refresh
-	httpResp, err := c.httpClient.Get(c.baseURL + "/api/billing/plans")
-	if err != nil {
-		return nil, fmt.Errorf("fetch plans: %w", err)
-	}
-	var result map[string]any
-	return result, decodeResponse(httpResp, &result)
-}
-
-// BillingCheckout creates a Stripe Checkout session for the given plan.
-func (c *Client) BillingCheckout(plan string) (map[string]any, error) {
-	resp, err := c.do("POST", "/api/billing/checkout", map[string]string{"plan": plan})
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	return result, decodeResponse(resp, &result)
-}
-
-// BillingPortal creates a Stripe Customer Portal session.
-func (c *Client) BillingPortal() (map[string]any, error) {
-	resp, err := c.do("POST", "/api/billing/portal", map[string]string{})
-	if err != nil {
-		return nil, err
-	}
-	var result map[string]any
-	return result, decodeResponse(resp, &result)
-}
-
-// ListEnvironments fetches the environment names for a project.
-func (c *Client) ListEnvironments(slug string) ([]string, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs", slug), nil)
-	if err != nil {
-		return nil, err
-	}
-	var result struct {
-		Environments []struct {
-			Name string `json:"name"`
-		} `json:"environments"`
-	}
-	if err := decodeResponse(resp, &result); err != nil {
-		return nil, err
-	}
-	names := make([]string, len(result.Environments))
-	for i, e := range result.Environments {
-		names[i] = e.Name
-	}
-	return names, nil
-}
-
-// CreateServiceToken creates a scoped read-only service token for CI/CD use.
-// Returns the token string on success. Falls back gracefully if the server
-// doesn't yet support this endpoint.
-func (c *Client) CreateServiceToken(projectSlug, env string) (string, error) {
+// CreateServiceToken creates a scoped CI/CD service token for a project+env.
+// Returns the raw token (shown once — store it immediately as a secret).
+func (c *Client) CreateServiceToken(projectSlug, env, name string) (string, error) {
 	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/tokens", projectSlug), map[string]string{
 		"env":  env,
-		"name": "ci-" + env,
+		"name": name,
 	})
 	if err != nil {
 		return "", err
@@ -638,4 +575,29 @@ func (c *Client) CreateServiceToken(projectSlug, env string) (string, error) {
 		return "", fmt.Errorf("server returned empty token")
 	}
 	return result.Token, nil
+}
+
+// ListServiceTokens lists all service tokens for a project.
+func (c *Client) ListServiceTokens(projectSlug string) ([]map[string]any, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/tokens", projectSlug), nil)
+	if err != nil {
+		return nil, err
+	}
+	var result struct {
+		Tokens []map[string]any `json:"tokens"`
+	}
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result.Tokens, nil
+}
+
+// RevokeServiceToken revokes a service token by ID.
+func (c *Client) RevokeServiceToken(projectSlug, tokenID string) error {
+	resp, err := c.do("DELETE", fmt.Sprintf("/api/projects/%s/tokens/%s", projectSlug, tokenID), nil)
+	if err != nil {
+		return err
+	}
+	resp.Body.Close()
+	return nil
 }
