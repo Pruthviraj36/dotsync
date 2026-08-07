@@ -727,11 +727,6 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 }
 
 // ============================================================
-// (Billing handlers live in billing_handler.go — see BillingHandler there,
-// which wires to a payment.Provider so LemonSqueezy/PayPal are swappable.)
-// ============================================================
-
-// ============================================================
 // Identity Handler
 // ============================================================
 //
