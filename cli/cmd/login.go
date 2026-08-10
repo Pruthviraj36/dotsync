@@ -56,14 +56,14 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// ── Step 2: show the user code clearly — this IS the UI, no browser
 	// redirect page needed, no copy-pasting long tokens ──────────────────
 	fmt.Println()
-	fmt.Println("┌─────────────────────────────────────────────┐")
-	fmt.Println("│  Open this URL on any device:                │")
-	fmt.Printf("│  %-44s │\n", dc.VerificationURI)
-	fmt.Println("│                                               │")
-	fmt.Printf("│  And enter this code:   "+bold(yellow("%-19s"))+" │\n", dc.UserCode)
-	fmt.Println("└─────────────────────────────────────────────┘")
-	fmt.Println()
-	fmt.Println("Waiting for you to approve in the browser...")
+	blank()
+	fmt.Printf("  %s\n\n", bold("Authenticate with GitHub"))
+	fmt.Printf("  Open this URL on any device:\n\n")
+	fmt.Printf("    %s\n\n", boldCyan(dc.VerificationURI))
+	fmt.Printf("  Enter this code:\n\n")
+	fmt.Printf("    %s\n\n", bold(yellow(dc.UserCode)))
+	fmt.Println(dim("  Waiting for approval in browser") + " " + dim("(this may take a moment)"))
+	blank()
 
 	// ── Step 3: poll GitHub until the user approves (or it expires) ────────
 	ghToken, err := pollForGitHubToken(authCfg.GitHubClientID, dc)
@@ -84,8 +84,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	username, _ := result.User["username"].(string)
-	userID, _ := result.User["id"].(string)
-	plan, _ := result.User["plan"].(string)
+	userID, _   := result.User["id"].(string)
 
 	cfg.AccessToken = result.AccessToken
 	cfg.RefreshToken = result.RefreshToken
@@ -97,12 +96,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	fmt.Println(ok("Login complete"))
-	fmt.Println()
-	fmt.Printf(bold("Welcome, %s!")+"\n", username)
-	fmt.Printf("Plan: "+cyan("%s")+"\n", plan)
-	fmt.Println()
-	fmt.Println("Next: cd into your project and run 'dotsync init'")
-	fmt.Println()
+	blank()
+	fmt.Printf("  %s  @%s\n", bold("Logged in as"), boldCyan(username))
+	blank()
+	hint("Next: cd into your project and run:")
+	cmdHint("dotsync init")
+	blank()
 
 	return nil
 }

@@ -12,6 +12,8 @@ import (
 	"github.com/spf13/cobra"
 )
 
+// ── history ───────────────────────────────────────────────────────────────────
+
 func historyCmd() *cobra.Command {
 	var envFlag string
 
@@ -25,7 +27,6 @@ func historyCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			projCfg, err := config.LoadProject()
 			if err != nil {
 				return err
@@ -43,48 +44,61 @@ func historyCmd() *cobra.Command {
 			}
 
 			if len(history) == 0 {
-				fmt.Println("No history yet. Run: dotsync push")
+				blank()
+				fmt.Println(info("No history yet."))
+				cmdHint("dotsync push")
+				blank()
 				return nil
 			}
 
-			// Size columns to fit the actual data rather than a fixed
-			// guess, so long usernames or ages never drift out of alignment.
-			verW, ageW, whoW := len("v0"), 0, 0
-			ages := make([]string, len(history))
-			for i, entry := range history {
-				t, _ := time.Parse(time.RFC3339, entry.CreatedAt)
-				ages[i] = formatAge(t)
-				if w := len(fmt.Sprintf("v%d", entry.Version)); w > verW {
-					verW = w
+			// Pre-compute display values and column widths
+			type row struct{ ver, age, who string }
+			rows := make([]row, len(history))
+			verW, ageW, whoW := 7, 4, 3 // min widths
+			for i, e := range history {
+				t, _ := time.Parse(time.RFC3339, e.CreatedAt)
+				r := row{
+					ver: fmt.Sprintf("v%d", e.Version),
+					age: formatAge(t),
+					who: "@" + e.PushedBy,
 				}
-				if len(ages[i]) > ageW {
-					ageW = len(ages[i])
-				}
-				if w := len("@" + entry.PushedBy); w > whoW {
-					whoW = w
-				}
+				rows[i] = r
+				if w := len(r.ver); w > verW { verW = w }
+				if w := len(r.age); w > ageW { ageW = w }
+				if w := len(r.who); w > whoW { whoW = w }
 			}
 
-			title := fmt.Sprintf("History for %s/%s", projCfg.ProjectSlug, env)
-			rule := strings.Repeat("─", len(title)+2)
+			rw := verW + ageW + whoW + 10
+			rl := ruleN(rw)
 
-			fmt.Println()
-			fmt.Println(bold(title))
-			fmt.Println(rule)
+			blank()
+			fmt.Printf("  %s  %s/%s\n", bold("Version History"), boldCyan(projCfg.ProjectSlug), cyan(env))
+			blank()
+			tableHeader(rl,
+				[]string{"VERSION", "WHEN", "BY"},
+				[]int{verW, ageW, whoW},
+			)
 
-			for i, entry := range history {
-				marker := "  "
+			for i, r := range rows {
+				marker := "   "
+				ver := r.ver
 				if i == 0 {
-					marker = green("> ") // current version
+					marker = green(" ▶ ")
+					ver = boldGreen(r.ver)
+				} else {
+					ver = dim(r.ver)
 				}
-
-				version := fmt.Sprintf("v%d", entry.Version)
-				fmt.Printf("%s"+green("%-*s")+"  "+dim("%-*s")+"  by "+cyan("%-*s")+"\n",
-					marker, verW, version, ageW, ages[i], whoW, "@"+entry.PushedBy)
+				fmt.Printf("%s%-*s  %-*s  %s\n",
+					marker, verW, ver, ageW, dim(r.age), cyan(r.who))
 			}
 
-			fmt.Println(rule)
-			fmt.Printf("  %d version(s) shown\n\n", len(history))
+			fmt.Println("  " + rl)
+			fmt.Printf("  %s version(s)  ·  %s to restore: %s\n",
+				dim(fmt.Sprintf("%d", len(history))),
+				dim("rollback"),
+				cyan(fmt.Sprintf("dotsync rollback %d", history[len(history)-1].Version)),
+			)
+			blank()
 			return nil
 		},
 	}
@@ -93,20 +107,21 @@ func historyCmd() *cobra.Command {
 	return cmd
 }
 
+// ── diff ─────────────────────────────────────────────────────────────────────
+
 func diffCmd() *cobra.Command {
 	var envFlag string
 
 	cmd := &cobra.Command{
 		Use:   "diff",
-		Short: "Show what changed between your local .env and the remote version",
-		Long: `Compares your local .env file with the latest remote version.
-Only shows which keys changed — values are never displayed.`,
+		Short: "Show what changed between your local .env and remote",
+		Long: `Compares your local .env with the latest remote version.
+Key names are shown; values are never displayed.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
 				return err
 			}
-
 			projCfg, err := config.LoadProject()
 			if err != nil {
 				return err
@@ -117,30 +132,32 @@ Only shows which keys changed — values are never displayed.`,
 				env = projCfg.DefaultEnv
 			}
 
-			// Read local
 			localData, err := os.ReadFile(".env")
 			if err != nil {
 				if os.IsNotExist(err) {
-					fmt.Println("No local .env found — run: dotsync pull")
+					blank()
+					fmt.Println(warn("No local .env found."))
+					cmdHint("dotsync pull")
+					blank()
 					return nil
 				}
 				return err
 			}
 
-			// Fetch remote
+			fmt.Printf("%s  Fetching remote %s/%s...\n", spin(""), projCfg.ProjectSlug, env)
+
 			client := api.New(cfg)
 			remote, err := client.Pull(projCfg.ProjectSlug, env)
 			if err != nil {
 				return fmt.Errorf("fetch remote: %w", err)
 			}
 
-			diffPassword, err := resolvePassword(client, projCfg.ProjectSlug)
+			password, err := resolvePassword(client, projCfg.ProjectSlug)
 			if err != nil {
 				return err
 			}
 			remotePlain, err := cliCrypto.DecryptEnvFile(
-				remote.EncryptedData, remote.Nonce,
-				diffPassword, projCfg.ProjectSlug,
+				remote.EncryptedData, remote.Nonce, password, projCfg.ProjectSlug,
 			)
 			if err != nil {
 				return fmt.Errorf("decrypt remote: %w", err)
@@ -148,36 +165,43 @@ Only shows which keys changed — values are never displayed.`,
 
 			localMap := cliCrypto.ParseEnvFile(string(localData))
 			remoteMap := cliCrypto.ParseEnvFile(remotePlain)
-
-			// local vs remote: what would change if you pushed?
 			added, removed, changed := cliCrypto.DiffEnvFiles(remoteMap, localMap)
 
-			fmt.Printf("\n"+bold("Diff: local .env vs remote %s/%s")+" ("+green("v%d")+")\n",
-				projCfg.ProjectSlug, env, remote.Version)
-			fmt.Println(strings.Repeat("─", 50))
+			rw := 56
+			rl := ruleN(rw)
+
+			blank()
+			fmt.Printf("  %s  local .env vs %s/%s (%s)\n",
+				bold("Diff"), boldCyan(projCfg.ProjectSlug), cyan(env), green(fmt.Sprintf("v%d", remote.Version)))
+			blank()
+			fmt.Println("  " + rl)
 
 			if len(added)+len(removed)+len(changed) == 0 {
-				fmt.Println("  " + ok("No differences; your .env is in sync."))
-				fmt.Println()
+				blank()
+				fmt.Println("  " + ok("No differences — local is in sync with remote."))
+				blank()
 				return nil
 			}
 
 			for _, k := range added {
-				fmt.Printf("  "+green("+ %-30s")+" (new key, only in local)\n", k)
+				fmt.Printf("  %s  %s\n", green("+"), boldGreen(k))
 			}
 			for _, k := range removed {
-				fmt.Printf("  "+red("- %-30s")+" (removed locally)\n", k)
+				fmt.Printf("  %s  %s\n", red("−"), red(k))
 			}
 			for _, k := range changed {
-				fmt.Printf("  "+yellow("~ %-30s")+" (value changed)\n", k)
+				fmt.Printf("  %s  %s\n", yellow("~"), yellow(k))
 			}
 
-			fmt.Println(strings.Repeat("─", 50))
-			fmt.Printf("  "+green("+%d added")+"  "+red("-%d removed")+"  "+yellow("~%d changed")+"\n\n",
-				len(added), len(removed), len(changed))
-			fmt.Println("  Run 'dotsync push' to upload your local changes.")
-			fmt.Println()
-
+			fmt.Println("  " + rl)
+			parts := []string{}
+			if len(added) > 0   { parts = append(parts, green(fmt.Sprintf("+%d added", len(added)))) }
+			if len(removed) > 0 { parts = append(parts, red(fmt.Sprintf("−%d removed", len(removed)))) }
+			if len(changed) > 0 { parts = append(parts, yellow(fmt.Sprintf("~%d changed", len(changed)))) }
+			fmt.Printf("  %s\n", strings.Join(parts, "  "))
+			blank()
+			hint("Push local changes: dotsync push")
+			blank()
 			return nil
 		},
 	}
@@ -185,6 +209,8 @@ Only shows which keys changed — values are never displayed.`,
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment to compare against")
 	return cmd
 }
+
+// ── envs ─────────────────────────────────────────────────────────────────────
 
 func envsCmd() *cobra.Command {
 	return &cobra.Command{
@@ -195,7 +221,6 @@ func envsCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-
 			projCfg, err := config.LoadProject()
 			if err != nil {
 				return err
@@ -204,27 +229,32 @@ func envsCmd() *cobra.Command {
 			client := api.New(cfg)
 			envs, err := client.ListEnvironments(projCfg.ProjectSlug)
 			if err != nil {
-				// fallback to known defaults if server unreachable
+				// fallback — server may not have envs yet
 				envs = []string{"dev", "staging", "production"}
 			}
 
-			fmt.Printf("\n"+bold("Environments for '%s'")+"\n\n", projCfg.ProjectSlug)
+			blank()
+			fmt.Printf("  %s  %s\n", bold("Environments"), boldCyan(projCfg.ProjectSlug))
+			blank()
+
 			for _, e := range envs {
-				marker := "  "
 				if e == projCfg.DefaultEnv {
-					marker = green(">> ")
+					fmt.Printf("  %s %s  %s\n", green("▶"), boldGreen(e), dim("(default)"))
+				} else {
+					fmt.Printf("    %s\n", cyan(e))
 				}
-				fmt.Printf("%s%s\n", marker, cyan(e))
 			}
 
-			fmt.Println()
-			fmt.Printf("  %s\n", dim("dotsync push --env production"))
-			fmt.Printf("  %s\n", dim("dotsync pull --env staging"))
-			fmt.Println()
+			blank()
+			hint("dotsync push --env production")
+			hint("dotsync pull --env staging")
+			blank()
 			return nil
 		},
 	}
 }
+
+// ── status ───────────────────────────────────────────────────────────────────
 
 func statusCmd() *cobra.Command {
 	return &cobra.Command{
@@ -234,77 +264,89 @@ func statusCmd() *cobra.Command {
 			cfg, _ := config.LoadGlobal()
 			projCfg, projErr := config.LoadProject()
 
-			fmt.Println()
-			fmt.Println(bold("DotSync Status"))
-			fmt.Println(strings.Repeat("─", 44))
+			blank()
+			fmt.Printf("  %s\n", bold("DotSync Status"))
+			blank()
 
-			// Auth state
+			// ── Auth ─────────────────────────────────────────────────────────
 			if config.IsLoggedIn(cfg) {
-				fmt.Printf("  "+bold("User")+"    : "+cyan("@%s")+" "+green("connected")+"\n", cfg.Username)
-				fmt.Printf("  Server  : %s\n", cfg.ServerURL)
+				fmt.Printf("  %s  %s  %s\n",
+					bold("Account"), cyan("@"+cfg.Username), dim("connected"))
+				fmt.Printf("  %s  %s\n",
+					bold("Server "), dim(cfg.ServerURL))
 			} else {
-				fmt.Println("  " + bold("User") + "    : " + red("not logged in"))
-				fmt.Println("  Run: dotsync login")
-				fmt.Println(strings.Repeat("─", 44))
-				fmt.Println()
+				fmt.Printf("  %s  %s\n", bold("Account"), red("not logged in"))
+				blank()
+				hint("dotsync login")
+				blank()
 				return nil
 			}
 
-			fmt.Println()
+			blank()
 
+			// ── Project ───────────────────────────────────────────────────────
 			if projErr != nil {
-				fmt.Println("  " + bold("Project") + " : " + red("not linked"))
-				fmt.Println("  Run: dotsync init")
-				fmt.Println(strings.Repeat("─", 44))
-				fmt.Println()
+				fmt.Printf("  %s  %s\n", bold("Project"), red("not linked"))
+				blank()
+				hint("dotsync init")
+				blank()
 				return nil
 			}
 
-			fmt.Printf("  "+bold("Project")+" : "+cyan("%s")+" "+green("linked")+"\n", projCfg.ProjectSlug)
-			fmt.Printf("  Env     : %s (default)\n", projCfg.DefaultEnv)
+			fmt.Printf("  %s  %s\n", bold("Project"), boldCyan(projCfg.ProjectSlug))
+			fmt.Printf("  %s  %s\n", bold("Env    "), cyan(projCfg.DefaultEnv))
 
-			// Sync state — compare remote version with local .env existence
 			client := api.New(cfg)
 
-			// Server-side password state
+			// ── Password ──────────────────────────────────────────────────────
 			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
 			if pwErr != nil {
-				fmt.Println("  " + bold("Password") + ": " + red("not set") + " — run: " + cyan("dotsync init --rotate-password"))
+				fmt.Printf("  %s  %s\n", bold("Password"), red("not set  ")+dim("→ dotsync init --rotate-password"))
 			} else {
-				fmt.Println("  " + bold("Password") + ": " + green("available"))
+				fmt.Printf("  %s  %s\n", bold("Password"), green("available"))
 			}
 
-			fmt.Println()
+			blank()
 
+			// ── Remote state ──────────────────────────────────────────────────
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {
-				fmt.Println("  " + bold("Sync") + "    : " + yellow("could not reach server"))
+				fmt.Printf("  %s  %s\n", bold("Remote  "), yellow("could not reach server"))
 			} else if remoteVer == 0 {
-				fmt.Println("  Sync    : no secrets pushed yet")
-				fmt.Println("  Run: dotsync push")
+				fmt.Printf("  %s  %s\n", bold("Remote  "), dim("no secrets pushed yet"))
+				blank()
+				hint("dotsync push")
 			} else {
-				fmt.Printf("  "+bold("Remote")+"  : "+green("v%d")+" (by "+cyan("@%s")+")\n", remoteVer, pushedBy)
+				fmt.Printf("  %s  %s  %s\n",
+					bold("Remote  "),
+					green(fmt.Sprintf("v%d", remoteVer)),
+					dim("pushed by @"+pushedBy),
+				)
 				if _, err := os.Stat(".env"); err == nil {
-					fmt.Println("  Local   : .env exists — run 'dotsync diff' to compare")
+					fmt.Printf("  %s  %s\n", bold("Local   "), green(".env present  ")+dim("→ dotsync diff"))
 				} else {
-					fmt.Println("  Local   : no .env — run: dotsync pull")
+					fmt.Printf("  %s  %s\n", bold("Local   "), yellow("no .env  ")+dim("→ dotsync pull"))
 				}
 			}
 
-			// Team size
+			// ── Team ─────────────────────────────────────────────────────────
 			members, err := client.ListTeamMembers(projCfg.ProjectSlug)
 			if err == nil {
-				fmt.Printf("  Team    : %d member(s) — 'dotsync team list' for details\n",
-					len(members))
+				blank()
+				fmt.Printf("  %s  %s\n",
+					bold("Team    "),
+					dim(fmt.Sprintf("%d member(s)  → dotsync team list", len(members))),
+				)
 			}
 
-			fmt.Println(strings.Repeat("─", 44))
-			fmt.Println()
+			blank()
 			return nil
 		},
 	}
 }
+
+// ── formatAge ────────────────────────────────────────────────────────────────
 
 func formatAge(t time.Time) string {
 	if t.IsZero() {
@@ -318,6 +360,8 @@ func formatAge(t time.Time) string {
 		return fmt.Sprintf("%dm ago", int(d.Minutes()))
 	case d < 24*time.Hour:
 		return fmt.Sprintf("%dh ago", int(d.Hours()))
+	case d < 7*24*time.Hour:
+		return fmt.Sprintf("%dd ago", int(d.Hours()/24))
 	default:
 		return t.Format("2006-01-02")
 	}
