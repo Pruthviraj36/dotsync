@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -18,11 +17,9 @@ func auditCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "audit",
 		Short: "View the audit log for this project",
-		Long: `Shows who pushed, pulled, and changed team membership in this project.
-Each action is recorded server-side with the user, timestamp, IP address,
-and relevant metadata.
-
-Available to all users. Shows the last 50 events.`,
+		Long: `Shows who pushed, pulled, and changed team membership.
+Each event is recorded with user, timestamp, IP, and metadata.
+Available to all users.`,
 		Example: `  dotsync audit
   dotsync audit --env production`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -30,7 +27,6 @@ Available to all users. Shows the last 50 events.`,
 			if err != nil {
 				return err
 			}
-
 			projCfg, err := config.LoadProject()
 			if err != nil {
 				return err
@@ -42,43 +38,39 @@ Available to all users. Shows the last 50 events.`,
 				return err
 			}
 
-			if len(logs) == 0 {
-				fmt.Printf("\nNo audit events yet for '%s'\n\n", projCfg.ProjectSlug)
-				return nil
-			}
-
-			// Filter by env if specified
 			if envFlag != "" {
 				var filtered []map[string]any
-				for _, log := range logs {
-					if env, ok := log["env"].(string); ok && env == envFlag {
-						filtered = append(filtered, log)
+				for _, l := range logs {
+					if e, ok := l["env"].(string); ok && e == envFlag {
+						filtered = append(filtered, l)
 					}
 				}
 				logs = filtered
 			}
 
-			type row struct {
-				when, who, action, env, detail string
+			if len(logs) == 0 {
+				blank()
+				fmt.Println(info(fmt.Sprintf("No audit events yet for %s.", projCfg.ProjectSlug)))
+				blank()
+				return nil
 			}
 
+			type row struct{ when, who, action, env, detail string }
 			rows := make([]row, 0, len(logs))
 			for _, entry := range logs {
-				action, _ := entry["action"].(string)
-				username, _ := entry["username"].(string)
-				envName, _ := entry["env"].(string)
-				createdAtStr, _ := entry["created_at"].(string)
-				metaStr, _ := entry["metadata"].(string)
+				action, _     := entry["action"].(string)
+				username, _   := entry["username"].(string)
+				envName, _    := entry["env"].(string)
+				createdAt, _  := entry["created_at"].(string)
+				metaStr, _    := entry["metadata"].(string)
 
-				when := ""
-				if createdAtStr != "" {
-					if t, err := time.Parse(time.RFC3339, createdAtStr); err == nil {
-						when = formatAge(t)
-					}
+				age := ""
+				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
+					age = formatAge(t)
 				}
 
 				rows = append(rows, row{
-					when:   when,
+					when:   age,
 					who:    "@" + username,
 					action: action,
 					env:    envName,
@@ -86,38 +78,44 @@ Available to all users. Shows the last 50 events.`,
 				})
 			}
 
-			// Size each column to fit its longest value (including the
-			// header) rather than a fixed guess, so nothing gets truncated
-			// or drifts out of alignment with wider-than-expected data.
-			whenW, whoW, actionW, envW := len("WHEN"), len("WHO"), len("ACTION"), len("ENV")
+			// Dynamic column widths
+			whenW, whoW, actionW, envW := 4, 3, 6, 3
 			for _, r := range rows {
-				whenW = max(whenW, len(r.when))
-				whoW = max(whoW, len(r.who))
-				actionW = max(actionW, len(r.action))
-				envW = max(envW, len(r.env))
+				if w := len(r.when);   w > whenW   { whenW = w }
+				if w := len(r.who);    w > whoW     { whoW = w }
+				if w := len(r.action); w > actionW  { actionW = w }
+				if w := len(r.env);    w > envW     { envW = w }
 			}
+
+			rw := whenW + whoW + actionW + envW + 16
+			rl := ruleN(rw)
 
 			title := fmt.Sprintf("Audit Log — %s", projCfg.ProjectSlug)
 			if envFlag != "" {
-				title += fmt.Sprintf(" (%s)", envFlag)
+				title += " (" + envFlag + ")"
 			}
-			ruleWidth := whenW + whoW + actionW + envW + 20 // + spacing between columns
-			rule := strings.Repeat("─", ruleWidth)
 
-			fmt.Println()
-			fmt.Println(bold(title))
-			fmt.Println(rule)
-			fmt.Printf("  "+bold("%-*s")+"  "+bold("%-*s")+"  "+bold("%-*s")+"  "+bold("%-*s")+"  "+bold("%s")+"\n",
-				whenW, "WHEN", whoW, "WHO", actionW, "ACTION", envW, "ENV", "DETAIL")
-			fmt.Println(rule)
+			blank()
+			fmt.Printf("  %s\n", bold(title))
+			blank()
+			tableHeader(rl,
+				[]string{"WHEN", "WHO", "ACTION", "ENV", "DETAIL"},
+				[]int{whenW, whoW, actionW, envW},
+			)
 
 			for _, r := range rows {
-				fmt.Printf("  "+dim("%-*s")+"  "+cyan("%-*s")+"  "+yellow("%-*s")+"  "+blue("%-*s")+"  %s\n",
-					whenW, r.when, whoW, r.who, actionW, r.action, envW, r.env, r.detail)
+				fmt.Printf("  %-*s  %-*s  %-*s  %-*s  %s\n",
+					whenW, dim(r.when),
+					whoW, cyan(r.who),
+					actionW, actionColor(r.action),
+					envW, blue(r.env),
+					dim(r.detail),
+				)
 			}
 
-			fmt.Println(rule)
-			fmt.Printf("  %d event(s) shown\n\n", len(rows))
+			fmt.Println("  " + rl)
+			fmt.Printf("  %s\n", dim(fmt.Sprintf("%d event(s)", len(rows))))
+			blank()
 			return nil
 		},
 	}
@@ -134,7 +132,6 @@ func parseAuditDetail(action, metaJSON string) string {
 	if err := json.Unmarshal([]byte(metaJSON), &meta); err != nil {
 		return ""
 	}
-
 	switch action {
 	case "push", "pull":
 		if v, ok := meta["version"]; ok {
@@ -148,12 +145,14 @@ func parseAuditDetail(action, metaJSON string) string {
 		if u, ok := meta["removed_user"].(string); ok {
 			return "@" + u
 		}
+	case "token_create", "token_revoke":
+		if n, ok := meta["token_name"].(string); ok {
+			return n
+		}
 	}
 	return ""
 }
 
-// UpdateTeamMemberAuditMeta is called by team handlers to enrich audit logs
-// with the target user — not exported, used internally.
 func getAuditMeta(key, value string) map[string]any {
 	return map[string]any{key: value}
 }
