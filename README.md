@@ -47,7 +47,11 @@ No trust required on our end. Even if the database leaked tomorrow, your secrets
 ## Install
 
 ```bash
-curl -fsSL https://dotsync.onrender.com/install.sh | sh
+curl -fsSL https://<your-server>/install.sh | sh
+
+# Then point the CLI at your server:
+export DOTSYNC_SERVER=https://<your-server>
+dotsync login
 ```
 
 Or download a binary directly from the [releases page](https://github.com/Pruthviraj36/dotsync/releases).
@@ -209,7 +213,7 @@ The only paid option is a **one-time $500 license** to self-host the DotSync ser
 | Secret scanning | Yes | Yes |
 | Team management | Yes | Yes |
 | CI/CD integrations | Yes | Yes |
-| Data location | dotsync.onrender.com | Your own server |
+| Data location | Hosted by you | Your own server |
 
 ---
 
@@ -229,7 +233,7 @@ go run main.go
 
 Deploy on Railway, Render, Fly, or any VPS. See [render.yaml](render.yaml) for the Render configuration.
 
-A self-hosting license ($500, one-time) is required for production use outside of dotsync.onrender.com. [Purchase here](https://dotsync.onrender.com/billing).
+DotSync is fully open source and free to self-host with no license required.
 
 ---
 

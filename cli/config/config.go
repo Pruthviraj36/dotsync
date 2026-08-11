@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"strings"
 )
 
 const (
@@ -14,13 +15,6 @@ const (
 )
 
 // GlobalConfig stores credentials in ~/.dotsync/config.json
-//
-// NOTE: project passwords are no longer cached here. They live server-side,
-// encrypted with SERVER_MASTER_KEY (see internal/service.PasswordService),
-// and are fetched on demand via the API. This means a stale config.json can
-// no longer leak a project password if this file is copied, backed up, or
-// synced somewhere it shouldn't be — see cli/api/client.go's
-// GetProjectPassword/SetProjectPassword.
 type GlobalConfig struct {
 	AccessToken  string `json:"access_token"`
 	RefreshToken string `json:"refresh_token"`
@@ -35,7 +29,7 @@ type ProjectConfig struct {
 	DefaultEnv  string `json:"default_env"`
 }
 
-// ── Global config ────────────────────────────────────────────────────────────
+// ── Global config ─────────────────────────────────────────────────────────────
 
 func globalConfigPath() (string, error) {
 	home, err := os.UserHomeDir()
@@ -53,7 +47,7 @@ func LoadGlobal() (*GlobalConfig, error) {
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return &GlobalConfig{ServerURL: DefaultServerURL()}, nil
+		return &GlobalConfig{ServerURL: ServerURL("")}, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -64,10 +58,9 @@ func LoadGlobal() (*GlobalConfig, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
-	if cfg.ServerURL == "" {
-		cfg.ServerURL = DefaultServerURL()
-	}
-
+	// Always let DOTSYNC_SERVER env var override the saved value.
+	// This means switching servers never requires editing config.json.
+	cfg.ServerURL = ServerURL(cfg.ServerURL)
 	return &cfg, nil
 }
 
@@ -76,17 +69,13 @@ func SaveGlobal(cfg *GlobalConfig) error {
 	if err != nil {
 		return err
 	}
-
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-
 	data, err := json.MarshalIndent(cfg, "", "  ")
 	if err != nil {
 		return err
 	}
-
-	// 0600 — only owner can read/write credentials file
 	return os.WriteFile(path, data, 0600)
 }
 
@@ -98,7 +87,7 @@ func ClearGlobal() error {
 	return os.Remove(path)
 }
 
-// ── Project config ───────────────────────────────────────────────────────────
+// ── Project config ────────────────────────────────────────────────────────────
 
 func LoadProject() (*ProjectConfig, error) {
 	data, err := os.ReadFile(projectFile)
@@ -108,12 +97,10 @@ func LoadProject() (*ProjectConfig, error) {
 	if err != nil {
 		return nil, fmt.Errorf("read project config: %w", err)
 	}
-
 	var cfg ProjectConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse project config: %w", err)
 	}
-
 	return &cfg, nil
 }
 
@@ -125,15 +112,41 @@ func SaveProject(cfg *ProjectConfig) error {
 	return os.WriteFile(projectFile, data, 0644)
 }
 
-// DefaultServerURL returns the server URL, overridable via DOTSYNC_SERVER env var.
-func DefaultServerURL() string {
-	if url := os.Getenv("DOTSYNC_SERVER"); url != "" {
-		return url
+// ── Server URL resolution ─────────────────────────────────────────────────────
+//
+// Priority (highest to lowest):
+//   1. DOTSYNC_SERVER env var  — always wins, set this in CI or to switch servers
+//   2. saved value in config.json  — set by `dotsync config set-server <url>`
+//   3. nothing → error at login time (no hidden default; must be explicit)
+//
+// To switch servers you never touch source code — just set DOTSYNC_SERVER:
+//   export DOTSYNC_SERVER=https://your-server.example.com
+
+// ServerURL resolves the active server URL from env or saved config.
+// saved is the value from config.json (may be empty on first run).
+func ServerURL(saved string) string {
+	if env := os.Getenv("DOTSYNC_SERVER"); env != "" {
+		return strings.TrimRight(env, "/")
 	}
-	return "https://dotsync.onrender.com"
+	if saved != "" {
+		return strings.TrimRight(saved, "/")
+	}
+	// No default — callers that need a URL must check IsServerConfigured.
+	return ""
+}
+
+// IsServerConfigured returns true if a server URL is available.
+func IsServerConfigured(cfg *GlobalConfig) bool {
+	return cfg != nil && cfg.ServerURL != ""
 }
 
 // IsLoggedIn checks if there's a valid stored token.
 func IsLoggedIn(cfg *GlobalConfig) bool {
 	return cfg != nil && cfg.AccessToken != ""
+}
+
+// DefaultServerURL is kept for backwards compat with any callers that
+// reference it — it delegates to ServerURL with no saved value.
+func DefaultServerURL() string {
+	return ServerURL("")
 }

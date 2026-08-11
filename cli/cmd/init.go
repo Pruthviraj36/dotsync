@@ -312,11 +312,20 @@ func ensureGitignore() {
 	fmt.Println("  " + info("Added .env entries to .gitignore"))
 }
 
-// requireLogin loads config and validates login state.
+// requireLogin loads config, checks server URL, and validates login state.
 func requireLogin() (*config.GlobalConfig, error) {
 	cfg, err := config.LoadGlobal()
 	if err != nil {
 		return nil, err
+	}
+	if !config.IsServerConfigured(cfg) {
+		return nil, fmt.Errorf(
+			"no server configured\n\n" +
+				"  Set the DOTSYNC_SERVER environment variable:\n" +
+				"    export DOTSYNC_SERVER=https://your-server.example.com\n\n" +
+				"  Or save it permanently:\n" +
+				"    dotsync config set-server https://your-server.example.com",
+		)
 	}
 	if !config.IsLoggedIn(cfg) {
 		return nil, fmt.Errorf("not logged in — run: dotsync login")

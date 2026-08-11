@@ -31,6 +31,16 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
+	if !config.IsServerConfigured(cfg) {
+		return fmt.Errorf(
+			"no server configured\n\n" +
+				"  Set DOTSYNC_SERVER before logging in:\n" +
+				"    export DOTSYNC_SERVER=https://your-server.example.com\n\n" +
+				"  Or save it permanently:\n" +
+				"    dotsync config set-server https://your-server.example.com",
+		)
+	}
+
 	if config.IsLoggedIn(cfg) {
 		fmt.Println(ok("Already logged in as"), cyan(cfg.Username))
 		fmt.Println("   Run 'dotsync logout' first to switch accounts.")

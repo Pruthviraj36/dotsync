@@ -423,7 +423,7 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		count, _ := h.teamSvc.CountMembers(r.Context(), proj.ID)
 		if count >= limits.MaxMembers {
 			writeError(w, http.StatusForbidden,
-				fmt.Sprintf("member limit (%d) reached for the %s plan — upgrade at dotsync.onrender.com/upgrade", limits.MaxMembers, ownerPlan))
+				fmt.Sprintf("member limit (%d) reached for the %s plan", limits.MaxMembers, ownerPlan))
 			return
 		}
 	}

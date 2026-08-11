@@ -439,10 +439,7 @@ func printSnippet(platform, snippet string) {
 }
 
 func serverURL(cfg *config.GlobalConfig) string {
-	if cfg.ServerURL != "" {
-		return cfg.ServerURL
-	}
-	return "https://dotsync.onrender.com"
+	return cfg.ServerURL
 }
 
 func envToVercelTarget(env string) string {

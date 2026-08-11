@@ -50,7 +50,7 @@ indefinitely, with no automatic way to discover that it moved.
 This does not log you out of the new server; run 'dotsync login' again
 after switching.`,
 		Args: cobra.ExactArgs(1),
-		Example: `  dotsync config set-server https://dotsync.onrender.com
+		Example: `  dotsync config set-server https://your-server.example.com
   dotsync config set-server http://localhost:8080`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := config.LoadGlobal()
