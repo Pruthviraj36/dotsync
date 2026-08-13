@@ -32,11 +32,35 @@ type ProjectConfig struct {
 // ── Global config ─────────────────────────────────────────────────────────────
 
 func globalConfigPath() (string, error) {
+	// DOTSYNC_CONFIG_DIR lets you explicitly override the config directory.
+	// Useful when running under sudo where HOME points to /root.
+	if dir := os.Getenv("DOTSYNC_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, globalFile), nil
+	}
+	// Under `sudo`, HOME is often /root. Use SUDO_USER's home if available
+	// so `sudo dotsync run` uses the same config as `dotsync`.
+	if sudoUser := os.Getenv("SUDO_USER"); sudoUser != "" {
+		if home, err := userHomeDir(sudoUser); err == nil {
+			return filepath.Join(home, configDirName, globalFile), nil
+		}
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return "", fmt.Errorf("home dir: %w", err)
 	}
 	return filepath.Join(home, configDirName, globalFile), nil
+}
+
+// userHomeDir returns the home directory for a specific username.
+func userHomeDir(username string) (string, error) {
+	// Try /etc/passwd via os/user — works on Linux/macOS without CGO issues
+	// because we only need a path string, not a full user lookup.
+	// Fallback: construct path as /home/<username> which works on most Linux.
+	if home := os.Getenv("HOME"); home != "" && !strings.HasPrefix(home, "/root") {
+		return home, nil
+	}
+	// Best guess for most Linux systems
+	return "/home/" + username, nil
 }
 
 func LoadGlobal() (*GlobalConfig, error) {

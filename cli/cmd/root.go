@@ -40,6 +40,11 @@ Service tokens:
 }
 
 func Execute() {
+	// Hide the auto-generated completion command — it clutters the help output.
+	// Power users can still run `dotsync completion bash` etc directly.
+	if c, _, err := rootCmd.Find([]string{"completion"}); err == nil && c != nil {
+		c.Hidden = true
+	}
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)

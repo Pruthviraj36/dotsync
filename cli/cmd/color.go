@@ -107,23 +107,30 @@ func header(title string) {
 //
 //	  Project   my-app
 //	  Env       production
+// ── Key-value display helpers ─────────────────────────────────────────────────
+// All kv helpers use visibleLen so bold ANSI codes don't break padding.
+// Label column is always 10 visible chars wide.
+
+const kvLabelWidth = 10
+
 func kv(label, value string) {
-	fmt.Printf("  %-12s%s\n", bold(label), value)
+	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), value)
 }
 
-// kvGreen prints a kv pair with the value in green.
 func kvGreen(label, value string) {
-	fmt.Printf("  %-12s%s\n", bold(label), green(value))
+	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), green(value))
 }
 
-// kvCyan prints a kv pair with the value in cyan.
 func kvCyan(label, value string) {
-	fmt.Printf("  %-12s%s\n", bold(label), cyan(value))
+	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), cyan(value))
 }
 
-// kvDim prints a kv pair with a dim value.
 func kvDim(label, value string) {
-	fmt.Printf("  %-12s%s\n", bold(label), dim(value))
+	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), dim(value))
+}
+
+func kvRed(label, value string) {
+	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), red(value))
 }
 
 // blank prints a blank line.

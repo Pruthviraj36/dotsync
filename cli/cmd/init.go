@@ -278,13 +278,16 @@ func requireLogin() (*config.GlobalConfig, error) {
 		return nil, err
 	}
 	if !config.IsServerConfigured(cfg) {
-		return nil, fmt.Errorf(
-			"no server configured\n\n" +
-				"  Set the DOTSYNC_SERVER environment variable:\n" +
-				"    export DOTSYNC_SERVER=https://your-server.example.com\n\n" +
-				"  Or save it permanently:\n" +
-				"    dotsync config set-server https://your-server.example.com",
-		)
+		msg := "no server configured\n\n" +
+			"  Save it permanently (recommended):\n" +
+			"    dotsync config set-server https://your-server.example.com\n\n" +
+			"  Or set per-session:\n" +
+			"    export DOTSYNC_SERVER=https://your-server.example.com\n"
+		if os.Getenv("SUDO_USER") != "" || os.Getenv("SUDO_UID") != "" {
+			msg += "\n  Running under sudo? Use sudo -E to preserve your environment:\n" +
+				"    sudo -E dotsync run -- your-command\n"
+		}
+		return nil, fmt.Errorf(msg)
 	}
 	if !config.IsLoggedIn(cfg) {
 		return nil, fmt.Errorf("not logged in — run: dotsync login")

@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"fmt"
+	"strings"
 
 	"github.com/spf13/cobra"
 
@@ -13,6 +14,13 @@ func teamCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "team",
 		Short: "Manage project team members",
+		Long: `Manage who has access to your project.
+
+Roles:
+  owner   Full control. Set at project creation.
+  admin   Push/pull all envs, invite and remove members.
+  member  Push and pull secrets. (default)
+  viewer  Pull only — read-only access.`,
 	}
 	cmd.AddCommand(
 		teamListCmd(),
@@ -23,10 +31,15 @@ func teamCmd() *cobra.Command {
 	return cmd
 }
 
+// teamIndent is the fixed left margin for all team table rows.
+// Must match the visual width of the marker " ▶  " (4 visual chars + 1 space).
+const teamIndent = "     " // 5 spaces = "  " header indent + 3 marker chars
+
 func teamListCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "list",
-		Short: "List all team members and their roles",
+		Use:     "list",
+		Aliases: []string{"ls"},
+		Short:   "List all team members and their roles",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -45,29 +58,39 @@ func teamListCmd() *cobra.Command {
 
 			if len(members) == 0 {
 				blank()
-				fmt.Println(info("No members found."))
+				fmt.Println(info("No members yet."))
+				blank()
+				cmdHint("dotsync team add <github-username>")
 				blank()
 				return nil
 			}
 
-			// Dynamic column widths
-			userW, roleW, joinW := 8, 4, 6
+			// Measure column widths from raw content
+			userW, roleW := 8, 4
 			for _, m := range members {
 				u, _ := m["username"].(string)
 				r, _ := m["role"].(string)
 				if w := len("@" + u); w > userW { userW = w }
 				if w := len(r);       w > roleW { roleW = w }
 			}
-			rw := userW + roleW + joinW + 12
+			rw := userW + roleW + 12 + 6
 			rl := ruleN(rw)
 
 			blank()
 			fmt.Printf("  %s  %s\n", bold("Team"), boldCyan(projCfg.ProjectSlug))
 			blank()
-			tableHeader(rl,
-				[]string{"USERNAME", "ROLE", "JOINED"},
-				[]int{userW, roleW},
+
+			// Header — aligned to same indent as rows below.
+			// Rows use "   " (3 spaces) for non-current, " ▶ " for current.
+			// Both followed by " " giving 4 chars before username.
+			// Header uses same 4-char indent.
+			fmt.Println("  " + rl)
+			fmt.Printf("    %s  %s  %s\n",
+				padRight(bold("USERNAME"), userW),
+				padRight(bold("ROLE"), roleW),
+				bold("JOINED"),
 			)
+			fmt.Println("  " + rl)
 
 			for _, m := range members {
 				username, _ := m["username"].(string)
@@ -77,27 +100,30 @@ func teamListCmd() *cobra.Command {
 				if len(joinedAt) >= 10 {
 					age = joinedAt[:10]
 				}
-				marker := "   "
 				unameRaw := "@" + username
-				unameCol := colCyan(unameRaw, userW)
 				if username == cfg.Username {
-					marker = green(" ▶ ")
-					unameCol = padRight(boldCyan(unameRaw), userW)
+					// " ▶ " is 3 visible chars, plus 1 space = 4 total before username
+					fmt.Printf(" %s %s  %s  %s\n",
+						green("▶"),
+						padRight(boldCyan(unameRaw), userW),
+						padRight(roleColor(role), roleW),
+						dim(age),
+					)
+				} else {
+					fmt.Printf("    %s  %s  %s\n",
+						padRight(colCyan(unameRaw, userW), userW),
+						padRight(roleColor(role), roleW),
+						dim(age),
+					)
 				}
-				tableRow(marker,
-					unameCol,
-					padRight(roleColor(role), roleW),
-					dim(age),
-				)
 			}
 
 			fmt.Println("  " + rl)
-			fmt.Printf("  %s\n", dim(fmt.Sprintf(
-				"%d member(s)  ·  roles: owner > admin > member > viewer", len(members))))
+			fmt.Printf("  %s\n", dim(fmt.Sprintf("%d member(s)", len(members))))
 			blank()
-			hint("dotsync team add <username>")
-			hint("dotsync team remove <username>")
-			hint("dotsync team role <username> <role>")
+			hint("Add:    dotsync team add <username>")
+			hint("Remove: dotsync team remove <username>")
+			hint("Role:   dotsync team role <username> admin|member|viewer")
 			blank()
 			return nil
 		},
@@ -108,9 +134,15 @@ func teamAddCmd() *cobra.Command {
 	var roleFlag string
 
 	cmd := &cobra.Command{
-		Use:   "add <username>",
+		Use:   "add <github-username>",
 		Short: "Invite a GitHub user to your project",
-		Args:  cobra.ExactArgs(1),
+		Long: `Grants a GitHub user access to your project.
+
+They don't need to do anything to accept — just run dotsync init
+with your project slug. The password is fetched automatically.`,
+		Args:    cobra.ExactArgs(1),
+		Example: `  dotsync team add alice
+  dotsync team add bob --role viewer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -121,11 +153,10 @@ func teamAddCmd() *cobra.Command {
 				return err
 			}
 
-			username := args[0]
+			username := strings.TrimPrefix(args[0], "@")
 			client := api.New(cfg)
 
-			fmt.Printf("%s  Adding @%s to %s as %s...\n",
-				spin(""), username, projCfg.ProjectSlug, roleFlag)
+			fmt.Printf("%s  Adding @%s...\n", spin(""), username)
 
 			if err := client.AddTeamMember(projCfg.ProjectSlug, username); err != nil {
 				return err
@@ -133,16 +164,17 @@ func teamAddCmd() *cobra.Command {
 
 			if roleFlag != "member" {
 				if err := client.UpdateTeamRole(projCfg.ProjectSlug, username, roleFlag); err != nil {
-					fmt.Println(warn(fmt.Sprintf("Added, but could not set role to %s: %v", roleFlag, err)))
+					fmt.Println(warn(fmt.Sprintf("Added but could not set role to %s: %v", roleFlag, err)))
 					return nil
 				}
 			}
 
 			blank()
-			fmt.Println(ok(fmt.Sprintf("@%s added to %s as %s",
-				username, projCfg.ProjectSlug, roleColor(roleFlag))))
+			fmt.Printf("%s  @%s added to %s as %s\n",
+				boldGreen("success"), username, boldCyan(projCfg.ProjectSlug), roleColor(roleFlag))
 			blank()
-			hint("They'll need to run: dotsync init")
+			hint(fmt.Sprintf("Tell @%s to run:", username))
+			cmdHint("  dotsync init")
 			blank()
 			return nil
 		},
@@ -153,10 +185,12 @@ func teamAddCmd() *cobra.Command {
 }
 
 func teamRemoveCmd() *cobra.Command {
-	return &cobra.Command{
-		Use:     "remove <username>",
-		Short:   "Remove a member from the project",
+	var forceFlag bool
+
+	cmd := &cobra.Command{
+		Use:     "remove <github-username>",
 		Aliases: []string{"rm"},
+		Short:   "Remove a member from the project",
 		Args:    cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
@@ -168,15 +202,16 @@ func teamRemoveCmd() *cobra.Command {
 				return err
 			}
 
-			username := args[0]
+			username := strings.TrimPrefix(args[0], "@")
 
-			fmt.Printf("%s  Remove @%s from %s? [y/N]: ",
-				warn(""), username, projCfg.ProjectSlug)
-			var confirm string
-			fmt.Scanln(&confirm)
-			if confirm != "y" && confirm != "Y" {
-				fmt.Println(dim("  Aborted."))
-				return nil
+			if !forceFlag {
+				fmt.Printf("  Remove @%s from %s? [y/N]: ", username, projCfg.ProjectSlug)
+				var confirm string
+				fmt.Scanln(&confirm)
+				if confirm != "y" && confirm != "Y" {
+					fmt.Println(dim("  Aborted — nothing changed."))
+					return nil
+				}
 			}
 
 			client := api.New(cfg)
@@ -185,28 +220,31 @@ func teamRemoveCmd() *cobra.Command {
 			}
 
 			blank()
-			fmt.Println(ok(fmt.Sprintf("@%s removed from %s", username, projCfg.ProjectSlug)))
+			fmt.Printf("%s  @%s removed from %s\n",
+				boldGreen("success"), username, boldCyan(projCfg.ProjectSlug))
 			blank()
-			hint("They may still have locally pulled .env files.")
-			hint("If this was a security removal, rotate your password:")
-			cmdHint("dotsync init --rotate-password && dotsync push")
+			hint("Note: they may still have a local .env from a previous pull.")
+			hint("If this is a security concern, push new secrets immediately:")
+			cmdHint("  dotsync push")
 			blank()
 			return nil
 		},
 	}
+
+	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "skip confirmation")
+	return cmd
 }
 
 func teamRoleCmd() *cobra.Command {
 	return &cobra.Command{
-		Use:   "role <username> <role>",
+		Use:   "role <github-username> <role>",
 		Short: "Change a team member's role",
 		Long: `Changes a team member's role.
 
-  owner   full control (set at project creation, cannot be changed here)
-  admin   push/pull all envs, invite/remove members
-  member  push/pull (default)
-  viewer  pull only`,
-		Args: cobra.ExactArgs(2),
+  admin   Push/pull all envs, invite and remove members
+  member  Push and pull (default)
+  viewer  Pull only — read-only`,
+		Args:    cobra.ExactArgs(2),
 		Example: `  dotsync team role alice admin
   dotsync team role bob viewer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -219,7 +257,9 @@ func teamRoleCmd() *cobra.Command {
 				return err
 			}
 
-			username, role := args[0], args[1]
+			username := strings.TrimPrefix(args[0], "@")
+			role := args[1]
+
 			validRoles := map[string]bool{"admin": true, "member": true, "viewer": true}
 			if !validRoles[role] {
 				return fmt.Errorf("invalid role %q — must be: admin, member, viewer", role)
@@ -231,8 +271,8 @@ func teamRoleCmd() *cobra.Command {
 			}
 
 			blank()
-			fmt.Println(ok(fmt.Sprintf("@%s is now %s in %s",
-				username, roleColor(role), projCfg.ProjectSlug)))
+			fmt.Printf("%s  @%s is now %s in %s\n",
+				boldGreen("success"), username, roleColor(role), boldCyan(projCfg.ProjectSlug))
 			blank()
 			return nil
 		},

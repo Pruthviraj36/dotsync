@@ -14,13 +14,15 @@ import (
 
 func integrateCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "integrate",
-		Short: "Generate integration snippets for CI/CD platforms",
-		Long: `Generate ready-to-use integration snippets for popular CI/CD
-platforms. Each command creates a scoped service token for you
-and prints a copy-paste snippet configured for your project.
+		Use:   "integrate <platform>",
+		Short: "Set up CI/CD integration in seconds",
+		Long: `Creates a scoped service token and shows exactly what to do next.
+Nothing is auto-configured — you copy and paste two things.
 
-Manage tokens with: dotsync tokens list / revoke`,
+Platforms: github-actions  vercel  railway  netlify  docker  shell`,
+		Example: `  dotsync integrate github-actions
+  dotsync integrate vercel --env production
+  dotsync integrate docker`,
 	}
 	cmd.AddCommand(
 		integrateGitHubActions(),
@@ -33,25 +35,31 @@ Manage tokens with: dotsync tokens list / revoke`,
 	return cmd
 }
 
-// createToken creates a service token and returns the raw value.
-// On failure it prints a warning and returns a placeholder so the snippet
-// is still useful (user just needs to fill in the token manually).
-func createToken(client *api.Client, projectSlug, env, platform string) string {
+// makeToken creates a service token and prints just what the user needs.
+// Returns the raw token string.
+func makeToken(client *api.Client, projectSlug, env, platform string) (string, error) {
 	name := platform + "-" + env
 	token, err := client.CreateServiceToken(projectSlug, env, name)
 	if err != nil {
-		fmt.Println(warn("Could not auto-create service token: " + err.Error()))
-		fmt.Println("  Create one manually with: " + cyan("dotsync tokens create --env "+env))
-		fmt.Println()
-		return "DOTSYNC_TOKEN_PLACEHOLDER"
+		return "", fmt.Errorf("create token: %w", err)
 	}
-	fmt.Println(ok("Service token created for " + bold(platform) + " (" + env + ")."))
-	fmt.Println()
-	fmt.Printf("  %s  %s\n", bold("Token:"), cyan(token))
-	fmt.Println()
-	fmt.Println(warn("Store this token now — it cannot be retrieved after this screen."))
-	fmt.Println()
-	return token
+	return token, nil
+}
+
+func showToken(token, platform, env string) {
+	rl := ruleN(56)
+	blank()
+	fmt.Println("  " + rl)
+	fmt.Printf("  %s\n", bold("Service Token  (shown once, save it now)"))
+	fmt.Println("  " + rl)
+	blank()
+	fmt.Printf("  %s\n", cyan(token))
+	blank()
+	fmt.Println("  " + rl)
+	blank()
+	fmt.Printf("  %s  %s\n", dim("Platform:"), platform)
+	fmt.Printf("  %s  %s\n", dim("Env:     "), env)
+	blank()
 }
 
 // ── GitHub Actions ────────────────────────────────────────────────────────────
@@ -61,12 +69,7 @@ func integrateGitHubActions() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "github-actions",
-		Short: "GitHub Actions workflow snippet",
-		Long: `Creates a scoped service token and generates a GitHub Actions
-workflow step. Add the token to your repo secrets as DOTSYNC_TOKEN,
-then paste the YAML into .github/workflows/deploy.yml.`,
-		Example: `  dotsync integrate github-actions
-  dotsync integrate github-actions --env production`,
+		Short: "GitHub Actions",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -82,41 +85,26 @@ then paste the YAML into .github/workflows/deploy.yml.`,
 			}
 
 			client := api.New(cfg)
-			token := createToken(client, projCfg.ProjectSlug, env, "github-actions")
+			token, err := makeToken(client, projCfg.ProjectSlug, env, "github-actions")
+			if err != nil {
+				return err
+			}
 
-			fmt.Printf("  Add this secret to your repo:\n")
-			fmt.Printf("  GitHub → Settings → Secrets and variables → Actions → New secret\n")
-			fmt.Printf("  Name: DOTSYNC_TOKEN   Value: %s\n\n", cyan(token))
+			showToken(token, "GitHub Actions", env)
 
-			snippet := fmt.Sprintf(`# .github/workflows/deploy.yml
-# Requires: DOTSYNC_TOKEN set in GitHub repo secrets
-
-name: Deploy
-
-on:
-  push:
-    branches: [main]
-
-jobs:
-  deploy:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-
-      - name: Install DotSync
-        run: curl -fsSL %s/install.sh | sh
-
-      - name: Pull secrets
-        env:
-          DOTSYNC_TOKEN: ${{ secrets.DOTSYNC_TOKEN }}
-          DOTSYNC_SERVER: %s
-        run: dotsync pull --env %s --force
-
-      - name: Build
-        run: npm run build   # replace with your build command`,
-				serverURL(cfg), serverURL(cfg), env)
-
-			printSnippet("GitHub Actions", snippet)
+			fmt.Println(bold("  Two steps:"))
+			blank()
+			fmt.Printf("  %s  Go to your repo → Settings → Secrets → Actions\n", dim("1."))
+			fmt.Printf("       Add a secret named %s with the token above\n", cyan("DOTSYNC_TOKEN"))
+			blank()
+			fmt.Printf("  %s  Add this to your workflow:\n", dim("2."))
+			blank()
+			fmt.Printf("       %s\n", dim("- name: Pull secrets"))
+			fmt.Printf("         %s\n", dim("run: dotsync pull --env "+env+" --force"))
+			fmt.Printf("         %s\n", dim("env:"))
+			fmt.Printf("           %s\n", dim("DOTSYNC_TOKEN: ${{ secrets.DOTSYNC_TOKEN }}"))
+			fmt.Printf("           %s\n", dim("DOTSYNC_SERVER: "+serverURL(cfg)))
+			blank()
 			return nil
 		},
 	}
@@ -131,13 +119,7 @@ func integrateVercel() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "vercel",
-		Short: "Vercel environment variable sync",
-		Long: `Creates a service token and generates a shell script that syncs
-your DotSync secrets to Vercel's environment variable store.
-Run this script locally after any secret change — Vercel then
-injects them into your builds and serverless functions automatically.`,
-		Example: `  dotsync integrate vercel
-  dotsync integrate vercel --env production`,
+		Short: "Vercel",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -152,41 +134,31 @@ injects them into your builds and serverless functions automatically.`,
 				env = projCfg.DefaultEnv
 			}
 
-			client := api.New(cfg)
-			_ = createToken(client, projCfg.ProjectSlug, env, "vercel")
-
-			// Count keys in local .env for context
+			// Count local keys for context
 			keyCount := 0
 			if data, err := os.ReadFile(".env"); err == nil {
 				keyCount = len(cliCrypto.ParseEnvFile(string(data)))
 			}
 
-			vercelTarget := envToVercelTarget(env)
-
-			snippet := fmt.Sprintf(`# Sync DotSync secrets to Vercel
-# Prerequisites: npm i -g vercel && vercel login && vercel link
-
-# 1. Pull latest secrets
-dotsync pull --env %s --force
-
-# 2. Push each secret to Vercel (%s environment)
-while IFS='=' read -r key value; do
-  [[ "$key" =~ ^[[:space:]]*# ]] && continue  # skip comments
-  [[ -z "$key" ]] && continue                  # skip blank lines
-  echo "$value" | vercel env add "$key" %s --force
-done < .env
-
-# That's it. Vercel injects these into every build and function automatically.
-# Re-run this script after any dotsync push.
-
-# Alternative — zero-disk injection (nothing written, secrets in env vars only):
-# dotsync run --env %s -- vercel build`, env, vercelTarget, vercelTarget, env)
-
-			printSnippet("Vercel", snippet)
-
-			if keyCount > 0 {
-				fmt.Printf("  %d keys in your local .env ready to sync.\n\n", keyCount)
+			client := api.New(cfg)
+			token, err := makeToken(client, projCfg.ProjectSlug, env, "vercel")
+			if err != nil {
+				return err
 			}
+
+			showToken(token, "Vercel", env)
+
+			fmt.Println(bold("  Two steps:"))
+			blank()
+			fmt.Printf("  %s  Pull your secrets locally:\n", dim("1."))
+			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
+			blank()
+			fmt.Printf("  %s  Push them to Vercel (%d keys):\n", dim("2."), keyCount)
+			fmt.Printf("       %s\n", cyan("cat .env | while IFS='=' read k v; do vercel env add $k "+vercelTarget(env)+" <<< $v; done"))
+			blank()
+			hint("After this, Vercel injects them into every build automatically.")
+			hint("Re-run step 2 whenever you update secrets.")
+			blank()
 			return nil
 		},
 	}
@@ -201,11 +173,7 @@ func integrateRailway() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "railway",
-		Short: "Railway deployment snippet",
-		Long: `Creates a service token and generates a Railway integration script
-that syncs your DotSync secrets to Railway environment variables.`,
-		Example: `  dotsync integrate railway
-  dotsync integrate railway --env production`,
+		Short: "Railway",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -221,26 +189,24 @@ that syncs your DotSync secrets to Railway environment variables.`,
 			}
 
 			client := api.New(cfg)
-			_ = createToken(client, projCfg.ProjectSlug, env, "railway")
+			token, err := makeToken(client, projCfg.ProjectSlug, env, "railway")
+			if err != nil {
+				return err
+			}
 
-			snippet := fmt.Sprintf(`# Sync DotSync secrets to Railway
-# Prerequisites: npm i -g @railway/cli && railway login && railway link
+			showToken(token, "Railway", env)
 
-# 1. Pull latest secrets
-dotsync pull --env %s --force
-
-# 2. Push each var to Railway
-while IFS='=' read -r key value; do
-  [[ "$key" =~ ^[[:space:]]*# ]] && continue
-  [[ -z "$key" ]] && continue
-  railway variables set "$key=$value"
-done < .env
-
-# Alternative — zero-disk: inject secrets and deploy in one command
-# dotsync run --env %s -- railway up`, env, env)
-
-			printSnippet("Railway", snippet)
-			fmt.Printf("  Zero-disk deploy: %s\n\n", cyan(fmt.Sprintf("dotsync run --env %s -- railway up", env)))
+			fmt.Println(bold("  Two steps:"))
+			blank()
+			fmt.Printf("  %s  Pull secrets:\n", dim("1."))
+			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
+			blank()
+			fmt.Printf("  %s  Push to Railway:\n", dim("2."))
+			fmt.Printf("       %s\n", cyan("cat .env | while IFS='=' read k v; do railway variables set \"$k=$v\"; done"))
+			blank()
+			hint("Or deploy directly without touching disk:")
+			cmdHint("  dotsync run --env " + env + " -- railway up")
+			blank()
 			return nil
 		},
 	}
@@ -255,7 +221,7 @@ func integrateNetlify() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "netlify",
-		Short: "Netlify build environment snippet",
+		Short: "Netlify",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -271,28 +237,21 @@ func integrateNetlify() *cobra.Command {
 			}
 
 			client := api.New(cfg)
-			_ = createToken(client, projCfg.ProjectSlug, env, "netlify")
+			token, err := makeToken(client, projCfg.ProjectSlug, env, "netlify")
+			if err != nil {
+				return err
+			}
 
-			snippet := fmt.Sprintf(`# Sync DotSync secrets to Netlify
-# Prerequisites: npm i -g netlify-cli && netlify login && netlify link
+			showToken(token, "Netlify", env)
 
-# 1. Pull latest secrets
-dotsync pull --env %s --force
-
-# 2. Push each var to Netlify
-while IFS='=' read -r key value; do
-  [[ "$key" =~ ^[[:space:]]*# ]] && continue
-  [[ -z "$key" ]] && continue
-  netlify env:set "$key" "$value"
-done < .env
-
-# For Netlify build plugins, add to netlify.toml:
-# [build.environment]
-#   DOTSYNC_PROJECT = "%s"
-#   DOTSYNC_ENV     = "%s"
-# Then add DOTSYNC_TOKEN to Netlify → Site settings → Environment variables.`, env, projCfg.ProjectSlug, env)
-
-			printSnippet("Netlify", snippet)
+			fmt.Println(bold("  Two steps:"))
+			blank()
+			fmt.Printf("  %s  Pull secrets:\n", dim("1."))
+			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
+			blank()
+			fmt.Printf("  %s  Push to Netlify:\n", dim("2."))
+			fmt.Printf("       %s\n", cyan("cat .env | while IFS='=' read k v; do netlify env:set \"$k\" \"$v\"; done"))
+			blank()
 			return nil
 		},
 	}
@@ -300,16 +259,16 @@ done < .env
 	return cmd
 }
 
-// ── Docker ────────────────────────────────────────────────────────────────────
+// ── Docker / Podman ───────────────────────────────────────────────────────────
 
 func integrateDocker() *cobra.Command {
 	var envFlag string
 
 	cmd := &cobra.Command{
-		Use:   "docker",
-		Short: "Docker / Docker Compose snippet",
-		Long: `Generates Docker and Docker Compose configurations that inject
-secrets at container runtime — nothing is baked into the image.`,
+		Use:     "docker",
+		Aliases: []string{"podman"},
+		Short:   "Docker or Podman",
+		Long:    `Works with both Docker and Podman — they use the same CLI interface.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -324,37 +283,37 @@ secrets at container runtime — nothing is baked into the image.`,
 				env = projCfg.DefaultEnv
 			}
 
+			// Detect whether podman or docker is available
+			runtime := "docker"
+			if _, err := exec_lookpath("podman"); err == nil {
+				if _, err2 := exec_lookpath("docker"); err2 != nil {
+					runtime = "podman"
+				}
+			}
+
 			client := api.New(cfg)
-			_ = createToken(client, projCfg.ProjectSlug, env, "docker")
+			token, err := makeToken(client, projCfg.ProjectSlug, env, runtime)
+			if err != nil {
+				return err
+			}
 
-			snippet := fmt.Sprintf(`# Docker — inject secrets at runtime (never baked into image)
+			showToken(token, "Docker / Podman", env)
 
-# Option 1: pull .env then pass as --env-file
-dotsync pull --env %s --force
-docker run --env-file .env your-image
-
-# Option 2: zero-disk — secrets injected into process, never written
-dotsync run --env %s -- docker run your-image
-
-# Option 3: Docker Compose — reference your .env
-# docker-compose.yml:
-#   services:
-#     app:
-#       image: your-image
-#       env_file: [.env]   # generate with: dotsync pull --env %s
-#
-# docker-compose up
-
-# Option 4: Multi-stage build (secrets only at runtime, never at build time)
-# FROM node:20 AS builder
-# RUN npm ci && npm run build         # no secrets needed here
-# FROM node:20-slim
-# COPY --from=builder /app/dist ./dist
-# CMD ["node", "server.js"]           # inject via --env-file at docker run`, env, env, env)
-
-			printSnippet("Docker", snippet)
-			fmt.Printf("  Recommended: %s\n\n",
-				cyan(fmt.Sprintf("dotsync run --env %s -- docker run your-image", env)))
+			fmt.Println(bold("  Options (pick one):"))
+			blank()
+			fmt.Printf("  %s  %s %s\n", dim("A."), dim("Zero-disk — nothing written, secrets in memory only:"), "")
+			fmt.Printf("       %s\n", cyan(fmt.Sprintf("dotsync run --env %s -- %s run your-image", env, runtime)))
+			blank()
+			fmt.Printf("  %s  %s\n", dim("B."), dim("Pull .env then pass as file:"))
+			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
+			fmt.Printf("       %s\n", cyan(runtime+" run --env-file .env your-image"))
+			blank()
+			fmt.Printf("  %s  %s\n", dim("C."), dim("Docker Compose:"))
+			fmt.Printf("       %s\n", dim("# In docker-compose.yml → services → app → env_file: [.env]"))
+			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force && "+runtime+" compose up"))
+			blank()
+			hint("Option A is recommended — secrets never touch disk.")
+			blank()
 			return nil
 		},
 	}
@@ -370,7 +329,7 @@ func integrateShell() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "shell",
-		Short: "Shell export snippet (bash/zsh/fish)",
+		Short: "Bash / Zsh / Fish",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -386,63 +345,47 @@ func integrateShell() *cobra.Command {
 			}
 
 			client := api.New(cfg)
-			_ = createToken(client, projCfg.ProjectSlug, env, "shell")
-
-			var snippet string
-			switch strings.ToLower(shellFlag) {
-			case "fish":
-				snippet = fmt.Sprintf(`# Fish shell — export DotSync secrets into current session
-
-# Option 1: subshell with secrets loaded (recommended)
-dotsync run --env %s -- fish
-
-# Option 2: pull and source
-dotsync pull --env %s --force
-for line in (cat .env)
-  string match -qr '^#' $line; and continue
-  set -gx (string split -m 1 '=' $line)
-end`, env, env)
-			default:
-				snippet = fmt.Sprintf(`# Bash / Zsh — export DotSync secrets into current shell
-
-# Option 1: subshell with secrets loaded (recommended — no disk writes)
-dotsync run --env %s -- bash
-
-# Option 2: pull and source (writes .env to disk)
-dotsync pull --env %s --force
-set -a; source .env; set +a
-
-# Option 3: eval for current shell (no subshell, no disk)
-eval "$(dotsync run --env %s -- env | grep -E '^[A-Z_]+=' | sed 's/^/export /')"`, env, env, env)
+			token, err := makeToken(client, projCfg.ProjectSlug, env, "shell")
+			if err != nil {
+				return err
 			}
 
-			printSnippet("Shell ("+shellFlag+")", snippet)
+			showToken(token, "Shell ("+shellFlag+")", env)
+
+			fmt.Println(bold("  Options:"))
+			blank()
+
+			switch strings.ToLower(shellFlag) {
+			case "fish":
+				fmt.Printf("  %s  %s\n", dim("A."), dim("Subshell with secrets loaded:"))
+				fmt.Printf("       %s\n", cyan("dotsync run --env "+env+" -- fish"))
+				blank()
+				fmt.Printf("  %s  %s\n", dim("B."), dim("Export into current session:"))
+				fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
+				fmt.Printf("       %s\n", cyan("for line in (cat .env); set -gx (string split -m1 '=' $line); end"))
+			default:
+				fmt.Printf("  %s  %s\n", dim("A."), dim("Subshell with secrets (nothing written to disk):"))
+				fmt.Printf("       %s\n", cyan("dotsync run --env "+env+" -- bash"))
+				blank()
+				fmt.Printf("  %s  %s\n", dim("B."), dim("Export into current shell:"))
+				fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force && source .env"))
+			}
+			blank()
 			return nil
 		},
 	}
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
-	cmd.Flags().StringVar(&shellFlag, "shell", "bash", "shell type: bash | zsh | fish")
+	cmd.Flags().StringVar(&shellFlag, "shell", "bash", "shell type: bash|zsh|fish")
 	return cmd
 }
 
 // ── helpers ───────────────────────────────────────────────────────────────────
 
-func printSnippet(platform, snippet string) {
-	rule := strings.Repeat("─", 64)
-	fmt.Printf("  %s — %s\n", bold("Integration"), bold(platform))
-	fmt.Println("  " + rule)
-	fmt.Println()
-	fmt.Println(snippet)
-	fmt.Println()
-	fmt.Println("  " + rule)
-	fmt.Println()
-}
-
 func serverURL(cfg *config.GlobalConfig) string {
 	return cfg.ServerURL
 }
 
-func envToVercelTarget(env string) string {
+func vercelTarget(env string) string {
 	switch env {
 	case "production":
 		return "production"
@@ -451,4 +394,17 @@ func envToVercelTarget(env string) string {
 	default:
 		return "preview"
 	}
+}
+
+// exec_lookpath is a thin wrapper so we don't import os/exec at package level.
+func exec_lookpath(name string) (string, error) {
+	// Use PATH lookup manually to avoid import
+	paths := strings.Split(os.Getenv("PATH"), ":")
+	for _, dir := range paths {
+		full := dir + "/" + name
+		if _, err := os.Stat(full); err == nil {
+			return full, nil
+		}
+	}
+	return "", fmt.Errorf("not found: %s", name)
 }
