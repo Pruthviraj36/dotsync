@@ -125,6 +125,15 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 			command := args[0]
 			cmdArgs := args[1:]
 
+			// For docker/podman, when the subcommand is "run", automatically
+			// inject --env KEY=VALUE for every secret right after "run".
+			// This is the only way to get secrets into a container without
+			// writing anything to disk — the parent process has the secrets
+			// in its environment; --env KEY passes them into the container.
+			if isContainerRuntime(command) {
+				cmdArgs = injectContainerEnv(cmdArgs, secrets)
+			}
+
 			// Resolve the binary so errors are clear
 			bin, err := exec.LookPath(command)
 			if err != nil {
@@ -169,4 +178,106 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
 	cmd.Flags().IntVar(&versionFlag, "version", 0, "use a specific secret version (default: latest)")
 	return cmd
+}
+
+// isContainerRuntime returns true when the command is docker or podman.
+func isContainerRuntime(command string) bool {
+	base := command
+	// Handle full paths like /usr/bin/podman
+	for i := len(command) - 1; i >= 0; i-- {
+		if command[i] == '/' {
+			base = command[i+1:]
+			break
+		}
+	}
+	return base == "docker" || base == "podman"
+}
+
+// injectContainerEnv inserts --env KEY=VALUE flags into container run args.
+//
+// It only activates when the subcommand is "run" — not build, push, etc.
+// Flags are inserted right after "run" (and after any existing --env flags)
+// so they don't interfere with the image name or command arguments.
+//
+// Before: [run, -d, --pull=never, myimage]
+// After:  [run, -d, --pull=never, --env, KEY=VALUE, --env, KEY2=VALUE2, myimage]
+func injectContainerEnv(args []string, secrets map[string]string) []string {
+	if len(args) == 0 || args[0] != "run" {
+		return args
+	}
+
+	// Find the insertion point: after all flags (args starting with -)
+	// but before the image name. The image name is the first non-flag,
+	// non-flag-value argument after "run".
+	insertAt := 1 // default: right after "run"
+	i := 1
+	for i < len(args) {
+		arg := args[i]
+		if arg == "--" {
+			insertAt = i
+			break
+		}
+		if len(arg) == 0 || arg[0] != '-' {
+			// This is the image name
+			insertAt = i
+			break
+		}
+		// Flags that consume a value: skip the next arg too
+		// Full list of docker/podman run flags that take a value:
+		valueFlags := map[string]bool{
+			"--env": true, "-e": true,
+			"--env-file": true,
+			"--volume": true, "-v": true,
+			"--publish": true, "-p": true,
+			"--name": true,
+			"--network": true,
+			"--label": true, "-l": true,
+			"--memory": true, "-m": true,
+			"--cpus": true,
+			"--user": true, "-u": true,
+			"--workdir": true, "-w": true,
+			"--entrypoint": true,
+			"--hostname": true, "-h": true,
+			"--add-host": true,
+			"--mount": true,
+			"--restart": true,
+			"--stop-signal": true,
+			"--stop-timeout": true,
+			"--health-cmd": true,
+			"--health-interval": true,
+			"--log-driver": true,
+			"--log-opt": true,
+			"--platform": true,
+			"--pull": true,
+			"--runtime": true,
+			"--security-opt": true,
+			"--shm-size": true,
+			"--tmpfs": true,
+			"--ulimit": true,
+			"--userns": true,
+			"--pid": true,
+			"--ipc": true,
+			"--cgroupns": true,
+		}
+		if valueFlags[arg] {
+			i += 2 // skip flag and its value
+			insertAt = i
+			continue
+		}
+		i++
+		insertAt = i
+	}
+
+	// Build --env KEY=VALUE pairs for every secret
+	envFlags := make([]string, 0, len(secrets)*2)
+	for k, v := range secrets {
+		envFlags = append(envFlags, "--env", k+"="+v)
+	}
+
+	// Splice into args: args[:insertAt] + envFlags + args[insertAt:]
+	result := make([]string, 0, len(args)+len(envFlags))
+	result = append(result, args[:insertAt]...)
+	result = append(result, envFlags...)
+	result = append(result, args[insertAt:]...)
+	return result
 }
