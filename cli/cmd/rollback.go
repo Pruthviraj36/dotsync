@@ -21,25 +21,20 @@ func rollbackCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "rollback <version>",
 		Short: "Roll back to a previous secret version",
-		Long: `Downloads a specific historical version of secrets, decrypts it,
-and re-uploads it as the new latest version. This creates a new version
-entry in history (v_current+1) rather than deleting existing ones —
-history is always append-only and immutable.
+		Long: `Downloads a specific historical version, decrypts it, and
+re-uploads it as the latest version. History is append-only —
+nothing is ever deleted. The rolled-back content becomes v_current+1.
 
-To see available versions: dotsync history
-
-If you just want to inspect an old version without pushing it:
-  dotsync pull --version 3 --output .env.old`,
+To see available versions: dotsync history`,
 		Args: cobra.ExactArgs(1),
 		Example: `  dotsync rollback 3
   dotsync rollback 3 --env production
-  dotsync rollback 3 --dry-run`,
+  dotsync rollback 3 --output .env.old`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
 				return err
 			}
-
 			projCfg, err := config.LoadProject()
 			if err != nil {
 				return err
@@ -56,39 +51,38 @@ If you just want to inspect an old version without pushing it:
 			}
 
 			client := api.New(cfg)
-
 			password, err := resolvePassword(client, projCfg.ProjectSlug)
 			if err != nil {
 				return err
 			}
 
-			// Fetch current version so we can show what we're rolling back from
 			currentVersion, _, _ := client.GetLatestVersion(projCfg.ProjectSlug, env)
-
 			if version == currentVersion {
-				fmt.Println(ok(fmt.Sprintf("Already at version %d; nothing to roll back.", version)))
+				blank()
+				fmt.Println(info(fmt.Sprintf("Already at v%d — nothing to roll back.", version)))
+				blank()
 				return nil
 			}
 
-			fmt.Printf("\n%s\n", bold(fmt.Sprintf("Rolling back %s/%s", projCfg.ProjectSlug, env)))
-			fmt.Printf("   Current  : "+dim("v%d")+"\n", currentVersion)
-			fmt.Printf("   Target   : "+cyan("v%d")+"\n", version)
-			fmt.Println()
+			blank()
+			fmt.Printf("  %s  %s/%s\n", bold("Rollback"), boldCyan(projCfg.ProjectSlug), cyan(env))
+			blank()
+			kv("Current", fmt.Sprintf("v%d", currentVersion))
+			kvCyan("Target", fmt.Sprintf("v%d", version))
+			blank()
 
-			// Fetch the historical version
 			fmt.Println(spin(fmt.Sprintf("Fetching v%d...", version)))
 			old, err := client.PullVersion(projCfg.ProjectSlug, env, version)
 			if err != nil {
-				return fmt.Errorf("could not fetch version %d: %w", version, err)
+				return fmt.Errorf("could not fetch v%d: %w", version, err)
 			}
 
 			if verified, vErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); vErr != nil {
-				return fmt.Errorf("signature verification failed: %w\nRefusing to roll back to a version that fails verification", vErr)
+				return fmt.Errorf("signature verification failed: %w\nRefusing to roll back to an unverified version", vErr)
 			} else if verified {
-				fmt.Println(ok(fmt.Sprintf("Signature verified (%s, ed25519)", old.PushedBy)))
+				fmt.Println(ok(fmt.Sprintf("Signature verified — originally pushed by @%s", old.PushedBy)))
 			}
 
-			// Decrypt it to show the user what they're rolling back to
 			plaintext, err := cliCrypto.DecryptEnvFile(
 				old.EncryptedData, old.Nonce, password, projCfg.ProjectSlug,
 			)
@@ -97,44 +91,43 @@ If you just want to inspect an old version without pushing it:
 			}
 
 			parsed := cliCrypto.ParseEnvFile(plaintext)
-			fmt.Printf("   Contains : %d secrets (pushed by @%s)\n\n", len(parsed), old.PushedBy)
+			blank()
+			kvCyan("Contains", fmt.Sprintf("%d secrets (originally pushed by @%s)", len(parsed), old.PushedBy))
+			blank()
 
-			// Write to a temp preview file if specified
+			// Inspect mode — write to file, don't push
 			if outputFlag != "" {
 				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
-				fmt.Println(ok(fmt.Sprintf("Version %d written to %s (not pushed; inspect before committing)",
-					version, outputFlag)))
+				fmt.Println(ok(fmt.Sprintf("v%d written to %s", version, outputFlag)))
+				hint("Inspect the file, then push it manually if it looks right:")
+				cmdHint(fmt.Sprintf("cp %s .env && dotsync push --env %s", outputFlag, env))
+				blank()
 				return nil
 			}
 
-			// Confirm before pushing
+			// Confirmation prompt
 			if !forceFlag {
-				fmt.Printf("Keys in v%d:\n", version)
-				keys := make([]string, 0, len(parsed))
+				rl := ruleN(48)
+				fmt.Println("  " + rl)
 				for k := range parsed {
-					keys = append(keys, k)
+					fmt.Printf("  %s  %s\n", dim("·"), cyan(k))
 				}
-				for _, k := range keys {
-					fmt.Printf("  - "+cyan("%s")+"\n", k)
-				}
-				fmt.Println()
-				fmt.Printf("Re-encrypt v%d and push as v%d? [y/N]: ",
-					version, currentVersion+1)
+				fmt.Println("  " + rl)
+				blank()
+				fmt.Printf("  Re-encrypt v%d content and push as %s? [y/N]: ",
+					version, green(fmt.Sprintf("v%d", currentVersion+1)))
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "y" && confirm != "Y" {
-					fmt.Println("Aborted. Nothing was changed.")
+					fmt.Println(dim("  Aborted — nothing changed."))
+					blank()
 					return nil
 				}
 			}
 
-			// Re-encrypt with the same project password and push as a new version
-			// This is important: we don't just re-upload the old ciphertext because
-			// re-encrypting generates a fresh nonce (AES-GCM nonce reuse is catastrophic).
-			fmt.Println(spin("Re-encrypting and pushing..."))
-
+			fmt.Println(spin("Re-encrypting with fresh nonce..."))
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, projCfg.ProjectSlug)
 			if err != nil {
 				return fmt.Errorf("re-encryption failed: %w", err)
@@ -145,12 +138,13 @@ If you just want to inspect an old version without pushing it:
 				return err
 			}
 			if identityCreated {
-				fmt.Println(ok(fmt.Sprintf("ed25519 identity created: %s", identity.PubKeyPath())))
+				fmt.Println(info("ed25519 identity created: " + identity.PubKeyPath()))
 			}
 			if err := client.SetPubKey(identity.Hex(pub)); err != nil {
-				fmt.Println(dim("  (could not sync public key — signature may not verify for teammates yet)"))
+				fmt.Println(dim("  (could not sync public key)"))
 			}
 
+			fmt.Println(spin("Pushing..."))
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
@@ -160,26 +154,25 @@ If you just want to inspect an old version without pushing it:
 				return err
 			}
 
-			fmt.Println()
-			fmt.Println("  " + ok("Rolled back successfully"))
-			fmt.Printf("  "+bold("Project")+"  : %s\n", projCfg.ProjectSlug)
-			fmt.Printf("  "+bold("Env")+"      : %s\n", env)
-			fmt.Printf("  "+bold("Restored")+": "+green("v%d content")+"\n", version)
-			fmt.Printf("  "+bold("New ver")+"  : "+green("v%d")+"\n", result.Version)
-			fmt.Println()
-			fmt.Println("  History preserved — v" +
-				fmt.Sprint(version) + " through v" +
-				fmt.Sprint(currentVersion) + " still accessible via 'dotsync history'")
-			fmt.Println()
+			blank()
+			fmt.Println(ok("Rolled back successfully"))
+			blank()
+			kv("Project", projCfg.ProjectSlug)
+			kv("Env", env)
+			kvGreen("Restored", fmt.Sprintf("v%d content", version))
+			kvGreen("New version", fmt.Sprintf("v%d", result.Version))
+			kvDim("History", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
+			blank()
 
-			// Also update local .env if it exists
+			// Offer to update local .env
 			if _, err := os.Stat(".env"); err == nil {
-				fmt.Print("  Update local .env? [Y/n]: ")
+				fmt.Printf("  Update local .env? [Y/n]: ")
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
 					os.WriteFile(".env", []byte(plaintext), 0600)
-					fmt.Println("  " + ok("Local .env updated"))
+					fmt.Println(ok("Local .env updated"))
+					blank()
 				}
 			}
 
@@ -188,8 +181,7 @@ If you just want to inspect an old version without pushing it:
 	}
 
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
-	cmd.Flags().StringVarP(&outputFlag, "output", "o", "",
-		"write to file instead of pushing (inspect before committing)")
-	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "skip confirmation prompt")
+	cmd.Flags().StringVarP(&outputFlag, "output", "o", "", "write to file instead of pushing")
+	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "skip confirmation")
 	return cmd
 }

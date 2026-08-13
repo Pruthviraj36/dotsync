@@ -8,7 +8,7 @@ import (
 	"github.com/spf13/cobra"
 )
 
-var Version = "dev" // Can be overridden by ldflags
+var Version = "dev"
 
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
@@ -23,25 +23,28 @@ func versionCmd() *cobra.Command {
 				if version == "dev" && info.Main.Version != "" && info.Main.Version != "(devel)" {
 					version = info.Main.Version
 				}
-				for _, setting := range info.Settings {
-					if setting.Key == "vcs.revision" {
-						revision = setting.Value
+				for _, s := range info.Settings {
+					switch s.Key {
+					case "vcs.revision":
+						revision = s.Value
 						if len(revision) > 7 {
 							revision = revision[:7]
 						}
-					}
-					if setting.Key == "vcs.time" {
-						buildTime = setting.Value
+					case "vcs.time":
+						buildTime = s.Value
 					}
 				}
 			}
 
-			fmt.Println("DotSync CLI")
-			fmt.Printf("  Version:    %s\n", version)
-			fmt.Printf("  Revision:   %s\n", revision)
-			fmt.Printf("  Build Time: %s\n", buildTime)
-			fmt.Printf("  OS/Arch:    %s/%s\n", runtime.GOOS, runtime.GOARCH)
-			fmt.Printf("  Go Version: %s\n", runtime.Version())
+			blank()
+			fmt.Printf("  %s\n", bold("DotSync"))
+			blank()
+			kv("Version  ", version)
+			kv("Revision ", dim(revision))
+			kv("Built    ", dim(buildTime))
+			kv("Platform ", dim(fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)))
+			kv("Go       ", dim(runtime.Version()))
+			blank()
 		},
 	}
 }

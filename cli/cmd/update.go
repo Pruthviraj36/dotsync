@@ -44,6 +44,7 @@ will never silently install an unverified binary.`,
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
+	blank()
 	fmt.Println(spin("Checking for updates..."))
 
 	release, err := fetchLatestRelease()
@@ -51,25 +52,26 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("failed to check for updates: %w", err)
 	}
 
-	// Normalize both sides: strip leading "v" so "1.33.10" == "v1.33.10"
 	currentNorm := strings.TrimPrefix(Version, "v")
 	latestNorm := strings.TrimPrefix(release.TagName, "v")
 	if Version != "dev" && currentNorm == latestNorm {
-		fmt.Println(ok(fmt.Sprintf("You are already using the latest version (%s).", Version)))
+		blank()
+		fmt.Println(ok(fmt.Sprintf("Already on the latest version (%s).", Version)))
+		blank()
 		return nil
 	}
 
-	fmt.Println(info(fmt.Sprintf("Found new version: %s (current: %s)", release.TagName, Version)))
+	blank()
+	fmt.Println(info(fmt.Sprintf("New version available: %s  (current: %s)",
+		bold(release.TagName), dim(Version))))
+	blank()
 
-	// ── Fetch checksums.txt FIRST — refuse to proceed at all if it's missing.
-	// This is the actual security boundary: we never download or apply a
-	// binary we have no way to verify. ──────────────────────────────────────
 	fmt.Println(spin("Fetching checksums..."))
 	checksums, err := fetchChecksums(release)
 	if err != nil {
 		return fmt.Errorf(
-			"refusing to update: could not fetch checksums.txt for verification: %w\n"+
-				"This is a safety check — DotSync will not install an unverifiable binary.", err)
+			"refusing to update: could not fetch checksums.txt: %w\n"+
+				"  DotSync will not install an unverifiable binary.", err)
 	}
 
 	ext := ".tar.gz"
@@ -78,9 +80,9 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	assetName := fmt.Sprintf("dotsync-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
 
-	expectedChecksum, checksumFound := checksums[assetName]
-	if !checksumFound {
-		return fmt.Errorf("refusing to update: no checksum entry found for %s in checksums.txt", assetName)
+	expectedChecksum, ok2 := checksums[assetName]
+	if !ok2 {
+		return fmt.Errorf("refusing to update: no checksum for %s in checksums.txt", assetName)
 	}
 
 	var downloadURL string
@@ -91,27 +93,23 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		}
 	}
 	if downloadURL == "" {
-		return fmt.Errorf("no suitable binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
+		return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
 	}
 
-	fmt.Println(spin("Downloading release..."))
+	fmt.Println(spin("Downloading..."))
 	archiveBytes, err := downloadAll(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %w", err)
 	}
 
-	// ── Verify the downloaded ARCHIVE against checksums.txt before we even
-	// look inside it. This is the actual cryptographic check. ───────────────
 	actualChecksum := sha256Hex(archiveBytes)
 	if actualChecksum != expectedChecksum {
 		return fmt.Errorf(
 			"refusing to update: checksum mismatch for %s\n"+
 				"  expected: %s\n"+
-				"  got:      %s\n"+
-				"This could mean the download was corrupted, or — far more seriously —\n"+
-				"tampered with in transit. The update has been aborted and nothing was\n"+
-				"changed on your system. Please try again, and if this persists, report\n"+
-				"it: https://github.com/Pruthviraj36/dotsync/issues",
+				"  got:      %s\n\n"+
+				"  The download may be corrupted or tampered with.\n"+
+				"  Nothing was changed. Report this if it persists.",
 			assetName, expectedChecksum, actualChecksum)
 	}
 	fmt.Println(ok("Checksum verified"))
@@ -124,12 +122,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	fmt.Println(spin("Applying update..."))
 	if err := selfupdate.Apply(binaryReader, selfupdate.Options{}); err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
-			return fmt.Errorf("permission denied — try running with sudo/admin privileges")
+			return fmt.Errorf("permission denied — try running with sudo")
 		}
 		return fmt.Errorf("failed to apply update: %w", err)
 	}
 
-	fmt.Println(ok(fmt.Sprintf("Successfully updated to %s.", release.TagName)))
+	blank()
+	fmt.Println(ok(fmt.Sprintf("Updated to %s", bold(release.TagName))))
+	blank()
 	return nil
 }
 

@@ -81,15 +81,16 @@ func historyCmd() *cobra.Command {
 
 			for i, r := range rows {
 				marker := "   "
-				ver := r.ver
+				verColored := colDim(r.ver, verW)
 				if i == 0 {
 					marker = green(" ▶ ")
-					ver = boldGreen(r.ver)
-				} else {
-					ver = dim(r.ver)
+					verColored = padRight(boldGreen(r.ver), verW)
 				}
-				fmt.Printf("%s%-*s  %-*s  %s\n",
-					marker, verW, ver, ageW, dim(r.age), cyan(r.who))
+				tableRow(marker,
+					verColored,
+					colDim(r.age, ageW),
+					cyan(r.who),
+				)
 			}
 
 			fmt.Println("  " + rl)

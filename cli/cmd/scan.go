@@ -10,148 +10,45 @@ import (
 	"github.com/spf13/cobra"
 )
 
-// secretPattern defines a secret pattern to scan for.
 type secretPattern struct {
-	name    string
-	pattern *regexp.Regexp
-	// severity: high = should never be committed, medium = likely sensitive
+	name     string
+	pattern  *regexp.Regexp
 	severity string
 }
 
-// These patterns detect real secrets that common services issue.
-// They're specific enough to have very low false-positive rates.
 var secretPatterns = []secretPattern{
-	{
-		name:     "AWS Access Key",
-		pattern:  regexp.MustCompile(`(?i)AKIA[0-9A-Z]{16}`),
-		severity: "high",
-	},
-	{
-		name:     "AWS Secret Key",
-		pattern:  regexp.MustCompile(`(?i)aws.{0,20}['\"][0-9a-zA-Z/+]{40}['\"]`),
-		severity: "high",
-	},
-	{
-		name:     "GitHub Personal Access Token",
-		pattern:  regexp.MustCompile(`ghp_[0-9a-zA-Z]{36}`),
-		severity: "high",
-	},
-	{
-		name:     "GitHub OAuth Token",
-		pattern:  regexp.MustCompile(`gho_[0-9a-zA-Z]{36}`),
-		severity: "high",
-	},
-	{
-		name:     "GitHub Actions Token",
-		pattern:  regexp.MustCompile(`ghs_[0-9a-zA-Z]{36}`),
-		severity: "high",
-	},
-	{
-		name:     "Stripe Secret Key (live)",
-		pattern:  regexp.MustCompile(`sk_live_[0-9a-zA-Z]{24,}`),
-		severity: "high",
-	},
-	{
-		name:     "Stripe Secret Key (test)",
-		pattern:  regexp.MustCompile(`sk_test_[0-9a-zA-Z]{24,}`),
-		severity: "medium",
-	},
-	{
-		name:     "Stripe Restricted Key",
-		pattern:  regexp.MustCompile(`rk_live_[0-9a-zA-Z]{24,}`),
-		severity: "high",
-	},
-	{
-		name:     "Stripe Webhook Secret",
-		pattern:  regexp.MustCompile(`whsec_[0-9a-zA-Z]{32,}`),
-		severity: "high",
-	},
-	{
-		name:     "Slack Bot Token",
-		pattern:  regexp.MustCompile(`xoxb-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}`),
-		severity: "high",
-	},
-	{
-		name:     "Slack User Token",
-		pattern:  regexp.MustCompile(`xoxp-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}`),
-		severity: "high",
-	},
-	{
-		name:     "Slack Webhook URL",
-		pattern:  regexp.MustCompile(`https://hooks\.slack\.com/services/T[0-9A-Z]+/B[0-9A-Z]+/[0-9a-zA-Z]+`),
-		severity: "high",
-	},
-	{
-		name:     "SendGrid API Key",
-		pattern:  regexp.MustCompile(`SG\.[0-9a-zA-Z_-]{22}\.[0-9a-zA-Z_-]{43}`),
-		severity: "high",
-	},
-	{
-		name:     "Twilio Account SID",
-		pattern:  regexp.MustCompile(`AC[0-9a-f]{32}`),
-		severity: "medium",
-	},
-	{
-		name:     "Twilio Auth Token",
-		pattern:  regexp.MustCompile(`(?i)twilio.{0,20}[0-9a-f]{32}`),
-		severity: "high",
-	},
-	{
-		name:     "Google API Key",
-		pattern:  regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`),
-		severity: "high",
-	},
-	{
-		name:     "Firebase Server Key",
-		pattern:  regexp.MustCompile(`AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{140}`),
-		severity: "high",
-	},
-	{
-		name:     "npm Token",
-		pattern:  regexp.MustCompile(`npm_[0-9a-zA-Z]{36}`),
-		severity: "high",
-	},
-	{
-		name:     "PyPI Token",
-		pattern:  regexp.MustCompile(`pypi-AgEIcHlwaS5vcmc[0-9a-zA-Z_-]{70,}`),
-		severity: "high",
-	},
-	{
-		name:     "Postgres Connection String",
-		pattern:  regexp.MustCompile(`postgresql://[^:]+:[^@\s]{8,}@`),
-		severity: "high",
-	},
-	{
-		name:     "Neon DB Connection",
-		pattern:  regexp.MustCompile(`postgresql://[^:]+:[^@\s]{8,}@[^.]+\.neon\.tech`),
-		severity: "high",
-	},
-	{
-		name:     "Private Key Block",
-		pattern:  regexp.MustCompile(`-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY`),
-		severity: "high",
-	},
-	{
-		name:     "JWT Secret (long hex)",
-		pattern:  regexp.MustCompile(`(?i)(jwt.?secret|jwt.?key).{0,10}[0-9a-f]{64}`),
-		severity: "high",
-	},
-	{
-		name:     "Generic high-entropy secret",
-		pattern:  regexp.MustCompile(`(?i)(password|secret|token|api.?key).{0,5}[=:].{0,5}['\"]?[0-9a-zA-Z+/]{40,}['\"]?`),
-		severity: "medium",
-	},
+	{"AWS Access Key",              regexp.MustCompile(`(?i)AKIA[0-9A-Z]{16}`),                                                           "high"},
+	{"AWS Secret Key",              regexp.MustCompile(`(?i)aws.{0,20}['""][0-9a-zA-Z/+]{40}["'']`),                                      "high"},
+	{"GitHub Personal Token",       regexp.MustCompile(`ghp_[0-9a-zA-Z]{36}`),                                                            "high"},
+	{"GitHub OAuth Token",          regexp.MustCompile(`gho_[0-9a-zA-Z]{36}`),                                                            "high"},
+	{"GitHub Actions Token",        regexp.MustCompile(`ghs_[0-9a-zA-Z]{36}`),                                                            "high"},
+	{"Stripe Secret Key (live)",    regexp.MustCompile(`sk_live_[0-9a-zA-Z]{24,}`),                                                       "high"},
+	{"Stripe Secret Key (test)",    regexp.MustCompile(`sk_test_[0-9a-zA-Z]{24,}`),                                                       "medium"},
+	{"Stripe Restricted Key",       regexp.MustCompile(`rk_live_[0-9a-zA-Z]{24,}`),                                                       "high"},
+	{"Stripe Webhook Secret",       regexp.MustCompile(`whsec_[0-9a-zA-Z]{32,}`),                                                         "high"},
+	{"Slack Bot Token",             regexp.MustCompile(`xoxb-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}`),                                       "high"},
+	{"Slack User Token",            regexp.MustCompile(`xoxp-[0-9]{11}-[0-9]{11}-[0-9a-zA-Z]{24}`),                                       "high"},
+	{"Slack Webhook URL",           regexp.MustCompile(`https://hooks\.slack\.com/services/T[0-9A-Z]+/B[0-9A-Z]+/[0-9a-zA-Z]+`),          "high"},
+	{"SendGrid API Key",            regexp.MustCompile(`SG\.[0-9a-zA-Z_-]{22}\.[0-9a-zA-Z_-]{43}`),                                      "high"},
+	{"Twilio Account SID",          regexp.MustCompile(`AC[0-9a-f]{32}`),                                                                 "medium"},
+	{"Twilio Auth Token",           regexp.MustCompile(`(?i)twilio.{0,20}[0-9a-f]{32}`),                                                  "high"},
+	{"Google API Key",              regexp.MustCompile(`AIza[0-9A-Za-z_-]{35}`),                                                          "high"},
+	{"Firebase Server Key",         regexp.MustCompile(`AAAA[A-Za-z0-9_-]{7}:[A-Za-z0-9_-]{140}`),                                       "high"},
+	{"npm Token",                   regexp.MustCompile(`npm_[0-9a-zA-Z]{36}`),                                                            "high"},
+	{"PyPI Token",                  regexp.MustCompile(`pypi-AgEIcHlwaS5vcmc[0-9a-zA-Z_-]{70,}`),                                         "high"},
+	{"Postgres Connection String",  regexp.MustCompile(`postgresql://[^:]+:[^@\s]{8,}@`),                                                 "high"},
+	{"Private Key Block",           regexp.MustCompile(`-----BEGIN (RSA |EC |OPENSSH |PGP )?PRIVATE KEY`),                                "high"},
+	{"JWT Secret (hex)",            regexp.MustCompile(`(?i)(jwt.?secret|jwt.?key).{0,10}[0-9a-f]{64}`),                                  "high"},
+	{"Generic high-entropy secret", regexp.MustCompile(`(?i)(password|secret|token|api.?key).{0,5}[=:].{0,5}['"]?[0-9a-zA-Z+/]{40,}['"]?`), "medium"},
 }
 
-// filesIgnored are paths that should never be scanned
 var dirsIgnored = map[string]bool{
 	".git": true, "node_modules": true, "vendor": true,
 	".venv": true, "venv": true, "__pycache__": true,
 	"dist": true, "build": true, ".next": true, ".nuxt": true,
 }
 
-// extensionsIgnored are binary/generated file types
-var extensionsIgnored = map[string]bool{
+var extsIgnored = map[string]bool{
 	".png": true, ".jpg": true, ".jpeg": true, ".gif": true,
 	".svg": true, ".ico": true, ".woff": true, ".woff2": true,
 	".ttf": true, ".eot": true, ".pdf": true, ".zip": true,
@@ -175,80 +72,66 @@ func scanCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "scan",
 		Short: "Scan for secrets accidentally left in source files",
-		Long: `Scans your project files for secrets that shouldn't be committed to git.
+		Long: `Scans project files for secrets that shouldn't be in git.
 
-Detects AWS keys, GitHub tokens, Stripe keys, database connection strings,
-private keys, API tokens from 20+ services, and high-entropy generic secrets.
+Detects AWS keys, GitHub tokens, Stripe keys, database URLs, private keys,
+and tokens from 20+ services. Values are redacted in output.
 
-This does NOT scan your .env file (that's intentional — .env is local).
-It scans everything else: source code, config files, scripts, CI configs.
+Skips .env files by default (add --all to include them).
+Exits with code 1 if anything is found — useful in CI and pre-commit hooks.
 
-Run this before every commit, or better, install it as a pre-commit hook:
+Install as a git pre-commit hook:
   echo "dotsync scan" >> .git/hooks/pre-commit
   chmod +x .git/hooks/pre-commit`,
 		Example: `  dotsync scan
   dotsync scan --path ./src
-  dotsync scan --all  # include .env files in the scan`,
+  dotsync scan --all`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			root := pathFlag
 			if root == "" {
 				root = "."
 			}
 
-			fmt.Println(info(fmt.Sprintf("Scanning %s for secrets...", root)))
-			fmt.Println()
+			blank()
+			fmt.Println(spin(fmt.Sprintf("Scanning %s...", root)))
+			blank()
 
 			var findings []scanFinding
 			var filesScanned int
 
-			err := filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
+			filepath.Walk(root, func(path string, info os.FileInfo, err error) error {
 				if err != nil {
-					return nil // skip unreadable files
+					return nil
 				}
-
-				// Skip ignored directories
 				if info.IsDir() {
 					if dirsIgnored[info.Name()] {
 						return filepath.SkipDir
 					}
 					return nil
 				}
-
-				// Skip .env files unless --all flag
-				if !allFlag && (info.Name() == ".env" ||
-					strings.HasPrefix(info.Name(), ".env.")) {
+				if !allFlag && (info.Name() == ".env" || strings.HasPrefix(info.Name(), ".env.")) {
 					return nil
 				}
-
-				// Skip binary/generated files
-				ext := strings.ToLower(filepath.Ext(path))
-				if extensionsIgnored[ext] {
+				if extsIgnored[strings.ToLower(filepath.Ext(path))] {
 					return nil
 				}
-
-				// Skip large files (> 1MB)
 				if info.Size() > 1024*1024 {
 					return nil
 				}
-
 				data, err := os.ReadFile(path)
 				if err != nil {
 					return nil
 				}
-
 				filesScanned++
-				content := string(data)
-				lines := strings.Split(content, "\n")
-
+				lines := strings.Split(string(data), "\n")
 				for _, sp := range secretPatterns {
 					for lineNum, line := range lines {
 						if sp.pattern.MatchString(line) {
-							// Redact the actual secret value in output
-							redacted := sp.pattern.ReplaceAllStringFunc(line, func(match string) string {
-								if len(match) > 12 {
-									return match[:6] + strings.Repeat("*", len(match)-10) + match[len(match)-4:]
+							redacted := sp.pattern.ReplaceAllStringFunc(line, func(m string) string {
+								if len(m) > 12 {
+									return m[:6] + strings.Repeat("*", len(m)-10) + m[len(m)-4:]
 								}
-								return strings.Repeat("*", len(match))
+								return strings.Repeat("*", len(m))
 							})
 							findings = append(findings, scanFinding{
 								file:     path,
@@ -260,23 +143,17 @@ Run this before every commit, or better, install it as a pre-commit hook:
 						}
 					}
 				}
-
 				return nil
 			})
 
-			if err != nil {
-				return fmt.Errorf("scan error: %w", err)
-			}
-
 			if len(findings) == 0 {
-				fmt.Println(ok(fmt.Sprintf("No secrets found in %d files scanned.", filesScanned)))
-				fmt.Println()
-				fmt.Println("  Good hygiene! Keep secrets in dotsync, not in source code.")
-				fmt.Println()
+				fmt.Println(ok(fmt.Sprintf("Clean — no secrets found in %d files.", filesScanned)))
+				blank()
+				hint("Good hygiene. Keep secrets in dotsync, not in source code.")
+				blank()
 				return nil
 			}
 
-			// Group by severity
 			var high, medium []scanFinding
 			for _, f := range findings {
 				if f.severity == "high" {
@@ -286,45 +163,49 @@ Run this before every commit, or better, install it as a pre-commit hook:
 				}
 			}
 
-			fmt.Println(warn(fmt.Sprintf("Found %d potential secret(s) in %d file(s) scanned.",
+			fmt.Println(warn(fmt.Sprintf("%d potential secret(s) in %d files scanned",
 				len(findings), filesScanned)))
-			fmt.Println()
+			blank()
 
-			if len(high) > 0 {
-				fmt.Println("  " + red(bold("HIGH SEVERITY")))
-				fmt.Println(strings.Repeat("─", 60))
-				for _, f := range high {
-					fmt.Printf("  "+bold("%s")+":"+yellow("%d")+"\n", f.file, f.line)
-					fmt.Printf("    Type    : "+cyan("%s")+"\n", f.pattern)
-					fmt.Printf("    Content : "+dim("%s")+"\n\n", f.content)
+			printFindings := func(label string, labelFn func(string) string, fs []scanFinding) {
+				if len(fs) == 0 {
+					return
 				}
+				rl := ruleN(60)
+				fmt.Printf("  %s\n", labelFn(bold(label)))
+				fmt.Println("  " + rl)
+				for _, f := range fs {
+					fmt.Printf("  %s  %s\n", bold(f.file), yellow(fmt.Sprintf("line %d", f.line)))
+					fmt.Printf("  %s  %s\n", padRight("", 2), colDim("Type", 6)+"  "+cyan(f.pattern))
+					fmt.Printf("  %s  %s\n", padRight("", 2), colDim("Value", 6)+"  "+dim(f.content))
+					blank()
+				}
+				fmt.Println("  " + rl)
+				blank()
 			}
 
-			if len(medium) > 0 {
-				fmt.Println("  " + yellow(bold("MEDIUM SEVERITY")))
-				fmt.Println(strings.Repeat("─", 60))
-				for _, f := range medium {
-					fmt.Printf("  %s:%d\n", f.file, f.line)
-					fmt.Printf("    Type    : %s\n", f.pattern)
-					fmt.Printf("    Content : %s\n\n", f.content)
-				}
-			}
+			printFindings("HIGH SEVERITY", red, high)
+			printFindings("MEDIUM SEVERITY", yellow, medium)
 
-			fmt.Println("  What to do:")
-			fmt.Println("  1. Remove the secret from the file immediately")
-			fmt.Println("  2. If already committed: rotate the secret, rewrite git history")
-			fmt.Println("     git filter-repo --path <file> --invert-paths")
-			fmt.Println("  3. Add the secret to dotsync: dotsync push")
-			fmt.Println("  4. Reference it via environment variable in your code")
-			fmt.Println()
+			rl := ruleN(60)
+			fmt.Println("  " + rl)
+			fmt.Printf("  %s\n", bold("What to do"))
+			fmt.Println("  " + rl)
+			blank()
+			hint("1. Remove the secret from the file immediately")
+			hint("2. If already committed, rotate the secret and rewrite git history:")
+			cmdHint("   git filter-repo --path <file> --invert-paths")
+			hint("3. Store it in dotsync instead:")
+			cmdHint("   dotsync push")
+			hint("4. Reference it as an environment variable in your code")
+			blank()
 
-			// Exit 1 so this can be used in CI pipelines
 			os.Exit(1)
 			return nil
 		},
 	}
 
-	cmd.Flags().StringVar(&pathFlag, "path", "", "path to scan (default: current directory)")
+	cmd.Flags().StringVar(&pathFlag, "path", "", "directory to scan (default: .)")
 	cmd.Flags().BoolVar(&allFlag, "all", false, "include .env files in the scan")
 	return cmd
 }

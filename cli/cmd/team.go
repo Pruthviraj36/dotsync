@@ -73,21 +73,22 @@ func teamListCmd() *cobra.Command {
 				username, _ := m["username"].(string)
 				role, _     := m["role"].(string)
 				joinedAt, _ := m["joined_at"].(string)
-
 				age := ""
 				if len(joinedAt) >= 10 {
 					age = joinedAt[:10]
 				}
-
 				marker := "   "
-				uname := cyan("@" + username)
+				unameRaw := "@" + username
+				unameCol := colCyan(unameRaw, userW)
 				if username == cfg.Username {
 					marker = green(" ▶ ")
-					uname = boldCyan("@" + username)
+					unameCol = padRight(boldCyan(unameRaw), userW)
 				}
-
-				fmt.Printf("%s%-*s  %-*s  %s\n",
-					marker, userW, uname, roleW, roleColor(role), dim(age))
+				tableRow(marker,
+					unameCol,
+					padRight(roleColor(role), roleW),
+					dim(age),
+				)
 			}
 
 			fmt.Println("  " + rl)

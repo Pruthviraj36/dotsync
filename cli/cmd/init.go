@@ -17,8 +17,6 @@ import (
 
 func initCmd() *cobra.Command {
 	var create bool
-	var rotatePassword bool
-
 	cmd := &cobra.Command{
 		Use:   "init",
 		Short: "Link this folder to a DotSync project",
@@ -27,19 +25,12 @@ func initCmd() *cobra.Command {
 A .dotsync.json file is created in the current directory — commit
 this file but NOT your .env. Add .env to your .gitignore.
 
-On a new machine where .dotsync.json already exists (from git),
-run 'dotsync init --rotate-password' to enter the project password
-without touching the project slug or env config.`,
+On a new machine: just run dotsync init again with the same project slug.
+The password is fetched automatically — no re-entry needed.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
 				return err
-			}
-
-			// --rotate-password: re-enter password on a new machine without
-			// re-doing the full init flow.
-			if rotatePassword {
-				return rotateProjectPassword(cfg)
 			}
 
 			client := api.New(cfg)
@@ -119,51 +110,19 @@ without touching the project slug or env config.`,
 
 			fmt.Println()
 			fmt.Println(ok(fmt.Sprintf("Linked to project '%s' (env: %s)", slug, env)))
-			fmt.Println()
-			fmt.Println("  dotsync pull    # download latest .env")
-			fmt.Println("  dotsync push    # upload your .env (if you have write access)")
-			fmt.Println()
+			blank()
+			hint("Password is fetched automatically on first push/pull.")
+			hint("No manual steps needed — just run:")
+			blank()
+			cmdHint("dotsync pull")
+			blank()
 
 			return nil
 		},
 	}
 
 	cmd.Flags().BoolVar(&create, "new", false, "create a new project")
-	cmd.Flags().BoolVar(&rotatePassword, "rotate-password", false,
-		"re-enter the project password on this machine (use after cloning on a new device)")
 	return cmd
-}
-
-// rotateProjectPassword lets the user re-enter the password for an already-linked
-// project. This is the primary workflow for setting up a second machine:
-// clone the repo (which has .dotsync.json), then run dotsync init --rotate-password.
-func rotateProjectPassword(cfg *config.GlobalConfig) error {
-	projCfg, err := config.LoadProject()
-	if err != nil {
-		return fmt.Errorf("no project linked in this directory — run 'dotsync init' first")
-	}
-
-	fmt.Printf("\n%s\n", bold(fmt.Sprintf("Set password for project '%s'", projCfg.ProjectSlug)))
-	fmt.Println("────────────────────────────────")
-	fmt.Println("Enter the same password used on your other machine.")
-	fmt.Println()
-
-	password, err := readPassword("Project Password: ")
-	if err != nil {
-		return err
-	}
-
-	client := api.New(cfg)
-	if err := setPassword(client, projCfg.ProjectSlug, password); err != nil {
-		return err
-	}
-
-	fmt.Println()
-	fmt.Println(ok(fmt.Sprintf("Password saved for project '%s'", projCfg.ProjectSlug)))
-	fmt.Println()
-	fmt.Println("  You can now run: dotsync pull")
-	fmt.Println()
-	return nil
 }
 
 func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufio.Reader) error {

@@ -19,7 +19,7 @@ func auditCmd() *cobra.Command {
 		Short: "View the audit log for this project",
 		Long: `Shows who pushed, pulled, and changed team membership.
 Each event is recorded with user, timestamp, IP, and metadata.
-Available to all users.`,
+Available to all users — no plan required.`,
 		Example: `  dotsync audit
   dotsync audit --env production`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -41,7 +41,7 @@ Available to all users.`,
 			if envFlag != "" {
 				var filtered []map[string]any
 				for _, l := range logs {
-					if e, ok := l["env"].(string); ok && e == envFlag {
+					if e, _ := l["env"].(string); e == envFlag {
 						filtered = append(filtered, l)
 					}
 				}
@@ -50,7 +50,7 @@ Available to all users.`,
 
 			if len(logs) == 0 {
 				blank()
-				fmt.Println(info(fmt.Sprintf("No audit events yet for %s.", projCfg.ProjectSlug)))
+				fmt.Println(info(fmt.Sprintf("No audit events for %s.", projCfg.ProjectSlug)))
 				blank()
 				return nil
 			}
@@ -58,17 +58,15 @@ Available to all users.`,
 			type row struct{ when, who, action, env, detail string }
 			rows := make([]row, 0, len(logs))
 			for _, entry := range logs {
-				action, _     := entry["action"].(string)
-				username, _   := entry["username"].(string)
-				envName, _    := entry["env"].(string)
-				createdAt, _  := entry["created_at"].(string)
-				metaStr, _    := entry["metadata"].(string)
-
+				action, _    := entry["action"].(string)
+				username, _  := entry["username"].(string)
+				envName, _   := entry["env"].(string)
+				createdAt, _ := entry["created_at"].(string)
+				metaStr, _   := entry["metadata"].(string)
 				age := ""
 				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
 					age = formatAge(t)
 				}
-
 				rows = append(rows, row{
 					when:   age,
 					who:    "@" + username,
@@ -78,7 +76,7 @@ Available to all users.`,
 				})
 			}
 
-			// Dynamic column widths
+			// Measure column widths by raw (uncolored) content
 			whenW, whoW, actionW, envW := 4, 3, 6, 3
 			for _, r := range rows {
 				if w := len(r.when);   w > whenW   { whenW = w }
@@ -87,12 +85,13 @@ Available to all users.`,
 				if w := len(r.env);    w > envW     { envW = w }
 			}
 
-			rw := whenW + whoW + actionW + envW + 16
+			// Rule width = sum of cols + separators (2 per gap)
+			rw := whenW + 2 + whoW + 2 + actionW + 2 + envW + 2 + 8 // 8 for DETAIL label
 			rl := ruleN(rw)
 
-			title := fmt.Sprintf("Audit Log — %s", projCfg.ProjectSlug)
+			title := fmt.Sprintf("Audit Log  %s", projCfg.ProjectSlug)
 			if envFlag != "" {
-				title += " (" + envFlag + ")"
+				title += "  " + envFlag
 			}
 
 			blank()
@@ -104,11 +103,11 @@ Available to all users.`,
 			)
 
 			for _, r := range rows {
-				fmt.Printf("  %-*s  %-*s  %-*s  %-*s  %s\n",
-					whenW, dim(r.when),
-					whoW, cyan(r.who),
-					actionW, actionColor(r.action),
-					envW, blue(r.env),
+				tableRow("  ",
+					colDim(r.when, whenW),
+					colCyan(r.who, whoW),
+					padRight(actionColor(r.action), actionW),
+					padRight(blue(r.env), envW),
 					dim(r.detail),
 				)
 			}
@@ -151,8 +150,4 @@ func parseAuditDetail(action, metaJSON string) string {
 		}
 	}
 	return ""
-}
-
-func getAuditMeta(key, value string) map[string]any {
-	return map[string]any{key: value}
 }

@@ -26,12 +26,27 @@ func configShowCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println("Server URL:", cfg.ServerURL)
-			if config.IsLoggedIn(cfg) {
-				fmt.Println("Logged in as:", cfg.Username)
+
+			blank()
+			fmt.Printf("  %s\n", bold("CLI Configuration"))
+			blank()
+
+			if cfg.ServerURL != "" {
+				kvCyan("Server", cfg.ServerURL)
 			} else {
-				fmt.Println("Not logged in")
+				kv("Server", red("not set  ")+dim("→ dotsync config set-server <url>"))
 			}
+
+			if config.IsLoggedIn(cfg) {
+				kvCyan("Account", "@"+cfg.Username)
+			} else {
+				kv("Account", dim("not logged in  ")+dim("→ dotsync login"))
+			}
+
+			blank()
+			hint("Change server: dotsync config set-server <url>")
+			hint("Override with: export DOTSYNC_SERVER=<url>")
+			blank()
 			return nil
 		},
 	}
@@ -41,14 +56,10 @@ func configSetServerCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "set-server <url>",
 		Short: "Point the CLI at a different DotSync server",
-		Long: `Changes which server this CLI talks to, persisted in ~/.dotsync/config.json.
+		Long: `Saves the server URL to ~/.dotsync/config.json.
 
-Useful if the server URL ever changes after you've already logged in —
-otherwise the CLI keeps using whatever URL was active at your last login,
-indefinitely, with no automatic way to discover that it moved.
-
-This does not log you out of the new server; run 'dotsync login' again
-after switching.`,
+The DOTSYNC_SERVER environment variable always takes precedence over
+this saved value — useful for CI/CD or temporary server switches.`,
 		Args: cobra.ExactArgs(1),
 		Example: `  dotsync config set-server https://your-server.example.com
   dotsync config set-server http://localhost:8080`,
@@ -61,8 +72,15 @@ after switching.`,
 			if err := config.SaveGlobal(cfg); err != nil {
 				return fmt.Errorf("save config: %w", err)
 			}
-			fmt.Println(ok("Server URL set to"), args[0])
-			fmt.Println("   Run 'dotsync login' to authenticate with this server.")
+
+			blank()
+			fmt.Println(ok("Server URL saved"))
+			blank()
+			kvCyan("Server", args[0])
+			blank()
+			hint("Now authenticate:")
+			cmdHint("dotsync login")
+			blank()
 			return nil
 		},
 	}

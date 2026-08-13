@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -153,30 +152,48 @@ func tokensListCmd() *cobra.Command {
 				return nil
 			}
 
-			rule := strings.Repeat("─", 70)
-			fmt.Println("  " + rule)
-			fmt.Printf("  %-24s  %-12s  %-20s  %s\n",
-				bold("NAME"), bold("ENV"), bold("CREATED"), bold("LAST USED"))
-			fmt.Println("  " + rule)
+			// Measure column widths from raw content
+			nameW, envW, createdW := 4, 3, 7
+			for _, t := range tokens {
+				if w := len(truncate(str(t["name"]), 28)); w > nameW    { nameW = w }
+				if w := len(str(t["env"]));                w > envW      { envW = w }
+				if w := len(parseTime(str(t["created_at"]))); w > createdW { createdW = w }
+			}
+
+			rw := nameW + 2 + envW + 2 + createdW + 2 + 10
+			rl := ruleN(rw)
+
+			fmt.Println()
+			fmt.Printf("  %s  %s\n", bold("Service Tokens"), boldCyan(projCfg.ProjectSlug))
+			blank()
+
+			tableHeader(rl,
+				[]string{"NAME", "ENV", "CREATED", "LAST USED"},
+				[]int{nameW, envW, createdW},
+			)
 
 			for _, t := range tokens {
-				name := str(t["name"])
-				env := str(t["env"])
-				id := str(t["id"])
+				name      := str(t["name"])
+				env       := str(t["env"])
+				id        := str(t["id"])
 				createdAt := parseTime(str(t["created_at"]))
-				lastUsed := "never"
+				lastUsed  := "never"
 				if lu, ok := t["last_used_at"]; ok && lu != nil && lu != "" {
 					lastUsed = parseTime(str(lu))
 				}
-
-				fmt.Printf("  %-24s  %-12s  %-20s  %s\n",
-					truncate(name, 24), env, createdAt, lastUsed)
-				fmt.Printf("  %s  id: %s\n", strings.Repeat(" ", 24+2+12+2), dim(id))
+				tableRow("  ",
+					colDim(truncate(name, nameW), nameW),
+					padRight(cyan(env), envW),
+					colDim(createdAt, createdW),
+					dim(lastUsed),
+				)
+				fmt.Printf("  %s  id: %s\n",
+					padRight("", nameW+2+envW+2+createdW), dim(id))
 			}
 
-			fmt.Println("  " + rule)
-			fmt.Printf("\n  %d token(s). Revoke with: %s\n\n",
-				len(tokens), cyan("dotsync tokens revoke <id>"))
+			fmt.Println("  " + rl)
+			fmt.Printf("  %s\n\n", dim(fmt.Sprintf(
+				"%d token(s)  ·  revoke with: dotsync tokens revoke <id>", len(tokens))))
 			return nil
 		},
 	}

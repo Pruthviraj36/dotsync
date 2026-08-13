@@ -135,20 +135,21 @@ func hint(s string) { fmt.Printf("  %s\n", dim(s)) }
 // cmd prints an example command in cyan, indented.
 func cmdHint(s string) { fmt.Printf("  %s\n", cyan(s)) }
 
-// tableHeader prints a ruled table with bold column headers.
-// widths is the padded width for each column (last column has no padding).
-func tableHeader(rule string, cols []string, widths []int) {
-	fmt.Println("  " + rule)
+// tableHeader prints a ruled table with bold column headers, ANSI-aware.
+// widths are visual widths for all columns except the last.
+func tableHeader(rl string, cols []string, widths []int) {
+	fmt.Println("  " + rl)
 	fmt.Print("  ")
 	for i, col := range cols {
 		if i < len(cols)-1 {
-			fmt.Printf(bold("%-*s")+"  ", widths[i], col)
+			fmt.Print(padRight(bold(col), widths[i]))
+			fmt.Print("  ")
 		} else {
-			fmt.Printf(bold("%s"), col)
+			fmt.Print(bold(col))
 		}
 	}
 	fmt.Println()
-	fmt.Println("  " + rule)
+	fmt.Println("  " + rl)
 }
 
 // roleColor applies a color to a team role string.
@@ -181,4 +182,70 @@ func actionColor(action string) string {
 	default:
 		return dim(action)
 	}
+}
+
+// ── ANSI-aware string width ───────────────────────────────────────────────────
+// fmt.Printf("%-*s", n, s) counts bytes, not visible characters. ANSI escape
+// sequences add invisible bytes that make columns misalign. These helpers
+// measure and pad by *visible* width so tables stay perfectly aligned
+// regardless of how much color is applied to a cell value.
+
+// visibleLen returns the number of visible (non-ANSI) characters in s.
+func visibleLen(s string) int {
+	inEscape := false
+	n := 0
+	for _, r := range s {
+		if inEscape {
+			if r == 'm' {
+				inEscape = false
+			}
+			continue
+		}
+		if r == '\033' {
+			inEscape = true
+			continue
+		}
+		n++
+	}
+	return n
+}
+
+// padRight pads s to at least width visible characters using trailing spaces.
+func padRight(s string, width int) string {
+	pad := width - visibleLen(s)
+	if pad <= 0 {
+		return s
+	}
+	return s + strings.Repeat(" ", pad)
+}
+
+// col formats a table cell: applies colorFn to raw, then pads to width.
+// Always pad by visual width, never by byte length.
+func col(raw string, width int, colorFn func(string) string) string {
+	return padRight(colorFn(raw), width)
+}
+
+// colDim is col with dim styling.
+func colDim(raw string, width int) string { return col(raw, width, dim) }
+
+// colCyan is col with cyan styling.
+func colCyan(raw string, width int) string { return col(raw, width, cyan) }
+
+// colGreen is col with green styling.
+func colGreen(raw string, width int) string { return col(raw, width, green) }
+
+// colBold is col with bold styling.
+func colBold(raw string, width int) string { return col(raw, width, bold) }
+
+// tableRow prints one row of a table with consistent 2-space separation.
+// cells must already be padded via col/colDim/colCyan etc, except the last.
+func tableRow(indent string, cells ...string) {
+	fmt.Print(indent)
+	for i, c := range cells {
+		if i > 0 {
+			fmt.Print("  ")
+		}
+		fmt.Print(c)
+	}
+	fmt.Println()
 }
