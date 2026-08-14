@@ -67,8 +67,7 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 				}
 			}
 
-			fmt.Printf("%s  %s/%s — %d secrets\n",
-				spin("Encrypting"), projCfg.ProjectSlug, env, len(keys))
+			fmt.Println(prog("Encrypting", boldCyan(projCfg.ProjectSlug+"/"+env)+" — "+dim(fmt.Sprintf("%d secrets", len(keys)))))
 
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(
 				string(data), password, projCfg.ProjectSlug,
@@ -90,7 +89,7 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 			}
 
 			rev := revString(digestOf(ciphertext))
-			fmt.Printf("%s  %s\n", spin("Uploading"), humanSize(len(ciphertext)))
+			fmt.Println(prog("Uploading", dim(humanSize(len(ciphertext)))))
 
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
@@ -102,7 +101,7 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 			}
 
 			blank()
-			fmt.Println(ok(fmt.Sprintf("Pushed to %s/%s", projCfg.ProjectSlug, env)))
+			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim("→")+" "+green(fmt.Sprintf("v%d", result.Version))))
 			blank()
 			kv("Project", projCfg.ProjectSlug)
 			kv("Env", env)
@@ -114,7 +113,7 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 			if localFlag {
 				hint("Pull with: dotsync pull --local")
 			} else {
-				hint("Teammates can now run: dotsync pull")
+				hint("teammates can run: dotsync pull")
 			}
 			blank()
 			return nil
@@ -175,7 +174,7 @@ decrypts it locally, and writes your .env file.`,
 				}
 			}
 
-			fmt.Printf("%s  %s/%s\n", spin("Fetching"), projCfg.ProjectSlug, env)
+			fmt.Println(prog("Fetching", boldCyan(projCfg.ProjectSlug)+"/"+cyan(env)))
 
 			client := api.New(cfg)
 			result, err := client.Pull(projCfg.ProjectSlug, env)
@@ -203,7 +202,7 @@ decrypts it locally, and writes your .env file.`,
 				}
 			}
 
-			fmt.Printf("%s  Decrypting...\n", spin(""))
+			fmt.Println(prog("Decrypting", dim("AES-256-GCM...")))
 
 			var password string
 			if localFlag {
@@ -231,7 +230,7 @@ decrypts it locally, and writes your .env file.`,
 			rev := revString(digestOf(result.EncryptedData))
 
 			blank()
-			fmt.Println(ok(fmt.Sprintf("Wrote %s (%d secrets)", outputFile, len(parsed))))
+			fmt.Println(ok(cyan(outputFile)+" "+dim(fmt.Sprintf("← %d secrets decrypted", len(parsed)))))
 			blank()
 			kv("Project", projCfg.ProjectSlug)
 			kv("Env", env)

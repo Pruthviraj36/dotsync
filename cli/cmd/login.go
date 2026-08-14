@@ -42,12 +42,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if config.IsLoggedIn(cfg) {
-		fmt.Println(ok("Already logged in as"), cyan(cfg.Username))
-		fmt.Println("   Run 'dotsync logout' first to switch accounts.")
+		fmt.Println(ok(boldCyan("@"+cfg.Username)+" "+dim("already authenticated")))
+		hint("run dotsync logout first to switch accounts")
 		return nil
 	}
 
-	fmt.Println(spin("Connecting to server..."))
+	fmt.Println(step("connecting to server"))
 	authCfg, err := api.GetAuthConfig(cfg.ServerURL)
 	if err != nil {
 		return fmt.Errorf("could not reach server: %w", err)
@@ -55,7 +55,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if authCfg.GitHubClientID == "" {
 		return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
 	}
-	fmt.Println(ok("Connection established"))
+	fmt.Println(prog("Connected", cfg.ServerURL))
 
 	// ── Step 1: request a device code from GitHub ──────────────────────────
 	dc, err := api.StartGitHubDeviceFlow(authCfg.GitHubClientID)
@@ -67,12 +67,12 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	// redirect page needed, no copy-pasting long tokens ──────────────────
 	fmt.Println()
 	blank()
-	fmt.Printf("  %s\n\n", bold("Authenticate with GitHub"))
-	fmt.Printf("  Open this URL on any device:\n\n")
-	fmt.Printf("    %s\n\n", boldCyan(dc.VerificationURI))
-	fmt.Printf("  Enter this code:\n\n")
-	fmt.Printf("    %s\n\n", bold(yellow(dc.UserCode)))
-	fmt.Println(dim("  Waiting for approval in browser") + " " + dim("(this may take a moment)"))
+	fmt.Println(prog("Device flow", "open this URL on any device:"))
+	hint(dc.VerificationURI)
+	blank()
+	fmt.Println(prog("Enter code", bold(yellow(dc.UserCode))))
+	blank()
+	fmt.Println(step("waiting for you to approve in browser..."))
 	blank()
 
 	// ── Step 3: poll GitHub until the user approves (or it expires) ────────
@@ -82,8 +82,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return err
 	}
 
-	fmt.Println(ok("Approved"))
-	fmt.Println(spin("Finishing login..."))
+	fmt.Println(prog("Approved", dim("exchanging token...")))
 
 	// ── Step 4: hand the verified GitHub token to our server, get DotSync
 	// tokens back. The server independently re-verifies this token against
@@ -105,11 +104,9 @@ func runLogin(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("save credentials: %w", err)
 	}
 
-	fmt.Println(ok("Login complete"))
+	fmt.Println(ok(boldCyan("@"+username)))
 	blank()
-	fmt.Printf("  %s  @%s\n", bold("Logged in as"), boldCyan(username))
-	blank()
-	hint("Next: cd into your project and run:")
+	hint("cd into your project and run:")
 	cmdHint("dotsync init")
 	blank()
 
@@ -180,7 +177,7 @@ func logoutCmd() *cobra.Command {
 				return fmt.Errorf("clear credentials: %w", err)
 			}
 
-			fmt.Println(ok("Logged out. All sessions revoked."))
+			fmt.Println(ok(dim("logged out — all sessions revoked")))
 			return nil
 		},
 	}

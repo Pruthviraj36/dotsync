@@ -11,25 +11,23 @@ import (
 // ── ANSI codes ────────────────────────────────────────────────────────────────
 
 const (
-	cReset  = "\033[0m"
-	cBold   = "\033[1m"
-	cDim    = "\033[2m"
-	cItalic = "\033[3m"
-
-	cGreen  = "\033[32m"
-	cYellow = "\033[33m"
-	cRed    = "\033[31m"
-	cCyan   = "\033[36m"
-	cBlue   = "\033[34m"
-	cWhite  = "\033[97m"
-
-	// Bright variants — more vivid on dark terminals
-	cBrightGreen = "\033[92m"
-	cBrightCyan  = "\033[96m"
-	cBrightRed   = "\033[91m"
+	cReset        = "\033[0m"
+	cBold         = "\033[1m"
+	cDim          = "\033[2m"
+	cItalic       = "\033[3m"
+	cGreen        = "\033[32m"
+	cYellow       = "\033[33m"
+	cRed          = "\033[31m"
+	cCyan         = "\033[36m"
+	cBlue         = "\033[34m"
+	cMagenta      = "\033[35m"
+	cWhite        = "\033[97m"
+	cBrightGreen  = "\033[92m"
+	cBrightCyan   = "\033[96m"
+	cBrightRed    = "\033[91m"
+	cBrightYellow = "\033[93m"
 )
 
-// isTTY — color and box-drawing only when stdout is a real terminal.
 var isTTY = term.IsTerminal(int(os.Stdout.Fd()))
 
 func colorize(code, s string) string {
@@ -39,38 +37,84 @@ func colorize(code, s string) string {
 	return code + s + cReset
 }
 
-// ── Semantic color helpers ────────────────────────────────────────────────────
+// ── Color primitives ──────────────────────────────────────────────────────────
 
-func green(s string) string       { return colorize(cBrightGreen, s) }
-func yellow(s string) string      { return colorize(cYellow, s) }
-func red(s string) string         { return colorize(cBrightRed, s) }
-func cyan(s string) string        { return colorize(cBrightCyan, s) }
-func blue(s string) string        { return colorize(cBlue, s) }
-func bold(s string) string        { return colorize(cBold, s) }
-func dim(s string)  string        { return colorize(cDim, s) }
-func italic(s string) string      { return colorize(cItalic, s) }
-func boldCyan(s string) string    { return colorize(cBold+cBrightCyan, s) }
-func boldGreen(s string) string   { return colorize(cBold+cBrightGreen, s) }
+func green(s string) string     { return colorize(cBrightGreen, s) }
+func yellow(s string) string    { return colorize(cBrightYellow, s) }
+func red(s string) string       { return colorize(cBrightRed, s) }
+func cyan(s string) string      { return colorize(cBrightCyan, s) }
+func blue(s string) string      { return colorize(cBlue, s) }
+func magenta(s string) string   { return colorize(cMagenta, s) }
+func bold(s string) string      { return colorize(cBold, s) }
+func dim(s string) string       { return colorize(cDim, s) }
+func italic(s string) string    { return colorize(cItalic, s) }
+func boldCyan(s string) string  { return colorize(cBold+cBrightCyan, s) }
+func boldGreen(s string) string { return colorize(cBold+cBrightGreen, s) }
+func boldRed(s string) string   { return colorize(cBold+cBrightRed, s) }
 
-// ── Status line prefixes ──────────────────────────────────────────────────────
-// All prefixes are exactly 9 chars wide (including trailing spaces) so that
-// the message text always starts at the same column — like Doppler / Vercel CLI.
+// ── Status line system ────────────────────────────────────────────────────────
 //
-//   success  your message here
-//   error    your message here
-//   warning  your message here
-//   info     your message here
-//   waiting  your message here
+// Inspired by cargo, bun, flatpak — a right-aligned bold label in a fixed
+// column, followed by the message. Labels are right-aligned to 12 chars.
+//
+// TTY output:
+//   ✓     Encrypting  my-app/dev — 12 secrets
+//   ✓      Uploading  1.2 KB
+//   ✓         Pushed  my-app/dev → v7
+//   ✗          Error  file not found: .env
+//   !        Warning  .env already exists, overwrite? [y/N]
+//   →           Info  signature verified (alice, ed25519)
+//
+// The label column is always 12 chars right-aligned. Message starts at col 16.
+// This matches how `cargo build` looks — clean, scannable, professional.
 
-func ok(s string) string   { return boldGreen("success") + "  " + s }
-func fail(s string) string { return red("error") + "    " + s }
-func warn(s string) string { return yellow("warning") + "  " + s }
-func info(s string) string { return cyan("info") + "     " + s }
-func spin(s string) string { return dim("waiting") + "  " + s }
+const labelW = 12 // visual width of the right-aligned label
 
-// ── Terminal width ────────────────────────────────────────────────────────────
+// label builds a right-aligned status label.
+func label(s string, colorFn func(string) string) string {
+	pad := labelW - len(s) // s has no ANSI here, safe to use len
+	if pad < 0 {
+		pad = 0
+	}
+	return strings.Repeat(" ", pad) + colorFn(s)
+}
 
-// termWidth returns the current terminal column width, clamped to [60, 120].
+// ok — completed successfully. Right-aligned green label.
+func ok(s string) string {
+	return label("done", boldGreen) + "  " + s
+}
+
+// step — in-progress operation. Dim label, no glyph noise.
+func step(s string) string {
+	return label("·", dim) + "  " + dim(s)
+}
+
+// spin is an alias for step.
+func spin(s string) string { return step(s) }
+
+// fail — hard error.
+func fail(s string) string {
+	return label("error", boldRed) + "  " + s
+}
+
+// warn — non-fatal warning.
+func warn(s string) string {
+	return label("warning", yellow) + "  " + s
+}
+
+// info — informational.
+func info(s string) string {
+	return label("info", cyan) + "  " + s
+}
+
+// prog — a named build/operation step. Like cargo's "Compiling foo v1.0".
+// label is right-aligned bold cyan (the verb), msg is the detail.
+func prog(verb, msg string) string {
+	return label(verb, boldCyan) + "  " + msg
+}
+
+// ── Terminal geometry ─────────────────────────────────────────────────────────
+
 func termWidth() int {
 	if !isTTY {
 		return 80
@@ -79,87 +123,129 @@ func termWidth() int {
 	if err != nil || w < 60 {
 		return 80
 	}
-	if w > 120 {
-		return 120
+	if w > 100 {
+		return 100
 	}
 	return w
 }
 
-// rule returns a horizontal rule of ─ at terminal width.
-func rule() string { return strings.Repeat("─", termWidth()-2) }
+func ruleN(n int) string { return dim(strings.Repeat("─", n)) }
 
-// ruleN returns a horizontal rule of exactly n chars.
-func ruleN(n int) string { return strings.Repeat("─", n) }
+func rl() string { return ruleN(termWidth() - 2) }
 
-// ── Structured output helpers ─────────────────────────────────────────────────
+// ── ANSI-aware text measurement ───────────────────────────────────────────────
 
-// header prints a titled section header with a rule underneath.
-//
-//	DotSync — push
-//	──────────────────────────────────────────────────────────
-func header(title string) {
-	fmt.Println()
-	fmt.Println(bold(title))
-	fmt.Println(ruleN(len(title) + 2))
+func visibleLen(s string) int {
+	inEsc := false
+	n := 0
+	for _, r := range s {
+		if inEsc {
+			if r == 'm' {
+				inEsc = false
+			}
+			continue
+		}
+		if r == '\033' {
+			inEsc = true
+			continue
+		}
+		n++
+	}
+	return n
 }
 
-// section prints a labelled block:
-//
-//	  Project   my-app
-//	  Env       production
-// ── Key-value display helpers ─────────────────────────────────────────────────
-// All kv helpers use visibleLen so bold ANSI codes don't break padding.
-// Label column is always 10 visible chars wide.
-
-const kvLabelWidth = 10
-
-func kv(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), value)
+func padRight(s string, width int) string {
+	if p := width - visibleLen(s); p > 0 {
+		return s + strings.Repeat(" ", p)
+	}
+	return s
 }
 
-func kvGreen(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), green(value))
+func col(raw string, width int, colorFn func(string) string) string {
+	return padRight(colorFn(raw), width)
 }
 
-func kvCyan(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), cyan(value))
+func colDim(raw string, width int) string   { return col(raw, width, dim) }
+func colCyan(raw string, width int) string  { return col(raw, width, cyan) }
+func colGreen(raw string, width int) string { return col(raw, width, green) }
+func colBold(raw string, width int) string  { return col(raw, width, bold) }
+
+// ── Key-value pairs ───────────────────────────────────────────────────────────
+// Labels right-aligned to labelW — same column as status labels above,
+// so the whole output shares one vertical rhythm.
+
+func kv(lbl, value string) {
+	fmt.Printf("%s  %s\n", label(lbl, bold), value)
+}
+func kvGreen(lbl, value string) {
+	fmt.Printf("%s  %s\n", label(lbl, bold), green(value))
+}
+func kvCyan(lbl, value string) {
+	fmt.Printf("%s  %s\n", label(lbl, bold), cyan(value))
+}
+func kvDim(lbl, value string) {
+	fmt.Printf("%s  %s\n", label(lbl, bold), dim(value))
+}
+func kvRed(lbl, value string) {
+	fmt.Printf("%s  %s\n", label(lbl, bold), red(value))
 }
 
-func kvDim(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), dim(value))
-}
+// ── Layout ────────────────────────────────────────────────────────────────────
 
-func kvRed(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(bold(label), kvLabelWidth), red(value))
-}
-
-// blank prints a blank line.
 func blank() { fmt.Println() }
 
-// hint prints a dim hint line, indented.
-func hint(s string) { fmt.Printf("  %s\n", dim(s)) }
+// hint prints a dim secondary note, indented to the message column.
+func hint(s string) {
+	fmt.Printf("%s  %s\n", strings.Repeat(" ", labelW), dim(s))
+}
 
-// cmd prints an example command in cyan, indented.
-func cmdHint(s string) { fmt.Printf("  %s\n", cyan(s)) }
+// cmdHint prints a suggested command, indented to the message column.
+func cmdHint(s string) {
+	fmt.Printf("%s  %s\n", strings.Repeat(" ", labelW), cyan(s))
+}
 
-// tableHeader prints a ruled table with bold column headers, ANSI-aware.
-// widths are visual widths for all columns except the last.
-func tableHeader(rl string, cols []string, widths []int) {
-	fmt.Println("  " + rl)
-	fmt.Print("  ")
-	for i, col := range cols {
+// tableHeader prints a ruled table header. widths = visual widths for all cols
+// except the last. The table is indented to the message column (labelW+2).
+func tableHeader(ruler string, cols []string, widths []int) {
+	indent := strings.Repeat(" ", labelW+2)
+	fmt.Println(indent + ruler)
+	fmt.Print(indent)
+	for i, c := range cols {
 		if i < len(cols)-1 {
-			fmt.Print(padRight(bold(col), widths[i]))
+			fmt.Print(padRight(bold(c), widths[i]))
 			fmt.Print("  ")
 		} else {
-			fmt.Print(bold(col))
+			fmt.Print(bold(c))
 		}
 	}
 	fmt.Println()
-	fmt.Println("  " + rl)
+	fmt.Println(indent + ruler)
 }
 
-// roleColor applies a color to a team role string.
+// tableRow prints a table data row at the same indent as tableHeader.
+func tableRow(marker string, cells ...string) {
+	indent := strings.Repeat(" ", labelW+2)
+	// marker replaces the first few chars of indent for the current-row arrow
+	if marker != "" {
+		indent = marker + indent[visibleLen(marker):]
+	}
+	fmt.Print(indent)
+	for i, c := range cells {
+		if i > 0 {
+			fmt.Print("  ")
+		}
+		fmt.Print(c)
+	}
+	fmt.Println()
+}
+
+// sectionTitle prints a titled group heading — used before kv blocks.
+func sectionTitle(s string) {
+	fmt.Printf("\n%s  %s\n", strings.Repeat(" ", labelW), bold(s))
+}
+
+// ── Semantic helpers ──────────────────────────────────────────────────────────
+
 func roleColor(role string) string {
 	switch role {
 	case "owner":
@@ -173,7 +259,6 @@ func roleColor(role string) string {
 	}
 }
 
-// actionColor applies a color to an audit action string.
 func actionColor(action string) string {
 	switch action {
 	case "push":
@@ -189,70 +274,4 @@ func actionColor(action string) string {
 	default:
 		return dim(action)
 	}
-}
-
-// ── ANSI-aware string width ───────────────────────────────────────────────────
-// fmt.Printf("%-*s", n, s) counts bytes, not visible characters. ANSI escape
-// sequences add invisible bytes that make columns misalign. These helpers
-// measure and pad by *visible* width so tables stay perfectly aligned
-// regardless of how much color is applied to a cell value.
-
-// visibleLen returns the number of visible (non-ANSI) characters in s.
-func visibleLen(s string) int {
-	inEscape := false
-	n := 0
-	for _, r := range s {
-		if inEscape {
-			if r == 'm' {
-				inEscape = false
-			}
-			continue
-		}
-		if r == '\033' {
-			inEscape = true
-			continue
-		}
-		n++
-	}
-	return n
-}
-
-// padRight pads s to at least width visible characters using trailing spaces.
-func padRight(s string, width int) string {
-	pad := width - visibleLen(s)
-	if pad <= 0 {
-		return s
-	}
-	return s + strings.Repeat(" ", pad)
-}
-
-// col formats a table cell: applies colorFn to raw, then pads to width.
-// Always pad by visual width, never by byte length.
-func col(raw string, width int, colorFn func(string) string) string {
-	return padRight(colorFn(raw), width)
-}
-
-// colDim is col with dim styling.
-func colDim(raw string, width int) string { return col(raw, width, dim) }
-
-// colCyan is col with cyan styling.
-func colCyan(raw string, width int) string { return col(raw, width, cyan) }
-
-// colGreen is col with green styling.
-func colGreen(raw string, width int) string { return col(raw, width, green) }
-
-// colBold is col with bold styling.
-func colBold(raw string, width int) string { return col(raw, width, bold) }
-
-// tableRow prints one row of a table with consistent 2-space separation.
-// cells must already be padded via col/colDim/colCyan etc, except the last.
-func tableRow(indent string, cells ...string) {
-	fmt.Print(indent)
-	for i, c := range cells {
-		if i > 0 {
-			fmt.Print("  ")
-		}
-		fmt.Print(c)
-	}
-	fmt.Println()
 }

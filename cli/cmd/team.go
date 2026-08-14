@@ -74,23 +74,15 @@ func teamListCmd() *cobra.Command {
 				if w := len(r);       w > roleW { roleW = w }
 			}
 			rw := userW + roleW + 12 + 6
-			rl := ruleN(rw)
+			ruler := ruleN(rw)
 
 			blank()
-			fmt.Printf("  %s  %s\n", bold("Team"), boldCyan(projCfg.ProjectSlug))
+			fmt.Println(prog("Team", boldCyan(projCfg.ProjectSlug)))
 			blank()
-
-			// Header — aligned to same indent as rows below.
-			// Rows use "   " (3 spaces) for non-current, " ▶ " for current.
-			// Both followed by " " giving 4 chars before username.
-			// Header uses same 4-char indent.
-			fmt.Println("  " + rl)
-			fmt.Printf("    %s  %s  %s\n",
-				padRight(bold("USERNAME"), userW),
-				padRight(bold("ROLE"), roleW),
-				bold("JOINED"),
+			tableHeader(ruler,
+				[]string{"USERNAME", "ROLE", "JOINED"},
+				[]int{userW, roleW},
 			)
-			fmt.Println("  " + rl)
 
 			for _, m := range members {
 				username, _ := m["username"].(string)
@@ -101,29 +93,31 @@ func teamListCmd() *cobra.Command {
 					age = joinedAt[:10]
 				}
 				unameRaw := "@" + username
-				if username == cfg.Username {
-					// " ▶ " is 3 visible chars, plus 1 space = 4 total before username
-					fmt.Printf(" %s %s  %s  %s\n",
-						green("▶"),
-						padRight(boldCyan(unameRaw), userW),
-						padRight(roleColor(role), roleW),
-						dim(age),
-					)
-				} else {
-					fmt.Printf("    %s  %s  %s\n",
-						padRight(colCyan(unameRaw, userW), userW),
-						padRight(roleColor(role), roleW),
-						dim(age),
-					)
+				isMe := username == cfg.Username
+
+				uname := colCyan(unameRaw, userW)
+				if isMe {
+					uname = padRight(boldCyan(unameRaw), userW)
 				}
+
+				// tableRow marker: green ▶ for current user, blank for others.
+				// visibleLen("▶ ") = 2, so we pass " ▶ " (3 visible chars + space).
+				marker := ""
+				if isMe {
+					marker = green(" ▶ ")
+				}
+				tableRow(marker,
+					uname,
+					padRight(roleColor(role), roleW),
+					dim(age),
+				)
 			}
 
-			fmt.Println("  " + rl)
-			fmt.Printf("  %s\n", dim(fmt.Sprintf("%d member(s)", len(members))))
+			fmt.Printf("%s  %s\n", strings.Repeat(" ", labelW+2), ruler)
 			blank()
-			hint("Add:    dotsync team add <username>")
-			hint("Remove: dotsync team remove <username>")
-			hint("Role:   dotsync team role <username> admin|member|viewer")
+			hint("add:    dotsync team add <username>")
+			hint("remove: dotsync team remove <username>")
+			hint("role:   dotsync team role <username> admin|member|viewer")
 			blank()
 			return nil
 		},
