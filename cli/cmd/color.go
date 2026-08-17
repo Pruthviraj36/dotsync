@@ -54,63 +54,74 @@ func boldRed(s string) string   { return colorize(cBold+cBrightRed, s) }
 
 // ── Status line system ────────────────────────────────────────────────────────
 //
-// Inspired by cargo, bun, flatpak — a right-aligned bold label in a fixed
-// column, followed by the message. Labels are right-aligned to 12 chars.
+// Design: bun / pnpm style.
+// A short right-aligned verb in a fixed 8-char column, two spaces, then message.
+// Everything — status lines, kv pairs, table headers — shares one left margin.
 //
-// TTY output:
-//   ✓     Encrypting  my-app/dev — 12 secrets
-//   ✓      Uploading  1.2 KB
-//   ✓         Pushed  my-app/dev → v7
-//   ✗          Error  file not found: .env
-//   !        Warning  .env already exists, overwrite? [y/N]
-//   →           Info  signature verified (alice, ed25519)
+//   Output examples:
 //
-// The label column is always 12 chars right-aligned. Message starts at col 16.
-// This matches how `cargo build` looks — clean, scannable, professional.
+//     done  my-app/dev → v7
+//     warn  .env already exists
+//      enc  my-app/dev — 12 secrets
+//     info  signature verified (alice, ed25519)
+//
+// The verb column is 6 visible chars, right-aligned with a leading space:
+//   " " + rightPad(verb, 6) + "  " + message
+// Total prefix before message: 1 + 6 + 2 = 9 chars.
+//
+// Tables and kv blocks use the same 9-char left margin so everything lines up.
 
-const labelW = 12 // visual width of the right-aligned label
+const (
+	verbW  = 6 // visible width of the verb/label column
+	margin = 2 // spaces between verb and message
+)
 
-// label builds a right-aligned status label.
-func label(s string, colorFn func(string) string) string {
-	pad := labelW - len(s) // s has no ANSI here, safe to use len
+// msgIndent is the full left margin: 1 leading space + verbW + margin
+const msgIndent = 1 + verbW + margin // = 9
+
+func msgPad() string { return strings.Repeat(" ", msgIndent) }
+
+// verb builds a right-aligned verb label.
+func verb(s string, colorFn func(string) string) string {
+	pad := verbW - len(s)
 	if pad < 0 {
 		pad = 0
 	}
-	return strings.Repeat(" ", pad) + colorFn(s)
+	return " " + strings.Repeat(" ", pad) + colorFn(s)
 }
 
-// ok — completed successfully. Right-aligned green label.
+// ── Status constructors ───────────────────────────────────────────────────────
+
 func ok(s string) string {
-	return label("done", boldGreen) + "  " + s
+	return verb("done", boldGreen) + "  " + s
 }
 
-// step — in-progress operation. Dim label, no glyph noise.
 func step(s string) string {
-	return label("·", dim) + "  " + dim(s)
+	return verb("·", dim) + "  " + dim(s)
 }
 
-// spin is an alias for step.
 func spin(s string) string { return step(s) }
 
-// fail — hard error.
 func fail(s string) string {
-	return label("error", boldRed) + "  " + s
+	return verb("error", boldRed) + "  " + s
 }
 
-// warn — non-fatal warning.
 func warn(s string) string {
-	return label("warning", yellow) + "  " + s
+	return verb("warn", yellow) + "  " + s
 }
 
-// info — informational.
 func info(s string) string {
-	return label("info", cyan) + "  " + s
+	return verb("info", cyan) + "  " + s
 }
 
-// prog — a named build/operation step. Like cargo's "Compiling foo v1.0".
-// label is right-aligned bold cyan (the verb), msg is the detail.
-func prog(verb, msg string) string {
-	return label(verb, boldCyan) + "  " + msg
+// prog prints a named operation step — verb is the action word (e.g. "enc"),
+// msg is the detail. Verb is bold cyan like bun's package name column.
+func prog(v, msg string) string {
+	// Truncate verb to verbW chars if needed
+	if len(v) > verbW {
+		v = v[:verbW]
+	}
+	return verb(v, boldCyan) + "  " + msg
 }
 
 // ── Terminal geometry ─────────────────────────────────────────────────────────
@@ -123,15 +134,18 @@ func termWidth() int {
 	if err != nil || w < 60 {
 		return 80
 	}
-	if w > 100 {
-		return 100
+	if w > 120 {
+		return 120
 	}
 	return w
 }
 
-func ruleN(n int) string { return dim(strings.Repeat("─", n)) }
-
-func rl() string { return ruleN(termWidth() - 2) }
+func ruleN(n int) string {
+	if n < 1 {
+		return ""
+	}
+	return dim(strings.Repeat("─", n))
+}
 
 // ── ANSI-aware text measurement ───────────────────────────────────────────────
 
@@ -171,45 +185,44 @@ func colGreen(raw string, width int) string { return col(raw, width, green) }
 func colBold(raw string, width int) string  { return col(raw, width, bold) }
 
 // ── Key-value pairs ───────────────────────────────────────────────────────────
-// Labels right-aligned to labelW — same column as status labels above,
-// so the whole output shares one vertical rhythm.
+// Labels right-aligned to verbW, same column as status verbs above.
+// Value starts at msgIndent — same as status messages.
 
 func kv(lbl, value string) {
-	fmt.Printf("%s  %s\n", label(lbl, bold), value)
+	fmt.Printf("%s  %s\n", verb(lbl, bold), value)
 }
 func kvGreen(lbl, value string) {
-	fmt.Printf("%s  %s\n", label(lbl, bold), green(value))
+	fmt.Printf("%s  %s\n", verb(lbl, bold), green(value))
 }
 func kvCyan(lbl, value string) {
-	fmt.Printf("%s  %s\n", label(lbl, bold), cyan(value))
+	fmt.Printf("%s  %s\n", verb(lbl, bold), cyan(value))
 }
 func kvDim(lbl, value string) {
-	fmt.Printf("%s  %s\n", label(lbl, bold), dim(value))
+	fmt.Printf("%s  %s\n", verb(lbl, bold), dim(value))
 }
 func kvRed(lbl, value string) {
-	fmt.Printf("%s  %s\n", label(lbl, bold), red(value))
+	fmt.Printf("%s  %s\n", verb(lbl, bold), red(value))
 }
 
-// ── Layout ────────────────────────────────────────────────────────────────────
+// ── Layout primitives ─────────────────────────────────────────────────────────
 
 func blank() { fmt.Println() }
 
 // hint prints a dim secondary note, indented to the message column.
 func hint(s string) {
-	fmt.Printf("%s  %s\n", strings.Repeat(" ", labelW), dim(s))
+	fmt.Printf("%s%s\n", msgPad(), dim(s))
 }
 
-// cmdHint prints a suggested command, indented to the message column.
+// cmdHint prints a suggested command in cyan, indented to the message column.
 func cmdHint(s string) {
-	fmt.Printf("%s  %s\n", strings.Repeat(" ", labelW), cyan(s))
+	fmt.Printf("%s%s\n", msgPad(), cyan(s))
 }
 
-// tableHeader prints a ruled table header. widths = visual widths for all cols
-// except the last. The table is indented to the message column (labelW+2).
+// tableHeader prints a ruled table header at msgIndent.
 func tableHeader(ruler string, cols []string, widths []int) {
-	indent := strings.Repeat(" ", labelW+2)
-	fmt.Println(indent + ruler)
-	fmt.Print(indent)
+	pad := msgPad()
+	fmt.Println(pad + ruler)
+	fmt.Print(pad)
 	for i, c := range cols {
 		if i < len(cols)-1 {
 			fmt.Print(padRight(bold(c), widths[i]))
@@ -219,17 +232,23 @@ func tableHeader(ruler string, cols []string, widths []int) {
 		}
 	}
 	fmt.Println()
-	fmt.Println(indent + ruler)
+	fmt.Println(pad + ruler)
 }
 
-// tableRow prints a table data row at the same indent as tableHeader.
+// tableRow prints a data row at msgIndent.
+// marker replaces the first few visible chars of the indent (e.g. for highlighting).
 func tableRow(marker string, cells ...string) {
-	indent := strings.Repeat(" ", labelW+2)
-	// marker replaces the first few chars of indent for the current-row arrow
-	if marker != "" {
-		indent = marker + indent[visibleLen(marker):]
+	if marker == "" {
+		fmt.Print(msgPad())
+	} else {
+		// marker fills msgIndent chars visually
+		mLen := visibleLen(marker)
+		extra := msgIndent - mLen
+		if extra < 0 {
+			extra = 0
+		}
+		fmt.Print(marker + strings.Repeat(" ", extra))
 	}
-	fmt.Print(indent)
 	for i, c := range cells {
 		if i > 0 {
 			fmt.Print("  ")
@@ -239,9 +258,9 @@ func tableRow(marker string, cells ...string) {
 	fmt.Println()
 }
 
-// sectionTitle prints a titled group heading — used before kv blocks.
+// sectionTitle prints a bold section label at the message column.
 func sectionTitle(s string) {
-	fmt.Printf("\n%s  %s\n", strings.Repeat(" ", labelW), bold(s))
+	fmt.Printf("\n%s%s\n", msgPad(), bold(s))
 }
 
 // ── Semantic helpers ──────────────────────────────────────────────────────────

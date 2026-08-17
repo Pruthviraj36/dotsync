@@ -58,7 +58,7 @@ func versionCmd() *cobra.Command {
 			// Build info
 			kvDim("Commit", revision)
 			kvDim("Built", buildTime)
-			kvDim("Platform", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
+			kvDim("os", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
 			kvDim("Go", runtime.Version())
 			blank()
 
@@ -69,14 +69,14 @@ func versionCmd() *cobra.Command {
 				kvRed("Server", "not configured")
 			}
 			if cfg != nil && cfg.Username != "" {
-				kvCyan("Account", "@"+cfg.Username)
+				kvCyan("acct", "@"+cfg.Username)
 			} else {
-				kv("Account", dim("not logged in"))
+				kv("acct", dim("not logged in"))
 			}
 			if projCfg != nil {
-				kvCyan("Project", projCfg.ProjectSlug+"/"+projCfg.DefaultEnv)
+				kvCyan("proj", projCfg.ProjectSlug+"/"+projCfg.DefaultEnv)
 			} else {
-				kv("Project", dim("not linked  (run dotsync init)"))
+				kv("proj", dim("not linked  (run dotsync init)"))
 			}
 			blank()
 		},

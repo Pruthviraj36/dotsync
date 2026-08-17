@@ -113,7 +113,7 @@ Available to all users — no plan required.`,
 				)
 			}
 
-			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
+			fmt.Printf("%s%s\n", msgPad(), rl)
 			fmt.Printf("  %s\n", dim(fmt.Sprintf("%d event(s)", len(rows))))
 			blank()
 			return nil

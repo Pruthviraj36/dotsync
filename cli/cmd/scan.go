@@ -530,8 +530,8 @@ Exits with code 1 if anything is found — drop-in CI and pre-commit hook.
 			fmt.Println(warn(fmt.Sprintf("%d secret(s) found across %d files scanned", len(findings), filesScanned)))
 			blank()
 
-			indent := strings.Repeat(" ", labelW+2)
-			ruler := ruleN(termWidth() - labelW - 4)
+			indent := msgPad()
+			ruler := ruleN(termWidth() - msgIndent - 2)
 
 			printFindings := func(severity string, sevFn func(string) string, fs []scanFinding) {
 				if len(fs) == 0 {
@@ -552,7 +552,7 @@ Exits with code 1 if anything is found — drop-in CI and pre-commit hook.
 					)
 					if f.content != "" {
 						truncated := f.content
-						maxW := termWidth() - labelW - 16
+						maxW := termWidth() - msgIndent - 8
 						if len(truncated) > maxW {
 							truncated = truncated[:maxW] + dim("…")
 						}

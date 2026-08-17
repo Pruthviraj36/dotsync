@@ -31,9 +31,6 @@ Roles:
 	return cmd
 }
 
-// teamIndent is the fixed left margin for all team table rows.
-// Must match the visual width of the marker " ▶  " (4 visual chars + 1 space).
-const teamIndent = "     " // 5 spaces = "  " header indent + 3 marker chars
 
 func teamListCmd() *cobra.Command {
 	return &cobra.Command{
@@ -84,7 +81,7 @@ func teamListCmd() *cobra.Command {
 				[]int{userW, roleW},
 			)
 
-			indent := strings.Repeat(" ", labelW+2)
+			indent := msgPad()
 			for _, m := range members {
 				username, _ := m["username"].(string)
 				role, _     := m["role"].(string)

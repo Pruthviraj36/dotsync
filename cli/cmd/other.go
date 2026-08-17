@@ -93,7 +93,7 @@ func historyCmd() *cobra.Command {
 				)
 			}
 
-			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
+			fmt.Printf("%s%s\n", msgPad(), rl)
 			fmt.Printf("  %s version(s)  ·  %s to restore: %s\n",
 				dim(fmt.Sprintf("%d", len(history))),
 				dim("rollback"),
@@ -175,7 +175,7 @@ Key names are shown; values are never displayed.`,
 			fmt.Printf("  %s  local .env vs %s/%s (%s)\n",
 				bold("Diff"), boldCyan(projCfg.ProjectSlug), cyan(env), green(fmt.Sprintf("v%d", remote.Version)))
 			blank()
-			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
+			fmt.Printf("%s%s\n", msgPad(), rl)
 
 			if len(added)+len(removed)+len(changed) == 0 {
 				blank()
@@ -194,7 +194,7 @@ Key names are shown; values are never displayed.`,
 				fmt.Printf("  %s  %s\n", yellow("~"), yellow(k))
 			}
 
-			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
+			fmt.Printf("%s%s\n", msgPad(), rl)
 			parts := []string{}
 			if len(added) > 0   { parts = append(parts, green(fmt.Sprintf("+%d added", len(added)))) }
 			if len(removed) > 0 { parts = append(parts, red(fmt.Sprintf("−%d removed", len(removed)))) }
@@ -274,7 +274,7 @@ func statusCmd() *cobra.Command {
 				fmt.Printf("  %s  %s  %s\n",
 					bold("Account"), cyan("@"+cfg.Username), dim("connected"))
 				fmt.Printf("  %s  %s\n",
-					bold("Server "), dim(cfg.ServerURL))
+					bold("server"), dim(cfg.ServerURL))
 			} else {
 				fmt.Printf("  %s  %s\n", bold("Account"), red("not logged in"))
 				blank()
@@ -313,21 +313,21 @@ func statusCmd() *cobra.Command {
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {
-				fmt.Printf("  %s  %s\n", bold("Remote  "), yellow("could not reach server"))
+				fmt.Printf("  %s  %s\n", bold("remote"), yellow("could not reach server"))
 			} else if remoteVer == 0 {
-				fmt.Printf("  %s  %s\n", bold("Remote  "), dim("no secrets pushed yet"))
+				fmt.Printf("  %s  %s\n", bold("remote"), dim("no secrets pushed yet"))
 				blank()
 				hint("dotsync push")
 			} else {
 				fmt.Printf("  %s  %s  %s\n",
-					bold("Remote  "),
+					bold("remote"),
 					green(fmt.Sprintf("v%d", remoteVer)),
 					dim("pushed by @"+pushedBy),
 				)
 				if _, err := os.Stat(".env"); err == nil {
-					fmt.Printf("  %s  %s\n", bold("Local   "), green(".env present  ")+dim("→ dotsync diff"))
+					fmt.Printf("  %s  %s\n", bold("local"), green(".env present  ")+dim("→ dotsync diff"))
 				} else {
-					fmt.Printf("  %s  %s\n", bold("Local   "), yellow("no .env  ")+dim("→ dotsync pull"))
+					fmt.Printf("  %s  %s\n", bold("local"), yellow("no .env  ")+dim("→ dotsync pull"))
 				}
 			}
 
@@ -336,7 +336,7 @@ func statusCmd() *cobra.Command {
 			if err == nil {
 				blank()
 				fmt.Printf("  %s  %s\n",
-					bold("Team    "),
+					bold("team"),
 					dim(fmt.Sprintf("%d member(s)  → dotsync team list", len(members))),
 				)
 			}
