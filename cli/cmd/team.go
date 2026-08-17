@@ -84,6 +84,7 @@ func teamListCmd() *cobra.Command {
 				[]int{userW, roleW},
 			)
 
+			indent := strings.Repeat(" ", labelW+2)
 			for _, m := range members {
 				username, _ := m["username"].(string)
 				role, _     := m["role"].(string)
@@ -95,25 +96,25 @@ func teamListCmd() *cobra.Command {
 				unameRaw := "@" + username
 				isMe := username == cfg.Username
 
-				uname := colCyan(unameRaw, userW)
 				if isMe {
-					uname = padRight(boldCyan(unameRaw), userW)
+					// Highlight the current user's row entirely in bold cyan
+					fmt.Printf("%s%s  %s  %s\n",
+						indent,
+						padRight(boldCyan(unameRaw), userW),
+						padRight(boldCyan(role), roleW),
+						boldCyan(age),
+					)
+				} else {
+					fmt.Printf("%s%s  %s  %s\n",
+						indent,
+						padRight(colCyan(unameRaw, userW), userW),
+						padRight(roleColor(role), roleW),
+						dim(age),
+					)
 				}
-
-				// tableRow marker: green ▶ for current user, blank for others.
-				// visibleLen("▶ ") = 2, so we pass " ▶ " (3 visible chars + space).
-				marker := ""
-				if isMe {
-					marker = green(" ▶ ")
-				}
-				tableRow(marker,
-					uname,
-					padRight(roleColor(role), roleW),
-					dim(age),
-				)
 			}
 
-			fmt.Printf("%s  %s\n", strings.Repeat(" ", labelW+2), ruler)
+			fmt.Printf("%s%s\n", indent, ruler)
 			blank()
 			hint("add:    dotsync team add <username>")
 			hint("remove: dotsync team remove <username>")

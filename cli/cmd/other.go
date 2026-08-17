@@ -93,7 +93,7 @@ func historyCmd() *cobra.Command {
 				)
 			}
 
-			fmt.Println("  " + rl)
+			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
 			fmt.Printf("  %s version(s)  ·  %s to restore: %s\n",
 				dim(fmt.Sprintf("%d", len(history))),
 				dim("rollback"),
@@ -145,7 +145,7 @@ Key names are shown; values are never displayed.`,
 				return err
 			}
 
-			fmt.Printf("%s  Fetching remote %s/%s...\n", spin(""), projCfg.ProjectSlug, env)
+			fmt.Println(prog("Fetching", boldCyan(projCfg.ProjectSlug+"/"+env)))
 
 			client := api.New(cfg)
 			remote, err := client.Pull(projCfg.ProjectSlug, env)
@@ -175,7 +175,7 @@ Key names are shown; values are never displayed.`,
 			fmt.Printf("  %s  local .env vs %s/%s (%s)\n",
 				bold("Diff"), boldCyan(projCfg.ProjectSlug), cyan(env), green(fmt.Sprintf("v%d", remote.Version)))
 			blank()
-			fmt.Println("  " + rl)
+			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
 
 			if len(added)+len(removed)+len(changed) == 0 {
 				blank()
@@ -194,7 +194,7 @@ Key names are shown; values are never displayed.`,
 				fmt.Printf("  %s  %s\n", yellow("~"), yellow(k))
 			}
 
-			fmt.Println("  " + rl)
+			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
 			parts := []string{}
 			if len(added) > 0   { parts = append(parts, green(fmt.Sprintf("+%d added", len(added)))) }
 			if len(removed) > 0 { parts = append(parts, red(fmt.Sprintf("−%d removed", len(removed)))) }

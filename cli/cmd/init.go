@@ -156,7 +156,7 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("passwords do not match — try again")
 	}
 
-	fmt.Println(spin("Creating project..."))
+	fmt.Println(prog("Creating", boldCyan(projectName)))
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
 		return err

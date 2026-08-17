@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -112,7 +113,7 @@ Available to all users — no plan required.`,
 				)
 			}
 
-			fmt.Println("  " + rl)
+			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
 			fmt.Printf("  %s\n", dim(fmt.Sprintf("%d event(s)", len(rows))))
 			blank()
 			return nil

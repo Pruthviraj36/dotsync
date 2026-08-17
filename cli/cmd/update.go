@@ -45,7 +45,7 @@ will never silently install an unverified binary.`,
 
 func runUpdate(cmd *cobra.Command, args []string) error {
 	blank()
-	fmt.Println(spin("Checking for updates..."))
+	fmt.Println(prog("Checking", dim("latest release...")))
 
 	release, err := fetchLatestRelease()
 	if err != nil {
@@ -56,7 +56,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	latestNorm := strings.TrimPrefix(release.TagName, "v")
 	if Version != "dev" && currentNorm == latestNorm {
 		blank()
-		fmt.Println(ok(fmt.Sprintf("Already on the latest version (%s).", Version)))
+		fmt.Println(ok(dim(fmt.Sprintf("already at %s", Version))))
 		blank()
 		return nil
 	}
@@ -66,7 +66,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		bold(release.TagName), dim(Version))))
 	blank()
 
-	fmt.Println(spin("Fetching checksums..."))
+	fmt.Println(prog("Verifying", dim("checksums...")))
 	checksums, err := fetchChecksums(release)
 	if err != nil {
 		return fmt.Errorf(
@@ -96,7 +96,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
 	}
 
-	fmt.Println(spin("Downloading..."))
+	fmt.Println(prog("Downloading", dim(release.TagName)))
 	archiveBytes, err := downloadAll(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %w", err)
@@ -112,14 +112,14 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				"  Nothing was changed. Report this if it persists.",
 			assetName, expectedChecksum, actualChecksum)
 	}
-	fmt.Println(ok("Checksum verified"))
+	fmt.Println(ok(dim("checksum verified")))
 
 	binaryReader, err := extractBinary(archiveBytes, ext)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(spin("Applying update..."))
+	fmt.Println(prog("Installing", dim(release.TagName)))
 	if err := selfupdate.Apply(binaryReader, selfupdate.Options{}); err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
 			return fmt.Errorf("permission denied — try running with sudo")
@@ -128,7 +128,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	blank()
-	fmt.Println(ok(fmt.Sprintf("Updated to %s", bold(release.TagName))))
+	fmt.Println(ok(boldGreen(release.TagName)+" "+dim("installed")))
 	blank()
 	return nil
 }

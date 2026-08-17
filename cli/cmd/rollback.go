@@ -71,7 +71,7 @@ To see available versions: dotsync history`,
 			kvCyan("Target", fmt.Sprintf("v%d", version))
 			blank()
 
-			fmt.Println(spin(fmt.Sprintf("Fetching v%d...", version)))
+			fmt.Println(prog("Fetching", dim(fmt.Sprintf("v%d", version))))
 			old, err := client.PullVersion(projCfg.ProjectSlug, env, version)
 			if err != nil {
 				return fmt.Errorf("could not fetch v%d: %w", version, err)
@@ -80,7 +80,7 @@ To see available versions: dotsync history`,
 			if verified, vErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); vErr != nil {
 				return fmt.Errorf("signature verification failed: %w\nRefusing to roll back to an unverified version", vErr)
 			} else if verified {
-				fmt.Println(ok(fmt.Sprintf("Signature verified — originally pushed by @%s", old.PushedBy)))
+				fmt.Println(ok(dim(fmt.Sprintf("signature verified — @%s (ed25519)", old.PushedBy))))
 			}
 
 			plaintext, err := cliCrypto.DecryptEnvFile(
@@ -100,7 +100,7 @@ To see available versions: dotsync history`,
 				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
-				fmt.Println(ok(fmt.Sprintf("v%d written to %s", version, outputFlag)))
+				fmt.Println(ok(dim(fmt.Sprintf("v%d written to %s", version, outputFlag))))
 				hint("Inspect the file, then push it manually if it looks right:")
 				cmdHint(fmt.Sprintf("cp %s .env && dotsync push --env %s", outputFlag, env))
 				blank()
@@ -127,7 +127,7 @@ To see available versions: dotsync history`,
 				}
 			}
 
-			fmt.Println(spin("Re-encrypting with fresh nonce..."))
+			fmt.Println(prog("Encrypting", dim("fresh nonce...")))
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, projCfg.ProjectSlug)
 			if err != nil {
 				return fmt.Errorf("re-encryption failed: %w", err)
@@ -144,7 +144,7 @@ To see available versions: dotsync history`,
 				fmt.Println(dim("  (could not sync public key)"))
 			}
 
-			fmt.Println(spin("Pushing..."))
+			fmt.Println(prog("Uploading", dim("...")))
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
@@ -155,7 +155,7 @@ To see available versions: dotsync history`,
 			}
 
 			blank()
-			fmt.Println(ok("Rolled back successfully"))
+			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim(fmt.Sprintf("v%d → v%d", version, result.Version))))
 			blank()
 			kv("Project", projCfg.ProjectSlug)
 			kv("Env", env)
@@ -171,7 +171,7 @@ To see available versions: dotsync history`,
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
 					os.WriteFile(".env", []byte(plaintext), 0600)
-					fmt.Println(ok("Local .env updated"))
+					fmt.Println(ok(dim(".env updated")))
 					blank()
 				}
 			}

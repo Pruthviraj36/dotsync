@@ -192,7 +192,7 @@ func tokensListCmd() *cobra.Command {
 					padRight("", nameW+2+envW+2+createdW), dim(id))
 			}
 
-			fmt.Println("  " + rl)
+			fmt.Printf("%s%s\n", strings.Repeat(" ", labelW+2), rl)
 			fmt.Printf("  %s\n\n", dim(fmt.Sprintf(
 				"%d token(s)  ·  revoke with: dotsync tokens revoke <id>", len(tokens))))
 			return nil
