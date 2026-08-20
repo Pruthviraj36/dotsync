@@ -21,7 +21,7 @@ Get started:
   dotsync push        Upload your .env (encrypted)
   dotsync pull        Download latest .env
   dotsync run         Run a command with secrets injected (nothing hits disk)
-  dotsync scan        Scan for secrets accidentally left in source files
+  dotsync ui          Open the web dashboard (localhost:4040)
 
 CI/CD integrations:
   dotsync integrate github-actions   GitHub Actions workflow snippet
@@ -72,5 +72,6 @@ func init() {
 		teamCmd(),
 		integrateCmd(),
 		tokensCmd(),
+		uiCmd(),
 	)
 }

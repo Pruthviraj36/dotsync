@@ -75,8 +75,28 @@ The server never sees your raw secrets. Even if the database leaked, secrets wou
 | `dotsync tokens list` | List service tokens |
 | `dotsync tokens revoke <id>` | Revoke a token |
 | `dotsync config set-server <url>` | Point CLI at a different server |
+| `dotsync ui` | Open the web dashboard at localhost:4040 |
 
 ---
+
+
+## Web dashboard
+
+```bash
+dotsync ui
+dotsync ui --port 4041   # custom port
+dotsync ui --no-open     # don't auto-open browser
+```
+
+Opens a local web dashboard at `localhost:4040`. Everything runs locally — secrets are decrypted on your machine, same as the CLI. The server never sees plaintext.
+
+Features available in the UI:
+- View and edit secrets with a syntax-highlighted editor
+- Push and pull with one click
+- Browse version history and restore any previous version
+- Manage team members and roles
+- Create and revoke service tokens
+- View the full audit log
 
 ## Zero-disk secret injection
 
