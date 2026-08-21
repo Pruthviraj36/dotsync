@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"os/signal"
 	"runtime"
+	"strings"
 	"syscall"
 	"time"
 
@@ -27,6 +28,16 @@ const (
 	uiWriteTimeout = 30 * time.Second
 	uiIdleTimeout  = 60 * time.Second
 )
+
+// validUISlug rejects empty / JS-coerced nullish values before proxying to the API.
+func validUISlug(slug string) bool {
+	switch strings.TrimSpace(slug) {
+	case "", "null", "undefined":
+		return false
+	default:
+		return true
+	}
+}
 
 func uiCmd() *cobra.Command {
 	var portFlag string
@@ -95,10 +106,10 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 
 			mux.HandleFunc("/api/project/", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
-				if slug == "" && projCfg != nil {
+				if !validUISlug(slug) && projCfg != nil {
 					slug = projCfg.ProjectSlug
 				}
-				if slug == "" {
+				if !validUISlug(slug) {
 					return nil, fmt.Errorf("no project slug — run dotsync init first")
 				}
 				envs, _ := client.ListEnvironments(slug)
@@ -117,11 +128,14 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 			mux.HandleFunc("/api/history", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
-				if slug == "" && projCfg != nil {
+				if !validUISlug(slug) && projCfg != nil {
 					slug = projCfg.ProjectSlug
 				}
 				if env == "" && projCfg != nil {
 					env = projCfg.DefaultEnv
+				}
+				if !validUISlug(slug) {
+					return nil, fmt.Errorf("no project slug — run dotsync init first")
 				}
 				history, err := client.History(slug, env)
 				if err != nil {
@@ -133,10 +147,10 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 			mux.HandleFunc("/api/pull", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
-				if slug == "" {
+				if !validUISlug(slug) {
 					return nil, fmt.Errorf("missing slug parameter")
 				}
-				if env == "" {
+				if env == "" || env == "null" || env == "undefined" {
 					return nil, fmt.Errorf("missing env parameter")
 				}
 				result, err := client.Pull(slug, env)
@@ -171,7 +185,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err := json.Unmarshal(body, &req); err != nil {
 					return nil, fmt.Errorf("invalid request: %w", err)
 				}
-				if req.Slug == "" || req.Env == "" {
+				if !validUISlug(req.Slug) || req.Env == "" {
 					return nil, fmt.Errorf("slug and env are required")
 				}
 				password, err := resolvePassword(client, req.Slug)
@@ -202,7 +216,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err := json.Unmarshal(body, &req); err != nil {
 					return nil, fmt.Errorf("invalid request: %w", err)
 				}
-				if req.Slug == "" || req.Username == "" {
+				if !validUISlug(req.Slug) || req.Username == "" {
 					return nil, fmt.Errorf("slug and username are required")
 				}
 				if err := client.AddTeamMember(req.Slug, req.Username); err != nil {
@@ -222,7 +236,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err := json.Unmarshal(body, &req); err != nil {
 					return nil, fmt.Errorf("invalid request: %w", err)
 				}
-				if req.Slug == "" || req.Username == "" {
+				if !validUISlug(req.Slug) || req.Username == "" {
 					return nil, fmt.Errorf("slug and username are required")
 				}
 				if err := client.RemoveTeamMember(req.Slug, req.Username); err != nil {
@@ -240,7 +254,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err := json.Unmarshal(body, &req); err != nil {
 					return nil, fmt.Errorf("invalid request: %w", err)
 				}
-				if req.Slug == "" || req.Name == "" {
+				if !validUISlug(req.Slug) || req.Name == "" {
 					return nil, fmt.Errorf("slug and name are required")
 				}
 				if req.Env == "" {
@@ -261,7 +275,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err := json.Unmarshal(body, &req); err != nil {
 					return nil, fmt.Errorf("invalid request: %w", err)
 				}
-				if req.Slug == "" || req.TokenID == "" {
+				if !validUISlug(req.Slug) || req.TokenID == "" {
 					return nil, fmt.Errorf("slug and token_id are required")
 				}
 				if err := client.RevokeServiceToken(req.Slug, req.TokenID); err != nil {
@@ -279,7 +293,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err := json.Unmarshal(body, &req); err != nil {
 					return nil, fmt.Errorf("invalid request: %w", err)
 				}
-				if req.Slug == "" || req.Env == "" || req.Version < 1 {
+				if !validUISlug(req.Slug) || req.Env == "" || req.Version < 1 {
 					return nil, fmt.Errorf("slug, env, and version are required")
 				}
 				old, err := client.PullVersion(req.Slug, req.Env, req.Version)
@@ -328,8 +342,11 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				}
 
 				slug := r.URL.Query().Get("slug")
-				if slug == "" && projCfg != nil {
+				if !validUISlug(slug) && projCfg != nil {
 					slug = projCfg.ProjectSlug
+				}
+				if !validUISlug(slug) {
+					slug = ""
 				}
 
 				ticker := time.NewTicker(5 * time.Second)
@@ -344,7 +361,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 					case <-r.Context().Done():
 						return
 					case <-ticker.C:
-						if slug == "" {
+						if !validUISlug(slug) {
 							fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
 							flusher.Flush()
 							continue

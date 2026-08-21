@@ -404,6 +404,14 @@ html,body{height:100%;background:var(--bg);color:var(--text);font-family:var(--s
 // ── state ─────────────────────────────────────────────────────────────────────
 const S = { project: null, env: 'dev', me: null, data: null };
 
+function validSlug(s) {
+  return !!(s && s !== 'null' && s !== 'undefined');
+}
+
+function q(slug, env) {
+  return 'slug=' + encodeURIComponent(slug) + '&env=' + encodeURIComponent(env || 'dev');
+}
+
 // ── boot ──────────────────────────────────────────────────────────────────────
 (async () => {
   try {
@@ -414,28 +422,41 @@ const S = { project: null, env: 'dev', me: null, data: null };
     document.getElementById('avatarEl').textContent = (u.username || '?')[0].toUpperCase();
 
     const ps = await api('/api/projects');
-    const projects = ps.projects || [];
+    const projects = (ps.projects || []).filter(p => validSlug(p && p.slug));
     const sel = document.getElementById('projectSel');
+
+    if (!projects.length) {
+      sel.innerHTML = '<option value="">no projects — run dotsync init</option>';
+      toast('No projects found — run: dotsync init', 'err');
+      return;
+    }
+
     sel.innerHTML = projects.map(p => '<option value="' + esc(p.slug) + '">' + esc(p.slug) + '</option>').join('');
 
     const defSlug = me.project && me.project.project_slug;
     const defEnv  = me.project && me.project.default_env;
-    if (defSlug) sel.value = defSlug;
-    if (defEnv)  S.env = defEnv;
+    if (validSlug(defSlug)) sel.value = defSlug;
+    if (defEnv) S.env = defEnv;
 
-    await switchProject(sel.value);
+    const slug = sel.value;
+    if (!validSlug(slug)) {
+      toast('No project selected — run: dotsync init', 'err');
+      return;
+    }
+    await switchProject(slug);
   } catch(e) { toast('Connection failed: ' + e.message, 'err'); }
 })();
 
 async function switchProject(slug) {
-  if (!slug) return;
+  if (!validSlug(slug)) return;
   S.project = slug;
   await loadProject();
+  connectSSE(slug, S.env);
 }
 
 async function loadProject() {
-  if (!S.project) return;
-  const d = await api('/api/project/?slug=' + S.project);
+  if (!validSlug(S.project)) return;
+  const d = await api('/api/project/?slug=' + encodeURIComponent(S.project));
   S.data = d;
 
   // env tabs
@@ -458,17 +479,20 @@ async function loadProject() {
 }
 
 function switchEnv(env) {
+  if (!validSlug(S.project)) return;
   S.env = env;
   document.querySelectorAll('.env-tab').forEach(t => t.classList.toggle('active', t.textContent===env));
   document.getElementById('sEnv').textContent = env;
   pullSecrets();
+  connectSSE(S.project, env);
   if (document.getElementById('page-history').classList.contains('active')) loadHistory();
 }
 
 // ── secrets ───────────────────────────────────────────────────────────────────
 async function pullSecrets() {
+  if (!validSlug(S.project)) return;
   try {
-    const r = await api('/api/pull?slug=' + S.project + '&env=' + S.env);
+    const r = await api('/api/pull?' + q(S.project, S.env));
     document.getElementById('editor').value = r.content || '';
     document.getElementById('sVer').textContent = 'v' + r.version;
     document.getElementById('sBy').textContent = r.by ? '@' + r.by : '';
@@ -487,10 +511,11 @@ function countKeys() {
 }
 
 async function doPull() {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   const btn = document.getElementById('pullBtn');
   btn.disabled = true; btn.innerHTML = '<span class="spin"></span> Pulling';
   try {
-    const r = await api('/api/pull?slug=' + S.project + '&env=' + S.env);
+    const r = await api('/api/pull?' + q(S.project, S.env));
     document.getElementById('editor').value = r.content || '';
     document.getElementById('sVer').textContent = 'v' + r.version;
     document.getElementById('sBy').textContent = r.by ? '@' + r.by : '';
@@ -501,6 +526,7 @@ async function doPull() {
 }
 
 async function doPush() {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   const content = document.getElementById('editor').value.trim();
   if (!content) { toast('Editor is empty', 'err'); return; }
   const btn = document.getElementById('pushBtn');
@@ -510,6 +536,8 @@ async function doPush() {
     document.getElementById('sVer').textContent = 'v' + r.version;
     countKeys();
     toast('Pushed v' + r.version + ' — ' + r.keys + ' keys encrypted', 'ok');
+    const ed = document.getElementById('editor');
+    if (ed) ed.dataset.dirty = '';
     loadProject();
   } catch(e) { toast(e.message, 'err'); }
   finally { btn.disabled=false; btn.innerHTML='↑ Push'; }
@@ -518,9 +546,13 @@ async function doPush() {
 // ── history ───────────────────────────────────────────────────────────────────
 async function loadHistory() {
   const el = document.getElementById('historyBody');
+  if (!validSlug(S.project)) {
+    el.innerHTML = '<div class="empty"><div class="empty-ico">◷</div>Select a project first</div>';
+    return;
+  }
   el.innerHTML = '<div class="empty"><span class="spin"></span></div>';
   try {
-    const r = await api('/api/history?slug=' + S.project + '&env=' + S.env);
+    const r = await api('/api/history?' + q(S.project, S.env));
     const h = r.history || [];
     if (!h.length) { el.innerHTML = '<div class="empty"><div class="empty-ico">◷</div>No history yet</div>'; return; }
     el.innerHTML = h.map((e,i) => {
@@ -541,6 +573,7 @@ async function loadHistory() {
 }
 
 async function rollback(version) {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   if (!confirm('Restore v' + version + ' as new current version?')) return;
   try {
     const r = await post('/api/rollback', { slug:S.project, env:S.env, version });
@@ -570,6 +603,7 @@ function renderMembers(members) {
 }
 
 async function addMember() {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   const u = document.getElementById('memberInput').value.trim().replace('@','');
   const r = document.getElementById('memberRole').value;
   if (!u) { toast('Enter a username', 'err'); return; }
@@ -582,6 +616,7 @@ async function addMember() {
 }
 
 async function removeMember(u) {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   if (!confirm('Remove @' + u + '?')) return;
   try {
     await post('/api/team/remove', { slug:S.project, username:u });
@@ -605,6 +640,7 @@ function renderTokens(tokens) {
 }
 
 async function createToken() {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   const name = document.getElementById('tokenName').value.trim();
   const env  = document.getElementById('tokenEnv').value;
   if (!name) { toast('Enter a token name', 'err'); return; }
@@ -620,6 +656,7 @@ async function createToken() {
 }
 
 async function revokeToken(id, name) {
+  if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   if (!confirm('Revoke "' + name + '"? Cannot be undone.')) return;
   try {
     await post('/api/tokens/revoke', { slug:S.project, token_id:id });
@@ -695,7 +732,7 @@ let _sse = null, _lastVer = null, _lastLogs = null;
 
 function connectSSE(slug, env) {
   if (_sse) { _sse.close(); _sse = null; }
-  if (!slug) return;
+  if (!validSlug(slug)) return;
   _sse = new EventSource('/api/events?slug=' + encodeURIComponent(slug) + '&env=' + encodeURIComponent(env||''));
   _sse.addEventListener('update', e => {
     try {
@@ -712,22 +749,17 @@ function connectSSE(slug, env) {
       }
     } catch(_) {}
   });
-  _sse.onerror = () => { if (_sse) { _sse.close(); _sse = null; } setTimeout(()=>{ if (S.project) connectSSE(S.project, S.env); }, 10000); };
+  _sse.onerror = () => {
+    if (_sse) { _sse.close(); _sse = null; }
+    setTimeout(() => { if (validSlug(S.project)) connectSSE(S.project, S.env); }, 10000);
+  };
 }
-
-// Hook into switchProject and switchEnv to (re)start SSE
-const __sp = switchProject;
-async function switchProject(slug) { S.project = slug; await loadProject(); connectSSE(slug, S.env); }
-const __se = switchEnv;
-function switchEnv(env) { __se(env); connectSSE(S.project, env); }
 
 // Dirty tracking — don't auto-pull if user is editing
 document.addEventListener('DOMContentLoaded', () => {
   const ed = document.getElementById('editor');
   if (ed) ed.addEventListener('input', () => { ed.dataset.dirty = '1'; });
 });
-const __push = doPush;
-async function doPush() { await __push(); const ed = document.getElementById('editor'); if (ed) ed.dataset.dirty = ''; }
 </script>
 </body>
 </html>`

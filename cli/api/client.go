@@ -30,6 +30,21 @@ func New(cfg *config.GlobalConfig) *Client {
 	}
 }
 
+func validateProjectEnv(slug, env string) error {
+	slug = strings.TrimSpace(slug)
+	env = strings.TrimSpace(env)
+
+	if slug == "" || strings.EqualFold(slug, "null") || strings.EqualFold(slug, "undefined") {
+		return fmt.Errorf("project slug is missing — run: dotsync init")
+	}
+
+	if env == "" || strings.EqualFold(env, "null") || strings.EqualFold(env, "undefined") {
+		return fmt.Errorf("environment is missing")
+	}
+
+	return nil
+}
+
 // do executes an authenticated request with HMAC signing and auto-refresh.
 func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	var bodyBytes []byte
@@ -168,10 +183,21 @@ type PushResponse struct {
 }
 
 func (c *Client) Push(slug, env string, req PushRequest) (*PushResponse, error) {
-	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/envs/%s/push", slug, env), req)
+	if err := validateProjectEnv(slug, env); err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf(
+		"/api/projects/%s/envs/%s/push",
+		url.PathEscape(slug),
+		url.PathEscape(env),
+	)
+
+	resp, err := c.do("POST", path, req)
 	if err != nil {
 		return nil, err
 	}
+
 	var result PushResponse
 	return &result, decodeResponse(resp, &result)
 }
@@ -187,10 +213,21 @@ type PullResponse struct {
 }
 
 func (c *Client) Pull(slug, env string) (*PullResponse, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs/%s/pull", slug, env), nil)
+	if err := validateProjectEnv(slug, env); err != nil {
+		return nil, err
+	}
+
+	path := fmt.Sprintf(
+		"/api/projects/%s/envs/%s/pull",
+		url.PathEscape(slug),
+		url.PathEscape(env),
+	)
+
+	resp, err := c.do("GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
+
 	var result PullResponse
 	return &result, decodeResponse(resp, &result)
 }
@@ -212,7 +249,15 @@ type HistoryEntry struct {
 }
 
 func (c *Client) History(slug, env string) ([]HistoryEntry, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs/%s/history", slug, env), nil)
+	if err := validateProjectEnv(slug, env); err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf(
+		"/api/projects/%s/envs/%s/history",
+		url.PathEscape(slug),
+		url.PathEscape(env),
+	)
+	resp, err := c.do("GET", path, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -517,7 +562,15 @@ func (c *Client) UpdateTeamRole(slug, username, role string) error {
 
 // PullVersion fetches a specific version of secrets.
 func (c *Client) PullVersion(slug, env string, version int) (*PullResponse, error) {
-	path := fmt.Sprintf("/api/projects/%s/envs/%s/pull/version?version=%d", slug, env, version)
+	if err := validateProjectEnv(slug, env); err != nil {
+		return nil, err
+	}
+	path := fmt.Sprintf(
+		"/api/projects/%s/envs/%s/pull/version?version=%d",
+		url.PathEscape(slug),
+		url.PathEscape(env),
+		version,
+	)
 	resp, err := c.do("GET", path, nil)
 	if err != nil {
 		return nil, err
@@ -538,7 +591,14 @@ func (c *Client) AuditLogs(slug string) ([]map[string]any, error) {
 
 // GetLatestVersion fetches just the latest version number for sync-state comparison.
 func (c *Client) GetLatestVersion(slug, env string) (int, string, error) {
-	path := fmt.Sprintf("/api/projects/%s/envs/%s/history", slug, env)
+	if err := validateProjectEnv(slug, env); err != nil {
+		return 0, "", err
+	}
+	path := fmt.Sprintf(
+		"/api/projects/%s/envs/%s/history",
+		url.PathEscape(slug),
+		url.PathEscape(env),
+	)
 	resp, err := c.do("GET", path, nil)
 	if err != nil {
 		return 0, "", err

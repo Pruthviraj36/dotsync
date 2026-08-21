@@ -124,22 +124,27 @@ func main() {
 		w.Write(assets.InstallScriptPS1)
 	})
 
-	// ── Public auth routes ───────────────────────────────────────────────────
+	// ── Auth routes ──────────────────────────────────────────────────────────
+	// All /api/auth/* must live under this single Route. Chi's radix tree
+	// mounts Route("/api/auth") as a sub-router, so registering /auth/me under
+	// a separate /api group would be shadowed and return 404.
 	r.Route("/api/auth", func(r chi.Router) {
 		r.Use(mw.RateLimitByIP(20, time.Minute))
 		r.Get("/config", authHandler.Config)
 		r.Post("/github/device", authHandler.GitHubDeviceLogin)
 		r.Post("/refresh", authHandler.RefreshToken)
+
+		r.Group(func(r chi.Router) {
+			r.Use(mw.Authenticate(authSvc, serviceTokenSvc))
+			r.Post("/logout", authHandler.Logout)
+			r.Get("/me", authHandler.Me)
+		})
 	})
 
 	// ── Protected routes ─────────────────────────────────────────────────────
 	r.Route("/api", func(r chi.Router) {
 		r.Use(mw.Authenticate(authSvc, serviceTokenSvc))
 		r.Use(mw.RateLimitByUser(300, time.Minute))
-
-		// Auth
-		r.Post("/auth/logout", authHandler.Logout)
-		r.Get("/auth/me", authHandler.Me)
 
 		// Identity (ed25519 pubkey for verifying signed pushes)
 		r.Put("/me/pubkey", identityHandler.SetPubKey)
