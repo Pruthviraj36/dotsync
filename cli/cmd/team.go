@@ -47,11 +47,13 @@ func teamListCmd() *cobra.Command {
 				return err
 			}
 
+			fmt.Println(prog("Loading", dim("team members...")))
 			client := api.New(cfg)
 			members, err := client.ListTeamMembers(projCfg.ProjectSlug)
 			if err != nil {
 				return err
 			}
+			fmt.Println(ok("Loaded "+dim(fmt.Sprintf("%d members", len(members)))))
 
 			if len(members) == 0 {
 				blank()

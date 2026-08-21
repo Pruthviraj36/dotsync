@@ -448,7 +448,7 @@ body{
         <div class="card-body">
           <div class="editor-note">Decrypted on this machine — server never sees values.</div>
           <div class="editor-toolbar">
-            <input class="search-input" id="keySearch" placeholder="Find key…" oninput="findKey()" autocomplete="off">
+            <input class="search-input" id="keySearch" placeholder="Find key…" oninput="findKey(false)" onkeydown="if(event.key==='Enter'){event.preventDefault();findKey(true)}" autocomplete="off">
             <button class="btn btn-ghost" onclick="findKey(true)">Next</button>
           </div>
           <textarea class="editor" id="editor"
@@ -804,12 +804,15 @@ function findKey(next) {
   if (idx < 0 && start > 0) idx = lower.indexOf(qstr, 0);
   if (idx < 0) { toast('No match', 'info'); return; }
   S.findIdx = idx;
-  ed.focus();
-  ed.setSelectionRange(idx, idx + qstr.length);
-  const pre = text.slice(0, idx);
-  const line = pre.split('\n').length;
-  const lineH = 1.75 * 12.5;
-  ed.scrollTop = Math.max(0, (line - 3) * lineH);
+  // Only focus editor when explicitly searching (next button)
+  if (next) {
+    ed.focus();
+    ed.setSelectionRange(idx, idx + qstr.length);
+    const pre = text.slice(0, idx);
+    const line = pre.split('\n').length;
+    const lineH = 1.75 * 12.5;
+    ed.scrollTop = Math.max(0, (line - 3) * lineH);
+  }
 }
 
 async function loadHistory() {
