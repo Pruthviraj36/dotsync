@@ -26,6 +26,8 @@ const (
 	cBrightCyan   = "\033[96m"
 	cBrightRed    = "\033[91m"
 	cBrightYellow = "\033[93m"
+	cPurple       = "\033[95m"
+	cBrightPurple = "\033[95m"
 )
 
 var isTTY = term.IsTerminal(int(os.Stdout.Fd()))
@@ -45,12 +47,14 @@ func red(s string) string       { return colorize(cBrightRed, s) }
 func cyan(s string) string      { return colorize(cBrightCyan, s) }
 func blue(s string) string      { return colorize(cBlue, s) }
 func magenta(s string) string   { return colorize(cMagenta, s) }
+func purple(s string) string    { return colorize(cBrightPurple, s) }
 func bold(s string) string      { return colorize(cBold, s) }
 func dim(s string) string       { return colorize(cDim, s) }
 func italic(s string) string    { return colorize(cItalic, s) }
 func boldCyan(s string) string  { return colorize(cBold+cBrightCyan, s) }
 func boldGreen(s string) string { return colorize(cBold+cBrightGreen, s) }
 func boldRed(s string) string   { return colorize(cBold+cBrightRed, s) }
+func boldPurple(s string) string { return colorize(cBold+cBrightPurple, s) }
 
 // ── Status line system ────────────────────────────────────────────────────────
 //
@@ -293,4 +297,25 @@ func actionColor(action string) string {
 	default:
 		return dim(action)
 	}
+}
+
+// ── Loading spinner ─────────────────────────────────────────────────────────
+
+var spinnerChars = []string{"⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"}
+var spinnerIndex = 0
+
+func spinner() string {
+	s := spinnerChars[spinnerIndex]
+	spinnerIndex = (spinnerIndex + 1) % len(spinnerChars)
+	return s
+}
+
+func resetSpinner() {
+	spinnerIndex = 0
+}
+
+// ── Enhanced status with loading ─────────────────────────────────────────────
+
+func loading(msg string) string {
+	return verb("loading", boldCyan) + "  " + dim(msg) + " " + spinner()
 }

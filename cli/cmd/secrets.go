@@ -76,6 +76,10 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 				return fmt.Errorf("encryption failed: %w", err)
 			}
 
+			fmt.Println(ok("Encrypted "+dim(fmt.Sprintf("%d secrets", len(keys)))))
+
+			fmt.Println(prog("Signing", dim("ed25519 identity...")))
+
 			signature, identityCreated, pub, err := ensureIdentityAndSign(ciphertext)
 			if err != nil {
 				return err
@@ -88,6 +92,8 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 				fmt.Println(dim("  (could not sync public key — signature may not verify for teammates yet)"))
 			}
 
+			fmt.Println(ok("Signature verified"))
+
 			rev := revString(digestOf(ciphertext))
 			fmt.Println(prog("Uploading", dim(humanSize(len(ciphertext)))))
 
@@ -99,6 +105,8 @@ and uploads the ciphertext. The server never sees your raw secrets.`,
 			if err != nil {
 				return err
 			}
+
+			fmt.Println(ok("Uploaded "+dim(humanSize(len(ciphertext)))))
 
 			blank()
 			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim("→")+" "+green(fmt.Sprintf("v%d", result.Version))))
@@ -182,6 +190,8 @@ decrypts it locally, and writes your .env file.`,
 				return err
 			}
 
+			fmt.Println(ok("Fetched "+dim(humanSize(len(result.EncryptedData)))))
+
 			if verifyFlag {
 				verified, verifyErr := verifySignature(
 					result.EncryptedData, result.Signature, result.PushedByPubKey,
@@ -222,9 +232,13 @@ decrypts it locally, and writes your .env file.`,
 				return err
 			}
 
+			fmt.Println(ok("Decrypted "+dim(fmt.Sprintf("%d secrets", len(cliCrypto.ParseEnvFile(plaintext))))))
+
 			if err := os.WriteFile(outputFile, []byte(plaintext), 0600); err != nil {
 				return fmt.Errorf("write %s: %w", outputFile, err)
 			}
+
+			fmt.Println(ok("Written to "+cyan(outputFile)))
 
 			parsed := cliCrypto.ParseEnvFile(plaintext)
 			rev := revString(digestOf(result.EncryptedData))

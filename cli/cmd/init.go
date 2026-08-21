@@ -41,8 +41,12 @@ The password is fetched automatically — no re-entry needed.`,
 			fmt.Println("────────────────────────────")
 			fmt.Println()
 
+			fmt.Println(prog("Loading", dim("your projects...")))
+
 			projects, listErr := client.ListProjects()
 			if listErr == nil && len(projects) > 0 {
+				fmt.Println(ok("Found "+dim(fmt.Sprintf("%d projects", len(projects)))))
+				fmt.Println()
 				fmt.Println("Your projects:")
 				for _, p := range projects {
 					fmt.Printf("  - "+bold("%s")+" (slug: "+cyan("%s")+")\n", p["name"], p["slug"])
@@ -173,9 +177,11 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("save project config: %w", err)
 	}
 
+	fmt.Println(prog("Setting", dim("encryption password...")))
 	if err := setPassword(client, actualSlug, password); err != nil {
 		return err
 	}
+	fmt.Println(ok("Password set"))
 
 	// Derive once now (and discard the result) purely so the parameters
 	// below are describing something that actually just happened, not a
@@ -184,10 +190,12 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 
 	// Local ed25519 identity — every future push from this machine gets
 	// signed with it, so teammates can verify who pushed what.
+	fmt.Println(prog("Creating", dim("ed25519 identity...")))
 	_, pub, identityCreated, err := identity.Ensure()
 	if err != nil {
 		return fmt.Errorf("ed25519 identity: %w", err)
 	}
+	fmt.Println(ok("Identity created"))
 	if err := client.SetPubKey(identity.Hex(pub)); err != nil {
 		fmt.Println(dim("  (could not sync public key yet — will retry on next push)"))
 	}

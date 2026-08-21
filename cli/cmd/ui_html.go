@@ -294,6 +294,29 @@ body{
 .spin{width:14px;height:14px;border:2px solid var(--border);border-top-color:var(--accent);border-radius:50%;animation:rot .6s linear infinite;display:inline-block;flex-shrink:0}
 @keyframes rot{to{transform:rotate(360deg)}}
 
+/* ── loading states ── */
+.loading-overlay{
+  display:none;position:fixed;inset:0;background:rgba(10,10,15,.85);z-index:200;
+  backdrop-filter:blur(8px);align-items:center;justify-content:center;flex-direction:column;gap:16px;
+}
+.loading-overlay.show{display:flex}
+.loading-spinner{
+  width:40px;height:40px;border:3px solid var(--border);border-top-color:var(--accent);
+  border-radius:50%;animation:rot .8s linear infinite;
+}
+.loading-text{
+  font-family:var(--mono);font-size:13px;color:var(--text-dim);
+  animation:pulse 1.5s ease-in-out infinite;
+}
+.loading-skeleton{
+  background:linear-gradient(90deg,var(--s2) 25%,var(--s3) 50%,var(--s2) 75%);
+  background-size:200% 100%;animation:shimmer 1.5s infinite;
+  border-radius:var(--radius-sm);height:20px;opacity:.6;
+}
+.loading-skeleton.text{height:16px;width:60%}
+.loading-skeleton.full{width:100%}
+.loading-skeleton.short{width:40%}
+
 .overlay{
   display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:90;
   backdrop-filter:blur(4px);
@@ -501,6 +524,11 @@ body{
   </main>
 </div>
 
+<div class="loading-overlay" id="loadingOverlay">
+  <div class="loading-spinner"></div>
+  <div class="loading-text" id="loadingText">Loading...</div>
+</div>
+
 <div class="toasts" id="toasts"></div>
 
 <script>
@@ -546,8 +574,20 @@ function closeNav() {
   document.getElementById('navOverlay').classList.remove('show');
 }
 
+function showLoading(text = 'Loading...') {
+  const overlay = document.getElementById('loadingOverlay');
+  const textEl = document.getElementById('loadingText');
+  textEl.textContent = text;
+  overlay.classList.add('show');
+}
+
+function hideLoading() {
+  document.getElementById('loadingOverlay').classList.remove('show');
+}
+
 (async () => {
   try {
+    showLoading('Connecting to server...');
     const me = await api('/api/me');
     S.me = me;
     const u = me.user || {};
@@ -563,12 +603,14 @@ function closeNav() {
     srvEl.textContent = srv || 'local';
     srvEl.title = srv;
 
+    showLoading('Loading projects...');
     const ps = await api('/api/projects');
     const projects = (ps.projects || []).filter(p => validSlug(p && p.slug));
     const sel = document.getElementById('projectSel');
 
     if (!projects.length) {
       sel.innerHTML = '<option value="">no projects — run dotsync init</option>';
+      hideLoading();
       toast('No projects found — run: dotsync init', 'err');
       setLive(true);
       return;
@@ -583,15 +625,17 @@ function closeNav() {
 
     const slug = sel.value;
     if (!validSlug(slug)) {
+      hideLoading();
       toast('No project selected — run: dotsync init', 'err');
       return;
     }
     await switchProject(slug);
+    hideLoading();
 
     const hash = (location.hash || '#secrets').slice(1);
     const navEl = document.querySelector('.nav-item[data-page="' + hash + '"]');
     if (navEl) nav(navEl, hash);
-  } catch(e) { toast('Connection failed: ' + e.message, 'err'); }
+  } catch(e) { hideLoading(); toast('Connection failed: ' + e.message, 'err'); }
 })();
 
 async function onProjectChange(slug) {
@@ -604,9 +648,11 @@ async function onProjectChange(slug) {
 
 async function switchProject(slug) {
   if (!validSlug(slug)) return;
+  showLoading('Switching project...');
   S.project = slug;
   await loadProject();
   connectSSE();
+  hideLoading();
 }
 
 async function loadProject() {
@@ -657,6 +703,7 @@ function switchEnv(env) {
 
 async function pullSecrets(toastOk) {
   if (!validSlug(S.project)) return;
+  if (!toastOk) showLoading('Pulling secrets...');
   try {
     const r = await api('/api/pull?' + q(S.project, S.env));
     const content = r.content || '';
@@ -672,6 +719,8 @@ async function pullSecrets(toastOk) {
     document.getElementById('sBy').textContent = 'no push yet';
     markClean('');
     countKeys();
+  } finally {
+    if (!toastOk) hideLoading();
   }
 }
 
@@ -794,12 +843,14 @@ async function loadHistory() {
 async function rollback(version) {
   if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   if (!confirm('Restore v' + version + ' as new current version?')) return;
+  showLoading('Rolling back to v' + version + '...');
   try {
     const r = await post('/api/rollback', { slug:S.project, env:S.env, version });
+    hideLoading();
     toast('v' + version + ' restored as v' + r.version, 'ok');
     loadHistory();
     await pullSecrets(false);
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { hideLoading(); toast(e.message, 'err'); }
 }
 
 function renderMembers(members) {
@@ -826,22 +877,26 @@ async function addMember() {
   const u = document.getElementById('memberInput').value.trim().replace('@','');
   const r = document.getElementById('memberRole').value;
   if (!u) { toast('Enter a username', 'err'); return; }
+  showLoading('Adding member...');
   try {
     await post('/api/team/add', { slug:S.project, username:u, role:r });
     document.getElementById('memberInput').value = '';
+    hideLoading();
     toast('@' + u + ' added as ' + r, 'ok');
     await loadProject();
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { hideLoading(); toast(e.message, 'err'); }
 }
 
 async function removeMember(u) {
   if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   if (!confirm('Remove @' + u + '?')) return;
+  showLoading('Removing member...');
   try {
     await post('/api/team/remove', { slug:S.project, username:u });
+    hideLoading();
     toast('@' + u + ' removed', 'ok');
     await loadProject();
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { hideLoading(); toast(e.message, 'err'); }
 }
 
 function renderTokens(tokens) {
@@ -862,25 +917,29 @@ async function createToken() {
   const name = document.getElementById('tokenName').value.trim();
   const env  = document.getElementById('tokenEnv').value;
   if (!name) { toast('Enter a token name', 'err'); return; }
+  showLoading('Creating token...');
   try {
     const r = await post('/api/tokens/create', { slug:S.project, env, name });
     document.getElementById('tokenName').value = '';
+    hideLoading();
     const rev = document.getElementById('tokenReveal');
     rev.innerHTML = '<div style="font-size:11px;color:var(--yellow);margin-bottom:4px;font-family:var(--mono)">⚠ Copy now — shown once only</div>' +
       '<div class="token-reveal" onclick="navigator.clipboard.writeText(\'' + r.token + '\').then(()=>toast(\'Copied!\',\'ok\'))">' + r.token + '</div>';
     toast('Token created — copy it now!', 'ok');
     await loadProject();
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { hideLoading(); toast(e.message, 'err'); }
 }
 
 async function revokeToken(id, name) {
   if (!validSlug(S.project)) { toast('No project selected', 'err'); return; }
   if (!confirm('Revoke "' + name + '"? Cannot be undone.')) return;
+  showLoading('Revoking token...');
   try {
     await post('/api/tokens/revoke', { slug:S.project, token_id:id });
+    hideLoading();
     toast('Token revoked', 'ok');
     await loadProject();
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { hideLoading(); toast(e.message, 'err'); }
 }
 
 function renderAudit(logs) {
@@ -901,12 +960,14 @@ function renderAudit(logs) {
 
 async function refreshAudit() {
   if (!validSlug(S.project)) return;
+  showLoading('Refreshing audit log...');
   try {
     const d = await api('/api/project/?slug=' + encodeURIComponent(S.project));
     S.data = d;
     renderAudit(d.logs || []);
+    hideLoading();
     toast('Audit refreshed', 'ok');
-  } catch(e) { toast(e.message, 'err'); }
+  } catch(e) { hideLoading(); toast(e.message, 'err'); }
 }
 
 function nav(el, page) {
