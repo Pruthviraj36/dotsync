@@ -689,6 +689,45 @@ function ago(iso) {
 function esc(s) {
   return String(s||'').replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
 }
+
+// ── SSE live updates ─────────────────────────────────────────────────────────
+let _sse = null, _lastVer = null, _lastLogs = null;
+
+function connectSSE(slug, env) {
+  if (_sse) { _sse.close(); _sse = null; }
+  if (!slug) return;
+  _sse = new EventSource('/api/events?slug=' + encodeURIComponent(slug) + '&env=' + encodeURIComponent(env||''));
+  _sse.addEventListener('update', e => {
+    try {
+      const d = JSON.parse(e.data);
+      if (d.version && d.version !== _lastVer) {
+        _lastVer = d.version;
+        document.getElementById('sVer').textContent = 'v' + d.version;
+        if (d.pushed_by) document.getElementById('sBy').textContent = '@' + d.pushed_by;
+        if (!document.getElementById('editor').dataset.dirty) pullSecrets();
+      }
+      if (d.log_count !== undefined && d.log_count !== _lastLogs) {
+        _lastLogs = d.log_count;
+        if (document.getElementById('page-audit').classList.contains('active')) loadProject();
+      }
+    } catch(_) {}
+  });
+  _sse.onerror = () => { if (_sse) { _sse.close(); _sse = null; } setTimeout(()=>{ if (S.project) connectSSE(S.project, S.env); }, 10000); };
+}
+
+// Hook into switchProject and switchEnv to (re)start SSE
+const __sp = switchProject;
+async function switchProject(slug) { S.project = slug; await loadProject(); connectSSE(slug, S.env); }
+const __se = switchEnv;
+function switchEnv(env) { __se(env); connectSSE(S.project, env); }
+
+// Dirty tracking — don't auto-pull if user is editing
+document.addEventListener('DOMContentLoaded', () => {
+  const ed = document.getElementById('editor');
+  if (ed) ed.addEventListener('input', () => { ed.dataset.dirty = '1'; });
+});
+const __push = doPush;
+async function doPush() { await __push(); const ed = document.getElementById('editor'); if (ed) ed.dataset.dirty = ''; }
 </script>
 </body>
 </html>`

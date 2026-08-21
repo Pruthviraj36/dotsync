@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"os/signal"
+	"strings"
 	"syscall"
 
 	"github.com/spf13/cobra"
@@ -181,100 +182,103 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 }
 
 // isContainerRuntime returns true when the command is docker or podman.
+
+// isContainerRuntime returns true when the command is docker, podman, or compatible runtimes.
 func isContainerRuntime(command string) bool {
 	base := command
-	// Handle full paths like /usr/bin/podman
 	for i := len(command) - 1; i >= 0; i-- {
 		if command[i] == '/' {
 			base = command[i+1:]
 			break
 		}
 	}
-	return base == "docker" || base == "podman"
+	switch base {
+	case "docker", "podman", "nerdctl", "lima":
+		return true
+	}
+	return false
 }
 
 // injectContainerEnv inserts --env KEY=VALUE flags into container run args.
 //
-// It only activates when the subcommand is "run" — not build, push, etc.
-// Flags are inserted right after "run" (and after any existing --env flags)
-// so they don't interfere with the image name or command arguments.
+// Only activates when the subcommand is "run". Uses a two-pass approach that
+// is resilient to new Docker/Podman flags — it never needs a maintained list.
+//
+// Strategy:
+//   - "--flag=value" syntax: consume no extra arg (safe to skip)
+//   - Known short flags (-e, -v, -p, -l, -m, -u, -w, -h): consume next arg
+//   - Single-char short flags (-d, -i, -t): boolean, no value
+//   - Unknown long flags (--foo): if next arg doesn't look like an image name,
+//     treat it as the flag's value. This is the conservative fallback.
 //
 // Before: [run, -d, --pull=never, myimage]
-// After:  [run, -d, --pull=never, --env, KEY=VALUE, --env, KEY2=VALUE2, myimage]
+// After:  [run, -d, --pull=never, --env KEY=VAL, ..., myimage]
 func injectContainerEnv(args []string, secrets map[string]string) []string {
 	if len(args) == 0 || args[0] != "run" {
 		return args
 	}
 
-	// Find the insertion point: after all flags (args starting with -)
-	// but before the image name. The image name is the first non-flag,
-	// non-flag-value argument after "run".
-	insertAt := 1 // default: right after "run"
+	shortValueFlags := map[string]bool{
+		"-e": true, "-v": true, "-p": true, "-l": true,
+		"-m": true, "-u": true, "-w": true, "-h": true,
+	}
+
+	insertAt := 1
 	i := 1
 	for i < len(args) {
 		arg := args[i]
+
 		if arg == "--" {
 			insertAt = i
 			break
 		}
 		if len(arg) == 0 || arg[0] != '-' {
-			// This is the image name
 			insertAt = i
 			break
 		}
-		// Flags that consume a value: skip the next arg too
-		// Full list of docker/podman run flags that take a value:
-		valueFlags := map[string]bool{
-			"--env": true, "-e": true,
-			"--env-file": true,
-			"--volume": true, "-v": true,
-			"--publish": true, "-p": true,
-			"--name": true,
-			"--network": true,
-			"--label": true, "-l": true,
-			"--memory": true, "-m": true,
-			"--cpus": true,
-			"--user": true, "-u": true,
-			"--workdir": true, "-w": true,
-			"--entrypoint": true,
-			"--hostname": true, "-h": true,
-			"--add-host": true,
-			"--mount": true,
-			"--restart": true,
-			"--stop-signal": true,
-			"--stop-timeout": true,
-			"--health-cmd": true,
-			"--health-interval": true,
-			"--log-driver": true,
-			"--log-opt": true,
-			"--platform": true,
-			"--pull": true,
-			"--runtime": true,
-			"--security-opt": true,
-			"--shm-size": true,
-			"--tmpfs": true,
-			"--ulimit": true,
-			"--userns": true,
-			"--pid": true,
-			"--ipc": true,
-			"--cgroupns": true,
-		}
-		if valueFlags[arg] {
-			i += 2 // skip flag and its value
+		if strings.Contains(arg, "=") {
+			i++
 			insertAt = i
+			continue
+		}
+		if shortValueFlags[arg] {
+			i += 2
+			insertAt = i
+			continue
+		}
+		// Single-char short flag: boolean, no value
+		if len(arg) == 2 && arg[0] == '-' && arg[1] != '-' {
+			i++
+			insertAt = i
+			continue
+		}
+		// Long flag without "=": check if next arg is a value
+		if len(arg) > 2 && arg[0] == '-' && arg[1] == '-' {
+			i++
+			insertAt = i
+			if i < len(args) {
+				next := args[i]
+				if len(next) > 0 && next[0] != '-' {
+					looksLikeImage := strings.Contains(next, "/") ||
+						strings.Contains(next, ":") ||
+						next == "latest"
+					if !looksLikeImage {
+						i++
+						insertAt = i
+					}
+				}
+			}
 			continue
 		}
 		i++
 		insertAt = i
 	}
 
-	// Build --env KEY=VALUE pairs for every secret
 	envFlags := make([]string, 0, len(secrets)*2)
 	for k, v := range secrets {
 		envFlags = append(envFlags, "--env", k+"="+v)
 	}
 
-	// Splice into args: args[:insertAt] + envFlags + args[insertAt:]
 	result := make([]string, 0, len(args)+len(envFlags))
 	result = append(result, args[:insertAt]...)
 	result = append(result, envFlags...)

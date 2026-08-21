@@ -1,13 +1,17 @@
 package cmd
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
+	"io"
 	"net"
 	"net/http"
 	"os"
 	"os/exec"
+	"os/signal"
 	"runtime"
+	"syscall"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -15,6 +19,13 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+)
+
+const (
+	uiMaxBodyBytes = 1 << 20 // 1 MB — enough for any .env file
+	uiReadTimeout  = 10 * time.Second
+	uiWriteTimeout = 30 * time.Second
+	uiIdleTimeout  = 60 * time.Second
 )
 
 func uiCmd() *cobra.Command {
@@ -26,9 +37,9 @@ func uiCmd() *cobra.Command {
 		Short: "Open the DotSync web dashboard",
 		Long: `Launches a local web server and opens the DotSync dashboard
 in your browser. All operations run locally — secrets are encrypted
-on your machine, same as the CLI.`,
+on your machine, same as the CLI. The server never sees plaintext.`,
 		Example: `  dotsync ui
-  dotsync ui --port 4040
+  dotsync ui --port 4041
   dotsync ui --no-open`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
@@ -37,7 +48,8 @@ on your machine, same as the CLI.`,
 			}
 			projCfg, _ := config.LoadProject()
 
-			listener, err := net.Listen("tcp", ":"+portFlag)
+			// Bind only to localhost — never expose on LAN/internet
+			listener, err := net.Listen("tcp", "127.0.0.1:"+portFlag)
 			if err != nil {
 				return fmt.Errorf("port %s is in use — try: dotsync ui --port 4041", portFlag)
 			}
@@ -47,59 +59,62 @@ on your machine, same as the CLI.`,
 
 			// ── Static UI ─────────────────────────────────────────────────────
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path != "/" {
+					http.NotFound(w, r)
+					return
+				}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
+				// Strict CSP: only allow scripts/styles that are inline (same document)
+				w.Header().Set("Content-Security-Policy",
+					"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'")
+				w.Header().Set("X-Frame-Options", "DENY")
+				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Write([]byte(dashboardHTML))
 			})
 
-			// ── /api/me ───────────────────────────────────────────────────────
-			mux.HandleFunc("/api/me", func(w http.ResponseWriter, r *http.Request) {
+			// ── API handlers ──────────────────────────────────────────────────
+			mux.HandleFunc("/api/me", uiHandler(func(r *http.Request) (any, error) {
 				me, err := client.GetMe()
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{
+				return map[string]any{
 					"user":       me,
 					"server_url": cfg.ServerURL,
 					"project":    projCfg,
-				})
-			})
+				}, nil
+			}))
 
-			// ── /api/projects ─────────────────────────────────────────────────
-			mux.HandleFunc("/api/projects", func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc("/api/projects", uiHandler(func(r *http.Request) (any, error) {
 				projects, err := client.ListProjects()
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{"projects": projects})
-			})
+				return map[string]any{"projects": projects}, nil
+			}))
 
-			// ── /api/project/ ─────────────────────────────────────────────────
-			mux.HandleFunc("/api/project/", func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc("/api/project/", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				if slug == "" && projCfg != nil {
 					slug = projCfg.ProjectSlug
 				}
 				if slug == "" {
-					jsonError(w, fmt.Errorf("no project slug"))
-					return
+					return nil, fmt.Errorf("no project slug — run dotsync init first")
 				}
 				envs, _ := client.ListEnvironments(slug)
 				members, _ := client.ListTeamMembers(slug)
 				tokens, _ := client.ListServiceTokens(slug)
 				logs, _ := client.AuditLogs(slug)
-				jsonOK(w, map[string]any{
+				return map[string]any{
 					"slug":    slug,
 					"envs":    envs,
 					"members": members,
 					"tokens":  tokens,
 					"logs":    logs,
-				})
-			})
+				}, nil
+			}))
 
-			// ── /api/history ──────────────────────────────────────────────────
-			mux.HandleFunc("/api/history", func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc("/api/history", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
 				if slug == "" && projCfg != nil {
@@ -110,221 +125,290 @@ on your machine, same as the CLI.`,
 				}
 				history, err := client.History(slug, env)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{"history": history})
-			})
+				return map[string]any{"history": history}, nil
+			}))
 
-			// ── /api/pull ─────────────────────────────────────────────────────
-			mux.HandleFunc("/api/pull", func(w http.ResponseWriter, r *http.Request) {
+			mux.HandleFunc("/api/pull", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
+				if slug == "" {
+					return nil, fmt.Errorf("missing slug parameter")
+				}
+				if env == "" {
+					return nil, fmt.Errorf("missing env parameter")
+				}
 				result, err := client.Pull(slug, env)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
 				password, err := resolvePassword(client, slug)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
 				plaintext, err := cliCrypto.DecryptEnvFile(
 					result.EncryptedData, result.Nonce, password, slug,
 				)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, fmt.Errorf("decryption failed: %w", err)
 				}
 				keys := cliCrypto.ParseEnvFile(plaintext)
-				jsonOK(w, map[string]any{
+				return map[string]any{
 					"content": plaintext,
 					"version": result.Version,
 					"keys":    len(keys),
 					"by":      result.PushedBy,
-				})
-			})
+				}, nil
+			}))
 
-			// ── /api/push ─────────────────────────────────────────────────────
-			mux.HandleFunc("/api/push", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" {
-					http.Error(w, "POST only", 405)
-					return
-				}
+			mux.HandleFunc("/api/push", uiPostHandler(func(body []byte) (any, error) {
 				var req struct {
 					Slug    string `json:"slug"`
 					Env     string `json:"env"`
 					Content string `json:"content"`
 				}
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					jsonError(w, err)
-					return
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if req.Slug == "" || req.Env == "" {
+					return nil, fmt.Errorf("slug and env are required")
 				}
 				password, err := resolvePassword(client, req.Slug)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
 				keys := cliCrypto.ParseEnvFile(req.Content)
 				ciphertext, nonce, err := cliCrypto.EncryptEnvFile(req.Content, password, req.Slug)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, fmt.Errorf("encryption failed: %w", err)
 				}
 				result, err := client.Push(req.Slug, req.Env, api.PushRequest{
 					EncryptedData: ciphertext,
 					Nonce:         nonce,
 				})
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{
-					"version": result.Version,
-					"keys":    len(keys),
-				})
-			})
+				return map[string]any{"version": result.Version, "keys": len(keys)}, nil
+			}))
 
-			// ── /api/team/add ─────────────────────────────────────────────────
-			mux.HandleFunc("/api/team/add", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" {
-					http.Error(w, "POST only", 405)
-					return
-				}
+			mux.HandleFunc("/api/team/add", uiPostHandler(func(body []byte) (any, error) {
 				var req struct {
 					Slug     string `json:"slug"`
 					Username string `json:"username"`
 					Role     string `json:"role"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if req.Slug == "" || req.Username == "" {
+					return nil, fmt.Errorf("slug and username are required")
+				}
 				if err := client.AddTeamMember(req.Slug, req.Username); err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
 				if req.Role != "" && req.Role != "member" {
-					client.UpdateTeamRole(req.Slug, req.Username, req.Role)
+					_ = client.UpdateTeamRole(req.Slug, req.Username, req.Role)
 				}
-				jsonOK(w, map[string]any{"ok": true})
-			})
+				return map[string]any{"ok": true}, nil
+			}))
 
-			// ── /api/team/remove ──────────────────────────────────────────────
-			mux.HandleFunc("/api/team/remove", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" {
-					http.Error(w, "POST only", 405)
-					return
-				}
+			mux.HandleFunc("/api/team/remove", uiPostHandler(func(body []byte) (any, error) {
 				var req struct {
 					Slug     string `json:"slug"`
 					Username string `json:"username"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if req.Slug == "" || req.Username == "" {
+					return nil, fmt.Errorf("slug and username are required")
+				}
 				if err := client.RemoveTeamMember(req.Slug, req.Username); err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{"ok": true})
-			})
+				return map[string]any{"ok": true}, nil
+			}))
 
-			// ── /api/tokens/create ────────────────────────────────────────────
-			mux.HandleFunc("/api/tokens/create", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" {
-					http.Error(w, "POST only", 405)
-					return
-				}
+			mux.HandleFunc("/api/tokens/create", uiPostHandler(func(body []byte) (any, error) {
 				var req struct {
 					Slug string `json:"slug"`
 					Env  string `json:"env"`
 					Name string `json:"name"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if req.Slug == "" || req.Name == "" {
+					return nil, fmt.Errorf("slug and name are required")
+				}
+				if req.Env == "" {
+					req.Env = "*"
+				}
 				token, err := client.CreateServiceToken(req.Slug, req.Env, req.Name)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{"token": token})
-			})
+				return map[string]any{"token": token}, nil
+			}))
 
-			// ── /api/tokens/revoke ────────────────────────────────────────────
-			mux.HandleFunc("/api/tokens/revoke", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" {
-					http.Error(w, "POST only", 405)
-					return
-				}
+			mux.HandleFunc("/api/tokens/revoke", uiPostHandler(func(body []byte) (any, error) {
 				var req struct {
 					Slug    string `json:"slug"`
 					TokenID string `json:"token_id"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if req.Slug == "" || req.TokenID == "" {
+					return nil, fmt.Errorf("slug and token_id are required")
+				}
 				if err := client.RevokeServiceToken(req.Slug, req.TokenID); err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
-				jsonOK(w, map[string]any{"ok": true})
-			})
+				return map[string]any{"ok": true}, nil
+			}))
 
-			// ── /api/rollback ─────────────────────────────────────────────────
-			mux.HandleFunc("/api/rollback", func(w http.ResponseWriter, r *http.Request) {
-				if r.Method != "POST" {
-					http.Error(w, "POST only", 405)
-					return
-				}
+			mux.HandleFunc("/api/rollback", uiPostHandler(func(body []byte) (any, error) {
 				var req struct {
 					Slug    string `json:"slug"`
 					Env     string `json:"env"`
 					Version int    `json:"version"`
 				}
-				json.NewDecoder(r.Body).Decode(&req)
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if req.Slug == "" || req.Env == "" || req.Version < 1 {
+					return nil, fmt.Errorf("slug, env, and version are required")
+				}
 				old, err := client.PullVersion(req.Slug, req.Env, req.Version)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, fmt.Errorf("fetch v%d: %w", req.Version, err)
 				}
 				password, err := resolvePassword(client, req.Slug)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, err
 				}
 				plaintext, err := cliCrypto.DecryptEnvFile(
 					old.EncryptedData, old.Nonce, password, req.Slug,
 				)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, fmt.Errorf("decrypt v%d: %w", req.Version, err)
 				}
 				ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, req.Slug)
 				if err != nil {
-					jsonError(w, err)
-					return
+					return nil, fmt.Errorf("re-encrypt: %w", err)
 				}
 				result, err := client.Push(req.Slug, req.Env, api.PushRequest{
 					EncryptedData: ciphertext,
 					Nonce:         nonce,
 				})
 				if err != nil {
-					jsonError(w, err)
+					return nil, err
+				}
+				return map[string]any{"version": result.Version}, nil
+			}))
+
+			// ── /api/events (SSE) ─────────────────────────────────────────
+			// Streams live audit/history updates to the browser so users
+			// never need to manually refresh. Each event is a JSON object.
+			mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
+				// SSE requires these exact headers
+				w.Header().Set("Content-Type", "text/event-stream")
+				w.Header().Set("Cache-Control", "no-cache")
+				w.Header().Set("Connection", "keep-alive")
+				w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering
+				w.Header().Set("Access-Control-Allow-Origin", "*")
+
+				flusher, ok := w.(http.Flusher)
+				if !ok {
+					http.Error(w, "streaming not supported", http.StatusInternalServerError)
 					return
 				}
-				jsonOK(w, map[string]any{"version": result.Version})
-			})
 
-			// ── Launch ────────────────────────────────────────────────────────
+				slug := r.URL.Query().Get("slug")
+				if slug == "" && projCfg != nil {
+					slug = projCfg.ProjectSlug
+				}
+
+				ticker := time.NewTicker(5 * time.Second)
+				defer ticker.Stop()
+
+				// Send initial ping so browser knows connection is live
+				fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
+				flusher.Flush()
+
+				for {
+					select {
+					case <-r.Context().Done():
+						return
+					case <-ticker.C:
+						if slug == "" {
+							fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
+							flusher.Flush()
+							continue
+						}
+						// Send latest audit log entry count and version
+						logs, _ := client.AuditLogs(slug)
+						env := r.URL.Query().Get("env")
+						if env == "" && projCfg != nil {
+							env = projCfg.DefaultEnv
+						}
+						data := map[string]any{
+							"log_count": len(logs),
+						}
+						if env != "" {
+							if ver, by, err := client.GetLatestVersion(slug, env); err == nil {
+								data["version"] = ver
+								data["pushed_by"] = by
+							}
+						}
+						b, _ := json.Marshal(data)
+						fmt.Fprintf(w, "event: update\ndata: %s\n\n", b)
+						flusher.Flush()
+					}
+				}
+			})
 			url := fmt.Sprintf("http://localhost:%s", portFlag)
+			srv := &http.Server{
+				Handler:      mux,
+				ReadTimeout:  uiReadTimeout,
+				WriteTimeout: uiWriteTimeout,
+				IdleTimeout:  uiIdleTimeout,
+			}
 
 			blank()
 			fmt.Println(prog("ui", boldCyan(url)))
 			fmt.Println(ok(dim("all operations run locally — secrets never leave your machine")))
 			blank()
-			hint("press ctrl+c to stop")
+			hint("ctrl+c to stop")
 			blank()
 
+			// Open browser after a short delay so the server is ready
 			if !noOpenFlag {
-				time.Sleep(200 * time.Millisecond)
-				openBrowser(url)
+				go func() {
+					time.Sleep(300 * time.Millisecond)
+					openBrowser(url)
+				}()
 			}
 
-			return http.Serve(listener, mux)
+			// ── Graceful shutdown ─────────────────────────────────────────────
+			quit := make(chan os.Signal, 1)
+			signal.Notify(quit, syscall.SIGINT, syscall.SIGTERM)
+			go func() {
+				<-quit
+				blank()
+				fmt.Println(ok(dim("shutting down...")))
+				ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+				defer cancel()
+				srv.Shutdown(ctx)
+			}()
+
+			if err := srv.Serve(listener); err != nil && err != http.ErrServerClosed {
+				return fmt.Errorf("server error: %w", err)
+			}
+			return nil
 		},
 	}
 
@@ -333,19 +417,56 @@ on your machine, same as the CLI.`,
 	return cmd
 }
 
-func jsonOK(w http.ResponseWriter, data any) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	json.NewEncoder(w).Encode(data)
+// ── Handler helpers ───────────────────────────────────────────────────────────
+
+// uiHandler wraps a GET handler: validates method, runs fn, writes JSON.
+func uiHandler(fn func(r *http.Request) (any, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Access-Control-Allow-Origin", "http://localhost:4040 http://127.0.0.1:4040")
+		w.Header().Set("Cache-Control", "no-store")
+
+		data, err := fn(r)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(data)
+	}
 }
 
-func jsonError(w http.ResponseWriter, err error) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Access-Control-Allow-Origin", "*")
-	w.WriteHeader(500)
-	json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+// uiPostHandler wraps a POST handler: validates method, reads + limits body,
+// runs fn, writes JSON.
+func uiPostHandler(fn func(body []byte) (any, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Cache-Control", "no-store")
+
+		if r.Method != http.MethodPost {
+			w.WriteHeader(http.StatusMethodNotAllowed)
+			json.NewEncoder(w).Encode(map[string]string{"error": "POST required"})
+			return
+		}
+
+		body, err := io.ReadAll(io.LimitReader(r.Body, uiMaxBodyBytes))
+		if err != nil {
+			w.WriteHeader(http.StatusBadRequest)
+			json.NewEncoder(w).Encode(map[string]string{"error": "failed to read body"})
+			return
+		}
+
+		data, err := fn(body)
+		if err != nil {
+			w.WriteHeader(http.StatusInternalServerError)
+			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			return
+		}
+		json.NewEncoder(w).Encode(data)
+	}
 }
 
+// openBrowser opens url in the default system browser.
 func openBrowser(url string) {
 	var c *exec.Cmd
 	switch runtime.GOOS {
@@ -357,5 +478,5 @@ func openBrowser(url string) {
 		c = exec.Command("xdg-open", url)
 	}
 	c.Stderr = os.Stderr
-	c.Start()
+	_ = c.Start()
 }
