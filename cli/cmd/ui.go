@@ -25,7 +25,6 @@ import (
 const (
 	uiMaxBodyBytes = 1 << 20 // 1 MB — enough for any .env file
 	uiReadTimeout  = 10 * time.Second
-	uiWriteTimeout = 30 * time.Second
 	uiIdleTimeout  = 60 * time.Second
 )
 
@@ -77,7 +76,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				// Strict CSP: only allow scripts/styles that are inline (same document)
 				w.Header().Set("Content-Security-Policy",
-					"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'")
+					"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'")
 				w.Header().Set("X-Frame-Options", "DENY")
 				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Write([]byte(dashboardHTML))
@@ -325,15 +324,13 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 			}))
 
 			// ── /api/events (SSE) ─────────────────────────────────────────
-			// Streams live audit/history updates to the browser so users
-			// never need to manually refresh. Each event is a JSON object.
+			// Keepalive only — no remote API polling. The dashboard refreshes
+			// on user actions (pull/push/nav/project/env switch) instead.
 			mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
-				// SSE requires these exact headers
 				w.Header().Set("Content-Type", "text/event-stream")
 				w.Header().Set("Cache-Control", "no-cache")
 				w.Header().Set("Connection", "keep-alive")
-				w.Header().Set("X-Accel-Buffering", "no") // disable nginx buffering
-				w.Header().Set("Access-Control-Allow-Origin", "*")
+				w.Header().Set("X-Accel-Buffering", "no")
 
 				flusher, ok := w.(http.Flusher)
 				if !ok {
@@ -341,18 +338,9 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 					return
 				}
 
-				slug := r.URL.Query().Get("slug")
-				if !validUISlug(slug) && projCfg != nil {
-					slug = projCfg.ProjectSlug
-				}
-				if !validUISlug(slug) {
-					slug = ""
-				}
-
-				ticker := time.NewTicker(5 * time.Second)
+				ticker := time.NewTicker(30 * time.Second)
 				defer ticker.Stop()
 
-				// Send initial ping so browser knows connection is live
 				fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
 				flusher.Flush()
 
@@ -361,37 +349,17 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 					case <-r.Context().Done():
 						return
 					case <-ticker.C:
-						if !validUISlug(slug) {
-							fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
-							flusher.Flush()
-							continue
-						}
-						// Send latest audit log entry count and version
-						logs, _ := client.AuditLogs(slug)
-						env := r.URL.Query().Get("env")
-						if env == "" && projCfg != nil {
-							env = projCfg.DefaultEnv
-						}
-						data := map[string]any{
-							"log_count": len(logs),
-						}
-						if env != "" {
-							if ver, by, err := client.GetLatestVersion(slug, env); err == nil {
-								data["version"] = ver
-								data["pushed_by"] = by
-							}
-						}
-						b, _ := json.Marshal(data)
-						fmt.Fprintf(w, "event: update\ndata: %s\n\n", b)
+						fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
 						flusher.Flush()
 					}
 				}
 			})
 			url := fmt.Sprintf("http://localhost:%s", portFlag)
 			srv := &http.Server{
-				Handler:      mux,
-				ReadTimeout:  uiReadTimeout,
-				WriteTimeout: uiWriteTimeout,
+				Handler:     mux,
+				ReadTimeout: uiReadTimeout,
+				// WriteTimeout must be 0 so the SSE keepalive stream can stay open.
+				WriteTimeout: 0,
 				IdleTimeout:  uiIdleTimeout,
 			}
 
