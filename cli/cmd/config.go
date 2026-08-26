@@ -38,9 +38,9 @@ func configShowCmd() *cobra.Command {
 			}
 
 			if config.IsLoggedIn(cfg) {
-				kvCyan("acct", "@"+cfg.Username)
+				kvCyan("Account", "@"+cfg.Username)
 			} else {
-				kv("acct", dim("not logged in  ")+dim("→ dotsync login"))
+				kv("Account", dim("not logged in  ")+dim("→ dotsync login"))
 			}
 
 			blank()

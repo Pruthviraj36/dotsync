@@ -67,7 +67,7 @@ To see available versions: dotsync history`,
 			blank()
 			fmt.Printf("  %s  %s/%s\n", bold("Rollback"), boldCyan(projCfg.ProjectSlug), cyan(env))
 			blank()
-			kv("from", fmt.Sprintf("v%d", currentVersion))
+			kv("From", fmt.Sprintf("v%d", currentVersion))
 			kvCyan("Target", fmt.Sprintf("v%d", version))
 			blank()
 
@@ -92,7 +92,7 @@ To see available versions: dotsync history`,
 
 			parsed := cliCrypto.ParseEnvFile(plaintext)
 			blank()
-			kvCyan("keys", fmt.Sprintf("%d secrets (originally pushed by @%s)", len(parsed), old.PushedBy))
+			kvCyan("Secrets", fmt.Sprintf("%d secrets (originally pushed by @%s)", len(parsed), old.PushedBy))
 			blank()
 
 			// Inspect mode — write to file, don't push
@@ -157,11 +157,11 @@ To see available versions: dotsync history`,
 			blank()
 			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim(fmt.Sprintf("v%d → v%d", version, result.Version))))
 			blank()
-			kv("proj", projCfg.ProjectSlug)
+			kv("Project", projCfg.ProjectSlug)
 			kv("Env", env)
 			kvGreen("restor", fmt.Sprintf("v%d content", version))
-			kvGreen("new", fmt.Sprintf("v%d", result.Version))
-			kvDim("hist", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
+			kvGreen("New", fmt.Sprintf("v%d", result.Version))
+			kvDim("History", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
 			blank()
 
 			// Offer to update local .env
