@@ -574,11 +574,17 @@ func NewServiceTokenService(database *db.DB) *ServiceTokenService {
 
 // Create generates a new service token scoped to a project+env, stores only
 // the SHA-256 hash, and returns the raw token (shown once, never stored).
+// Tokens are prefixed "dst_" so the auth middleware can fast-path them
+// without attempting JWT validation first.
 func (s *ServiceTokenService) Create(ctx context.Context, projectID, env, name, createdBy string) (rawToken string, record *model.ServiceToken, err error) {
-	rawToken, err = crypto.GenerateRandomToken(32)
+	raw, err := crypto.GenerateRandomToken(32)
 	if err != nil {
 		return "", nil, fmt.Errorf("generate token: %w", err)
 	}
+
+	// Prefix identifies this as a DotSync service token at a glance in logs,
+	// CI/CD secret stores, and the middleware fast-path check.
+	rawToken = "dst_" + raw
 
 	hash := crypto.HashToken(rawToken)
 	id := uuid.New().String()

@@ -25,6 +25,9 @@ import (
 const (
 	uiMaxBodyBytes = 1 << 20 // 1 MB — enough for any .env file
 	uiReadTimeout  = 10 * time.Second
+	// uiWriteTimeout is 0 (disabled) so SSE /api/events can stream indefinitely.
+	// Individual POST handlers are protected by uiMaxBodyBytes body limits instead.
+	uiWriteTimeout = 0
 	uiIdleTimeout  = 60 * time.Second
 )
 
@@ -358,8 +361,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 			srv := &http.Server{
 				Handler:     mux,
 				ReadTimeout: uiReadTimeout,
-				// WriteTimeout must be 0 so the SSE keepalive stream can stay open.
-				WriteTimeout: 0,
+				WriteTimeout: uiWriteTimeout,
 				IdleTimeout:  uiIdleTimeout,
 			}
 
