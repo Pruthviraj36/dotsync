@@ -78,7 +78,6 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	blank()
 
 	// ── Step 3: poll GitHub until the user approves (or it expires) ────────
-	resetSpinner()
 	ghToken, err := pollForGitHubToken(authCfg.GitHubClientID, dc)
 	if err != nil {
 		fmt.Println()
@@ -145,7 +144,7 @@ func pollForGitHubToken(clientID string, dc *api.DeviceCodeResponse) (string, er
 
 		switch err {
 		case api.PollErrAuthorizationPending:
-			fmt.Print(spinner())
+			fmt.Print(spin(""))
 			continue
 		case api.PollErrSlowDown:
 			// RFC 8628 §3.5: add 5s to the interval, cumulatively, and keep polling.

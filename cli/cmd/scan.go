@@ -531,7 +531,7 @@ Exits with code 1 if anything is found — drop-in CI and pre-commit hook.
 			blank()
 
 			indent := msgPad()
-			ruler := ruleN(termWidth() - msgIndent - 2)
+			ruler := ruleN(termWidth() - (verbCol + verbGap) - 2)
 
 			printFindings := func(severity string, sevFn func(string) string, fs []scanFinding) {
 				if len(fs) == 0 {
@@ -552,7 +552,7 @@ Exits with code 1 if anything is found — drop-in CI and pre-commit hook.
 					)
 					if f.content != "" {
 						truncated := f.content
-						maxW := termWidth() - msgIndent - 8
+						maxW := termWidth() - (verbCol + verbGap) - 8
 						if len(truncated) > maxW {
 							truncated = truncated[:maxW] + dim("…")
 						}
