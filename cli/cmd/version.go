@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"runtime"
 	"runtime/debug"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -16,11 +17,11 @@ var Version = "dev"
 func versionCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "version",
-		Short: "Print version and environment info",
+		Short: "Show version, build info, and active context",
 		Run: func(cmd *cobra.Command, args []string) {
 			version := Version
-			revision := "unknown"
-			buildTime := "unknown"
+			revision := ""
+			buildTime := ""
 			dirty := false
 
 			if info, ok := debug.ReadBuildInfo(); ok {
@@ -36,7 +37,7 @@ func versionCmd() *cobra.Command {
 						}
 					case "vcs.time":
 						if t, err := time.Parse(time.RFC3339, s.Value); err == nil {
-							buildTime = t.Format("2006-01-02 15:04 UTC")
+							buildTime = t.Format("2006-01-02")
 						}
 					case "vcs.modified":
 						dirty = s.Value == "true"
@@ -44,40 +45,88 @@ func versionCmd() *cobra.Command {
 				}
 			}
 
-			if dirty {
-				revision += " (modified)"
-			}
-
 			cfg, _ := config.LoadGlobal()
 			projCfg, _ := config.LoadProject()
 
-			blank()
-			fmt.Printf("  %s  %s\n", bold("DotSync"), cyan(version))
+			w := termWidth()
+			rule := dim(strings.Repeat("─", w-2))
+
 			blank()
 
-			// Build info
-			kvDim("Commit", revision)
-			kvDim("Built", buildTime)
-			kvDim("Platform", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH))
-			kvDim("Go", runtime.Version())
+			// ── Title bar ─────────────────────────────────────────────────────
+			fmt.Printf("  %s  %s",
+				boldCyan("dotsync"),
+				bold(version),
+			)
+			if revision != "" {
+				rev := revision
+				if dirty {
+					rev += dim("+dirty")
+				}
+				fmt.Printf("  %s", dim(rev))
+			}
+			if buildTime != "" {
+				fmt.Printf("  %s", dim(buildTime))
+			}
+			fmt.Println()
+
+			// ── Horizontal rule ───────────────────────────────────────────────
+			fmt.Printf("  %s\n", rule)
 			blank()
 
-			// Runtime context
+			// ── Build section ─────────────────────────────────────────────────
+			fmt.Printf("  %s\n", dim("build"))
+			fmt.Printf("  %-10s  %s\n", dim("platform"), bold(fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)))
+			fmt.Printf("  %-10s  %s\n", dim("go"), dim(strings.TrimPrefix(runtime.Version(), "go")))
+			if revision != "" {
+				revDisplay := revision
+				if dirty {
+					revDisplay += "  " + yellow("(modified)")
+				}
+				fmt.Printf("  %-10s  %s\n", dim("commit"), dim(revDisplay))
+			}
+
+			blank()
+
+			// ── Context section ───────────────────────────────────────────────
+			fmt.Printf("  %s\n", dim("context"))
+
+			// Server
 			if cfg != nil && cfg.ServerURL != "" {
-				kvCyan("Server", cfg.ServerURL)
+				fmt.Printf("  %-10s  %s\n", dim("server"), cyan(cfg.ServerURL))
 			} else {
-				kvRed("Server", "not configured")
+				fmt.Printf("  %-10s  %s  %s\n", dim("server"),
+					red("not configured"),
+					dim("→ dotsync config set-server <url>"),
+				)
 			}
+
+			// Account
 			if cfg != nil && cfg.Username != "" {
-				kvCyan("Account", "@"+cfg.Username)
+				fmt.Printf("  %-10s  %s\n", dim("logged in"), boldCyan("@"+cfg.Username))
 			} else {
-				kv("Account", dim("not logged in"))
+				fmt.Printf("  %-10s  %s  %s\n", dim("logged in"),
+					red("no"),
+					dim("→ dotsync login"),
+				)
 			}
+
+			// Project
 			if projCfg != nil {
-				kvCyan("Project", projCfg.ProjectSlug+"/"+projCfg.DefaultEnv)
+				fmt.Printf("  %-10s  %s  %s\n",
+					dim("project"),
+					bold(projCfg.ProjectSlug),
+					dim(projCfg.DefaultEnv),
+				)
 			} else {
-				kv("Project", dim("not linked  (run dotsync init)"))
+				fmt.Printf("  %-10s  %s  %s\n", dim("project"),
+					dim("none"),
+					dim("→ dotsync init"),
+				)
 			}
+
+			blank()
+			fmt.Printf("  %s\n", rule)
 			blank()
 		},
 	}

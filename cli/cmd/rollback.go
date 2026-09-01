@@ -157,11 +157,11 @@ To see available versions: dotsync history`,
 			blank()
 			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim(fmt.Sprintf("v%d → v%d", version, result.Version))))
 			blank()
-			kv("Project", projCfg.ProjectSlug)
-			kv("Env", env)
+			kv("project", projCfg.ProjectSlug)
+			kv("env", env)
 			kvGreen("restor", fmt.Sprintf("v%d content", version))
 			kvGreen("New", fmt.Sprintf("v%d", result.Version))
-			kvDim("History", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
+			kvDim("history", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
 			blank()
 
 			// Offer to update local .env

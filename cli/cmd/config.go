@@ -32,13 +32,13 @@ func configShowCmd() *cobra.Command {
 			blank()
 
 			if cfg.ServerURL != "" {
-				kvCyan("Server", cfg.ServerURL)
+				kvCyan("server", cfg.ServerURL)
 			} else {
 				kv("Server", red("not set  ")+dim("→ dotsync config set-server <url>"))
 			}
 
 			if config.IsLoggedIn(cfg) {
-				kvCyan("Account", "@"+cfg.Username)
+				kvCyan("account", "@"+cfg.Username)
 			} else {
 				kv("Account", dim("not logged in  ")+dim("→ dotsync login"))
 			}
@@ -76,7 +76,7 @@ this saved value — useful for CI/CD or temporary server switches.`,
 			blank()
 			fmt.Println(ok("Server URL saved"))
 			blank()
-			kvCyan("Server", args[0])
+			kvCyan("server", args[0])
 			blank()
 			hint("Now authenticate:")
 			cmdHint("dotsync login")
