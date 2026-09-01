@@ -832,6 +832,11 @@ body {
   margin-top: 8px;
 }
 
+.stat-value.warning {
+  color: var(--warning);
+  animation: pulse 2s ease-in-out infinite;
+}
+
 /* Card */
 .card {
   background: var(--bg-secondary);
@@ -1007,11 +1012,29 @@ body {
   box-shadow: 0 0 0 3px var(--warning-bg);
 }
 
+.editor.disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+  background: var(--bg-secondary);
+}
+
+.editor.disabled::placeholder {
+  color: var(--text-muted);
+}
+
 .editor-note {
   font-size: 12px;
   color: var(--text-muted);
   margin-bottom: 12px;
   font-family: var(--font-mono);
+}
+
+.editor-note.warning {
+  color: var(--warning);
+  background: var(--warning-bg);
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--warning);
 }
 
 /* Form Elements */
@@ -1507,7 +1530,7 @@ body {
           </div>
         </div>
         <div class="card-body">
-          <div class="editor-note">Decrypted on this machine — server never sees values.</div>
+          <div class="editor-note" id="editorNote">Decrypted on this machine — server never sees values.</div>
           <div class="editor-container">
             <div class="editor-toolbar">
               <input class="search-input" id="searchInput" placeholder="Find key..." oninput="findKey(false)" onkeydown="if(event.key==='Enter'){event.preventDefault();findKey(true)}" autocomplete="off">
@@ -1686,6 +1709,22 @@ function escapeHtml(text) {
   return String(text || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
+function handlePasswordError(message) {
+  if (message && message.includes('could not fetch project password')) {
+    toast('Password not set. Ask project owner to push first, or run: dotsync init --rotate-password', 'error');
+    return true;
+  }
+  if (message && message.includes('no password set for this project')) {
+    toast('Password not set. Ask project owner to push first, or run: dotsync init --rotate-password', 'error');
+    return true;
+  }
+  if (message && message.includes('decryption failed')) {
+    toast('Decryption failed. The password may have changed. Ask the owner to rotate it.', 'error');
+    return true;
+  }
+  return false;
+}
+
 function timeAgo(iso) {
   if (!iso) return 'never';
   const seconds = (Date.now() - new Date(iso).getTime()) / 1000;
@@ -1760,7 +1799,15 @@ async function init() {
       return;
     }
     
-    await switchProject(slug);
+    try {
+      await switchProject(slug);
+    } catch (error) {
+      // Continue even if project loading fails (e.g., password error)
+      // The UI will still be usable for other operations
+      if (!handlePasswordError(error.message)) {
+        toast('Could not load project: ' + error.message, 'error');
+      }
+    }
     hideLoading();
 
     const hash = (location.hash || '#secrets').slice(1);
@@ -1814,7 +1861,19 @@ async function loadProject() {
   document.getElementById('teamBadge').textContent = (data.members || []).length;
   document.getElementById('tokensBadge').textContent = (data.tokens || []).length;
 
-  await pullSecrets(false);
+  // Reset UI state before attempting pull
+  document.getElementById('statVersion').classList.remove('warning');
+  document.getElementById('editor').classList.remove('disabled');
+  document.getElementById('pushBtn').disabled = false;
+  document.getElementById('pullBtn').disabled = false;
+
+  try {
+    await pullSecrets(false);
+  } catch (error) {
+    // Password errors are handled in pullSecrets, but we want to continue
+    // rendering the rest of the UI even if secrets can't be loaded
+    // The editor and buttons will be disabled to prevent errors
+  }
 }
 
 function normalizeEnvs(envs) {
@@ -1846,17 +1905,34 @@ async function pullSecrets(showToast = true) {
     const result = await apiCall('/api/pull?' + buildQuery(state.project, state.env));
     const content = result.content || '';
     document.getElementById('editor').value = content;
+    document.getElementById('editor').classList.remove('disabled');
+    document.getElementById('editor').placeholder = 'DATABASE_URL=postgres://...\nAPI_KEY=sk-live-...\nNODE_ENV=production';
     document.getElementById('statVersion').textContent = 'v' + result.version;
+    document.getElementById('statVersion').classList.remove('warning');
     document.getElementById('statAuthor').textContent = result.by ? '@' + result.by : '';
+    document.getElementById('pushBtn').disabled = false;
+    document.getElementById('pullBtn').disabled = false;
+    document.getElementById('editorNote').classList.remove('warning');
+    document.getElementById('editorNote').textContent = 'Decrypted on this machine — server never sees values.';
     markClean(content);
     countKeys();
     if (showToast) toast('Pulled v' + result.version + ' — ' + result.keys + ' secrets', 'success');
   } catch (error) {
     document.getElementById('editor').value = '';
-    document.getElementById('statVersion').textContent = 'none';
-    document.getElementById('statAuthor').textContent = 'no push yet';
+    document.getElementById('editor').classList.add('disabled');
+    document.getElementById('editor').placeholder = 'Secrets unavailable — project password not set. Ask the project owner to push first.';
+    document.getElementById('statVersion').textContent = 'unavailable';
+    document.getElementById('statVersion').classList.add('warning');
+    document.getElementById('statAuthor').textContent = 'password not set';
+    document.getElementById('pushBtn').disabled = true;
+    document.getElementById('pullBtn').disabled = false; // Allow pull to retry
+    document.getElementById('editorNote').classList.add('warning');
+    document.getElementById('editorNote').textContent = '⚠ Password not set — Ask the project owner to push at least once first.';
     markClean('');
     countKeys();
+    if (!handlePasswordError(error.message) && showToast) {
+      toast(error.message, 'error');
+    }
   } finally {
     if (!showToast) hideLoading();
   }
@@ -1882,6 +1958,14 @@ async function pushSecrets() {
     toast('Editor is empty', 'error');
     return;
   }
+  
+  // Check if password is already known to be unavailable
+  const currentVersion = document.getElementById('statVersion').textContent;
+  if (currentVersion === 'unavailable') {
+    toast('Cannot push: project password not set. Ask owner to push first or run: dotsync init --rotate-password', 'error');
+    return;
+  }
+  
   const btn = document.getElementById('pushBtn');
   btn.disabled = true;
   btn.innerHTML = '<span class="spinner"></span> Pushing';
@@ -1892,6 +1976,7 @@ async function pushSecrets() {
       content
     });
     document.getElementById('statVersion').textContent = 'v' + result.version;
+    document.getElementById('statVersion').classList.remove('warning');
     markClean(document.getElementById('editor').value);
     countKeys();
     toast('Pushed v' + result.version + ' — ' + result.keys + ' keys encrypted', 'success');
@@ -1906,7 +1991,15 @@ async function pushSecrets() {
       document.getElementById('tokensBadge').textContent = (data.tokens || []).length;
     } catch (_) {}
   } catch (error) {
-    toast(error.message, 'error');
+    if (!handlePasswordError(error.message)) {
+      toast(error.message, 'error');
+    }
+    // Update UI to reflect password error state
+    if (error.message && (error.message.includes('password') || error.message.includes('decrypt'))) {
+      document.getElementById('statVersion').textContent = 'unavailable';
+      document.getElementById('statVersion').classList.add('warning');
+      document.getElementById('statAuthor').textContent = 'password error';
+    }
   } finally {
     btn.disabled = false;
     btn.innerHTML = '↑ Push';
@@ -1984,6 +2077,11 @@ async function loadHistory() {
     body.innerHTML = '<div class="empty"><div class="empty-icon">◷</div>Select a project first</div>';
     return;
   }
+  
+  // Check if password is available
+  const currentVersion = document.getElementById('statVersion').textContent;
+  const passwordUnavailable = currentVersion === 'unavailable';
+  
   body.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
   try {
     const result = await apiCall('/api/history?' + buildQuery(state.project, state.env));
@@ -1994,6 +2092,7 @@ async function loadHistory() {
     }
     body.innerHTML = history.map((entry, index) => {
       const isCurrent = index === 0;
+      const canRollback = !isCurrent && !passwordUnavailable;
       return '<div class="history-item">' +
         '<div class="version-badge ' + (isCurrent ? 'current' : 'old') + '">v' + entry.version + '</div>' +
         '<div style="flex: 1;">' +
@@ -2002,12 +2101,19 @@ async function loadHistory() {
         '</div>' +
         (isCurrent
           ? '<span class="badge badge-success">current</span>'
-          : '<button class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="rollback(' + entry.version + ')">↩ Restore</button>'
+          : (canRollback
+            ? '<button class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="rollback(' + entry.version + ')">↩ Restore</button>'
+            : '<span class="badge badge-muted" style="opacity: 0.5;">password required</span>'
+          )
         ) +
       '</div>';
     }).join('');
   } catch (error) {
-    body.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
+    if (handlePasswordError(error.message)) {
+      body.innerHTML = '<div class="empty"><div class="empty-icon">◷</div>Password not set — cannot load history</div>';
+    } else {
+      body.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
+    }
   }
 }
 
@@ -2016,6 +2122,7 @@ async function rollback(version) {
     toast('No project selected', 'error');
     return;
   }
+  
   if (!confirm('Restore v' + version + ' as new current version?')) return;
   showLoading('Rolling back to v' + version + '...');
   try {
@@ -2030,7 +2137,11 @@ async function rollback(version) {
     await pullSecrets(false);
   } catch (error) {
     hideLoading();
-    toast(error.message, 'error');
+    if (!handlePasswordError(error.message)) {
+      toast(error.message, 'error');
+    }
+    // Reload history to update UI state
+    loadHistory();
   }
 }
 
