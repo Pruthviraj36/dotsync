@@ -155,12 +155,11 @@ To see available versions: dotsync history`,
 			}
 
 			blank()
-			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim(fmt.Sprintf("v%d → v%d", version, result.Version))))
+			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim(fmt.Sprintf("v%d → v%d (rollback)", version, result.Version))))
 			blank()
 			kv("project", projCfg.ProjectSlug)
 			kv("env", env)
-			kvGreen("restor", fmt.Sprintf("v%d content", version))
-			kvGreen("New", fmt.Sprintf("v%d", result.Version))
+			kvGreen("restored", fmt.Sprintf("v%d content as v%d", version, result.Version))
 			kvDim("history", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
 			blank()
 
