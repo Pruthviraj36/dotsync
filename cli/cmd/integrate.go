@@ -47,18 +47,11 @@ func makeToken(client *api.Client, projectSlug, env, platform string) (string, e
 }
 
 func showToken(token, platform, env string) {
-	rl := ruleN(56)
+	sectionTitle("Service token · save it now")
+	item(cyan(token), "shown once; add it to your CI/CD secret store as DOTSYNC_TOKEN")
 	blank()
-	fmt.Println("  " + rl)
-	fmt.Printf("  %s\n", bold("Service Token  (shown once, save it now)"))
-	fmt.Println("  " + rl)
-	blank()
-	fmt.Printf("  %s\n", cyan(token))
-	blank()
-	fmt.Println("  " + rl)
-	blank()
-	fmt.Printf("  %s  %s\n", dim("Platform:"), platform)
-	fmt.Printf("  %s  %s\n", dim("Env:     "), env)
+	kv("platform", platform)
+	kv("environment", env)
 	blank()
 }
 

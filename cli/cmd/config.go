@@ -27,20 +27,18 @@ func configShowCmd() *cobra.Command {
 				return err
 			}
 
-			blank()
-			fmt.Printf("  %s\n", bold("CLI Configuration"))
-			blank()
+			sectionTitle("CLI configuration")
 
 			if cfg.ServerURL != "" {
 				kvCyan("server", cfg.ServerURL)
 			} else {
-				kv("Server", red("not set  ")+dim("→ dotsync config set-server <url>"))
+				kv("server", red("not set  ")+dim("→ dotsync config set-server <url>"))
 			}
 
 			if config.IsLoggedIn(cfg) {
 				kvCyan("account", "@"+cfg.Username)
 			} else {
-				kv("Account", dim("not logged in  ")+dim("→ dotsync login"))
+				kv("account", dim("not logged in  ")+dim("→ dotsync login"))
 			}
 
 			blank()

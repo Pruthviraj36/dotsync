@@ -51,54 +51,18 @@ func historyCmd() *cobra.Command {
 				return nil
 			}
 
-			// Pre-compute display values and column widths
-			type row struct{ ver, age, who string }
-			rows := make([]row, len(history))
-			verW, ageW, whoW := 7, 4, 3 // min widths
-			for i, e := range history {
-				t, _ := time.Parse(time.RFC3339, e.CreatedAt)
-				r := row{
-					ver: fmt.Sprintf("v%d", e.Version),
-					age: formatAge(t),
-					who: "@" + e.PushedBy,
-				}
-				rows[i] = r
-				if w := len(r.ver); w > verW { verW = w }
-				if w := len(r.age); w > ageW { ageW = w }
-				if w := len(r.who); w > whoW { whoW = w }
-			}
-
-			rw := verW + ageW + whoW + 10
-			rl := ruleN(rw)
-
-			blank()
-			fmt.Printf("  %s  %s/%s\n", bold("Version History"), boldCyan(projCfg.ProjectSlug), cyan(env))
-			blank()
-			tableHeader(rl,
-				[]string{"VERSION", "WHEN", "BY"},
-				[]int{verW, ageW, whoW},
-			)
-
-			for i, r := range rows {
-				marker := "   "
-				verColored := colDim(r.ver, verW)
+			sectionTitle("History · " + projCfg.ProjectSlug + "/" + env)
+			for i, entry := range history {
+				when, _ := time.Parse(time.RFC3339, entry.CreatedAt)
+				version := fmt.Sprintf("v%d", entry.Version)
 				if i == 0 {
-					marker = green(" ▶ ")
-					verColored = padRight(boldGreen(r.ver), verW)
+					item(boldGreen("● "+version+"  current"), "pushed by @"+entry.PushedBy+" · "+formatAge(when))
+				} else {
+					item(cyan(version), "pushed by @"+entry.PushedBy+" · "+formatAge(when)+" · restore: dotsync rollback "+fmt.Sprint(entry.Version))
 				}
-				tableRow(marker,
-					verColored,
-					colDim(r.age, ageW),
-					cyan(r.who),
-				)
 			}
-
-			fmt.Printf("%s%s\n", msgPad(), rl)
-			fmt.Printf("  %s version(s)  ·  %s to restore: %s\n",
-				dim(fmt.Sprintf("%d", len(history))),
-				dim("rollback"),
-				cyan(fmt.Sprintf("dotsync rollback %d", history[len(history)-1].Version)),
-			)
+			blank()
+			hint(fmt.Sprintf("%d versions · restore any earlier version with: dotsync rollback <version>", len(history)))
 			blank()
 			return nil
 		},
@@ -168,14 +132,8 @@ Key names are shown; values are never displayed.`,
 			remoteMap := cliCrypto.ParseEnvFile(remotePlain)
 			added, removed, changed := cliCrypto.DiffEnvFiles(remoteMap, localMap)
 
-			rw := 56
-			rl := ruleN(rw)
-
-			blank()
-			fmt.Printf("  %s  local .env vs %s/%s (%s)\n",
-				bold("Diff"), boldCyan(projCfg.ProjectSlug), cyan(env), green(fmt.Sprintf("v%d", remote.Version)))
-			blank()
-			fmt.Printf("%s%s\n", msgPad(), rl)
+			sectionTitle(fmt.Sprintf("Diff · %s/%s", projCfg.ProjectSlug, env))
+			fmt.Printf("  %s\n", dim("local .env vs remote "+fmt.Sprintf("v%d", remote.Version)))
 
 			if len(added)+len(removed)+len(changed) == 0 {
 				blank()
@@ -185,21 +143,26 @@ Key names are shown; values are never displayed.`,
 			}
 
 			for _, k := range added {
-				fmt.Printf("  %s  %s\n", green("+"), boldGreen(k))
+				item(green("added · ")+boldGreen(k), "present remotely but missing from local .env")
 			}
 			for _, k := range removed {
-				fmt.Printf("  %s  %s\n", red("−"), red(k))
+				item(red("removed · ")+red(k), "present locally but missing from remote")
 			}
 			for _, k := range changed {
-				fmt.Printf("  %s  %s\n", yellow("~"), yellow(k))
+				item(yellow("changed · ")+yellow(k), "key exists in both places with different values")
 			}
 
-			fmt.Printf("%s%s\n", msgPad(), rl)
 			parts := []string{}
-			if len(added) > 0   { parts = append(parts, green(fmt.Sprintf("+%d added", len(added)))) }
-			if len(removed) > 0 { parts = append(parts, red(fmt.Sprintf("−%d removed", len(removed)))) }
-			if len(changed) > 0 { parts = append(parts, yellow(fmt.Sprintf("~%d changed", len(changed)))) }
-			fmt.Printf("  %s\n", strings.Join(parts, "  "))
+			if len(added) > 0 {
+				parts = append(parts, green(fmt.Sprintf("+%d added", len(added))))
+			}
+			if len(removed) > 0 {
+				parts = append(parts, red(fmt.Sprintf("−%d removed", len(removed))))
+			}
+			if len(changed) > 0 {
+				parts = append(parts, yellow(fmt.Sprintf("~%d changed", len(changed))))
+			}
+			item(strings.Join(parts, " · "), "summary")
 			blank()
 			hint("Push local changes: dotsync push")
 			blank()
@@ -234,15 +197,13 @@ func envsCmd() *cobra.Command {
 				envs = []string{"dev", "staging", "production"}
 			}
 
-			blank()
-			fmt.Printf("  %s  %s\n", bold("Environments"), boldCyan(projCfg.ProjectSlug))
-			blank()
+			sectionTitle("Environments · " + projCfg.ProjectSlug)
 
 			for _, e := range envs {
 				if e == projCfg.DefaultEnv {
-					fmt.Printf("  %s %s  %s\n", green("▶"), boldGreen(e), dim("(default)"))
+					item(boldGreen(e)+"  (default)", "active project environment")
 				} else {
-					fmt.Printf("    %s\n", cyan(e))
+					item(cyan(e), "available environment")
 				}
 			}
 
@@ -265,18 +226,14 @@ func statusCmd() *cobra.Command {
 			cfg, _ := config.LoadGlobal()
 			projCfg, projErr := config.LoadProject()
 
-			blank()
-			fmt.Printf("  %s\n", bold("DotSync Status"))
-			blank()
+			sectionTitle("DotSync status")
 
 			// ── Auth ─────────────────────────────────────────────────────────
 			if config.IsLoggedIn(cfg) {
-				fmt.Printf("  %s  %s  %s\n",
-					bold("Account"), cyan("@"+cfg.Username), dim("connected"))
-				fmt.Printf("  %s  %s\n",
-					bold("server"), dim(cfg.ServerURL))
+				kvCyan("account", "@"+cfg.Username+" · connected")
+				kvDim("server", cfg.ServerURL)
 			} else {
-				fmt.Printf("  %s  %s\n", bold("Account"), red("not logged in"))
+				kvRed("account", "not logged in")
 				blank()
 				hint("dotsync login")
 				blank()
@@ -287,24 +244,24 @@ func statusCmd() *cobra.Command {
 
 			// ── Project ───────────────────────────────────────────────────────
 			if projErr != nil {
-				fmt.Printf("  %s  %s\n", bold("Project"), red("not linked"))
+				kvRed("project", "not linked")
 				blank()
 				hint("dotsync init")
 				blank()
 				return nil
 			}
 
-			fmt.Printf("  %s  %s\n", bold("Project"), boldCyan(projCfg.ProjectSlug))
-			fmt.Printf("  %s  %s\n", bold("Env    "), cyan(projCfg.DefaultEnv))
+			kvCyan("project", projCfg.ProjectSlug)
+			kvCyan("environment", projCfg.DefaultEnv)
 
 			client := api.New(cfg)
 
 			// ── Password ──────────────────────────────────────────────────────
 			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
 			if pwErr != nil {
-				fmt.Printf("  %s  %s\n", bold("Password"), red("not set  ")+dim("→ dotsync init --rotate-password"))
+				kv("password", red("not set")+dim(" → dotsync init --rotate-password"))
 			} else {
-				fmt.Printf("  %s  %s\n", bold("Password"), green("available"))
+				kvGreen("password", "available")
 			}
 
 			blank()
@@ -313,21 +270,17 @@ func statusCmd() *cobra.Command {
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {
-				fmt.Printf("  %s  %s\n", bold("remote"), yellow("could not reach server"))
+				kv("remote", yellow("could not reach server"))
 			} else if remoteVer == 0 {
-				fmt.Printf("  %s  %s\n", bold("remote"), dim("no secrets pushed yet"))
+				kvDim("remote", "no secrets pushed yet")
 				blank()
 				hint("dotsync push")
 			} else {
-				fmt.Printf("  %s  %s  %s\n",
-					bold("remote"),
-					green(fmt.Sprintf("v%d", remoteVer)),
-					dim("pushed by @"+pushedBy),
-				)
+				kv("remote", green(fmt.Sprintf("v%d", remoteVer))+dim(" · pushed by @"+pushedBy))
 				if _, err := os.Stat(".env"); err == nil {
-					fmt.Printf("  %s  %s\n", bold("local"), green(".env present  ")+dim("→ dotsync diff"))
+					kv("local", green(".env present")+dim(" → dotsync diff"))
 				} else {
-					fmt.Printf("  %s  %s\n", bold("local"), yellow("no .env  ")+dim("→ dotsync pull"))
+					kv("local", yellow("no .env")+dim(" → dotsync pull"))
 				}
 			}
 
@@ -335,10 +288,7 @@ func statusCmd() *cobra.Command {
 			members, err := client.ListTeamMembers(projCfg.ProjectSlug)
 			if err == nil {
 				blank()
-				fmt.Printf("  %s  %s\n",
-					bold("team"),
-					dim(fmt.Sprintf("%d member(s)  → dotsync team list", len(members))),
-				)
+				kvDim("team", fmt.Sprintf("%d member(s) → dotsync team list", len(members)))
 			}
 
 			blank()

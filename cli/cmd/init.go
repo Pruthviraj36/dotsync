@@ -43,14 +43,9 @@ The encryption password is fetched automatically.`,
 			blank()
 			if listErr == nil && len(projects) > 0 {
 				fmt.Println(ok(fmt.Sprintf("%s  %s", dim("logged in as"), boldCyan("@"+cfg.Username))))
-				blank()
-				fmt.Println(msgPad() + bold("your projects"))
+				sectionTitle("Your projects")
 				for _, p := range projects {
-					fmt.Printf("%s  %s  %s\n",
-						msgPad(),
-						boldCyan(fmt.Sprintf("%v", p["slug"])),
-						dim(fmt.Sprintf("%v", p["name"])),
-					)
+					item(boldCyan(fmt.Sprintf("%v", p["slug"])), fmt.Sprintf("%v", p["name"]))
 				}
 				blank()
 			}

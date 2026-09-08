@@ -31,7 +31,6 @@ Roles:
 	return cmd
 }
 
-
 func teamListCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:     "list",
@@ -53,7 +52,7 @@ func teamListCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			fmt.Println(ok("Loaded "+dim(fmt.Sprintf("%d members", len(members)))))
+			fmt.Println(ok("Loaded " + dim(fmt.Sprintf("%d members", len(members)))))
 
 			if len(members) == 0 {
 				blank()
@@ -64,29 +63,10 @@ func teamListCmd() *cobra.Command {
 				return nil
 			}
 
-			// Measure column widths from raw content
-			userW, roleW := 8, 4
-			for _, m := range members {
-				u, _ := m["username"].(string)
-				r, _ := m["role"].(string)
-				if w := len("@" + u); w > userW { userW = w }
-				if w := len(r);       w > roleW { roleW = w }
-			}
-			rw := userW + roleW + 12 + 6
-			ruler := ruleN(rw)
-
-			blank()
-			fmt.Println(prog("Team", boldCyan(projCfg.ProjectSlug)))
-			blank()
-			tableHeader(ruler,
-				[]string{"USERNAME", "ROLE", "JOINED"},
-				[]int{userW, roleW},
-			)
-
-			indent := msgPad()
+			sectionTitle("Team · " + projCfg.ProjectSlug)
 			for _, m := range members {
 				username, _ := m["username"].(string)
-				role, _     := m["role"].(string)
+				role, _ := m["role"].(string)
 				joinedAt, _ := m["joined_at"].(string)
 				age := ""
 				if len(joinedAt) >= 10 {
@@ -95,25 +75,12 @@ func teamListCmd() *cobra.Command {
 				unameRaw := "@" + username
 				isMe := username == cfg.Username
 
+				name := cyan(unameRaw)
 				if isMe {
-					// Highlight the current user's row entirely in bold cyan
-					fmt.Printf("%s%s  %s  %s\n",
-						indent,
-						padRight(boldCyan(unameRaw), userW),
-						padRight(boldCyan(role), roleW),
-						boldCyan(age),
-					)
-				} else {
-					fmt.Printf("%s%s  %s  %s\n",
-						indent,
-						padRight(colCyan(unameRaw, userW), userW),
-						padRight(roleColor(role), roleW),
-						dim(age),
-					)
+					name = boldCyan(unameRaw + "  (you)")
 				}
+				item(name, "role: "+role+" · joined "+age)
 			}
-
-			fmt.Printf("%s%s\n", indent, ruler)
 			blank()
 			hint("add:    dotsync team add <username>")
 			hint("remove: dotsync team remove <username>")
@@ -134,7 +101,7 @@ func teamAddCmd() *cobra.Command {
 
 They don't need to do anything to accept — just run dotsync init
 with your project slug. The password is fetched automatically.`,
-		Args:    cobra.ExactArgs(1),
+		Args: cobra.ExactArgs(1),
 		Example: `  dotsync team add alice
   dotsync team add bob --role viewer`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -238,7 +205,7 @@ func teamRoleCmd() *cobra.Command {
   admin   Push/pull all envs, invite and remove members
   member  Push and pull (default)
   viewer  Pull only — read-only`,
-		Args:    cobra.ExactArgs(2),
+		Args: cobra.ExactArgs(2),
 		Example: `  dotsync team role alice admin
   dotsync team role bob viewer`,
 		RunE: func(cmd *cobra.Command, args []string) error {

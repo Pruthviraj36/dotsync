@@ -80,11 +80,11 @@ func boldPurple(s string) string { return colorize(cBold+cBrightPurple, s) }
 
 const (
 	// Tier 1: progress verb column
-	verbCol   = 12
-	verbGap   = 2
+	verbCol = 12
+	verbGap = 2
 
 	// Tier 2: summary label column
-	lblCol    = 10 // left-aligned, no right-alignment
+	lblCol = 10 // left-aligned, no right-alignment
 )
 
 // ── Tier 1: progress lines ────────────────────────────────────────────────────
@@ -182,13 +182,6 @@ func termWidth() int {
 	return w
 }
 
-func ruleN(n int) string {
-	if n < 1 {
-		return ""
-	}
-	return dim(strings.Repeat("─", n))
-}
-
 // msgPad returns leading whitespace that aligns with the end of the verb column.
 // Use for hints and cmds that sit below a prog/ok line.
 func msgPad() string {
@@ -223,15 +216,6 @@ func padRight(s string, width int) string {
 	return s
 }
 
-func col(raw string, width int, colorFn func(string) string) string {
-	return padRight(colorFn(raw), width)
-}
-
-func colDim(raw string, width int) string   { return col(raw, width, dim) }
-func colCyan(raw string, width int) string  { return col(raw, width, cyan) }
-func colGreen(raw string, width int) string { return col(raw, width, green) }
-func colBold(raw string, width int) string  { return col(raw, width, bold) }
-
 // ── Layout helpers ────────────────────────────────────────────────────────────
 
 func blank() { fmt.Println() }
@@ -240,42 +224,14 @@ func hint(s string) { fmt.Printf("%s%s\n", msgPad(), dim(s)) }
 
 func cmdHint(s string) { fmt.Printf("%s%s\n", msgPad(), cyan(s)) }
 
-// tableHeader prints a ruled table header indented to the summary block indent.
-func tableHeader(ruler string, cols []string, widths []int) {
-	pad := "  "
-	fmt.Println(pad + ruler)
-	fmt.Print(pad)
-	for i, c := range cols {
-		if i < len(cols)-1 {
-			fmt.Print(padRight(bold(c), widths[i]))
-			fmt.Print("  ")
-		} else {
-			fmt.Print(bold(c))
-		}
+// item uses a vertical, narrative layout rather than a terminal table. It is
+// readable in narrow terminals and when pasted into a ticket or CI log.
+func item(primary, detail string) {
+	if detail == "" {
+		fmt.Printf("  %s %s\n", cyan("•"), primary)
+		return
 	}
-	fmt.Println()
-	fmt.Println(pad + ruler)
-}
-
-// tableRow prints a data row.
-func tableRow(marker string, cells ...string) {
-	pad := "  "
-	if marker != "" {
-		mLen := visibleLen(marker)
-		extra := 2 - mLen
-		if extra < 0 {
-			extra = 0
-		}
-		pad = marker + strings.Repeat(" ", extra)
-	}
-	fmt.Print(pad)
-	for i, c := range cells {
-		if i > 0 {
-			fmt.Print("  ")
-		}
-		fmt.Print(c)
-	}
-	fmt.Println()
+	fmt.Printf("  %s %s\n    %s\n", cyan("•"), primary, dim(detail))
 }
 
 func sectionTitle(s string) {

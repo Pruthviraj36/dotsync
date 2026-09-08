@@ -2,7 +2,6 @@ package cmd
 
 import (
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -80,20 +79,13 @@ user tokens in logs and dashboards.`,
 				return fmt.Errorf("create token: %w", err)
 			}
 
-			rule := strings.Repeat("─", 64)
-
-			fmt.Println()
 			fmt.Println(ok("Service token created."))
-			fmt.Println()
-			fmt.Println(rule)
-			fmt.Println()
-			fmt.Printf("  %s\n", bold("Token"))
-			fmt.Printf("  %s\n\n", cyan(token))
-			fmt.Printf("  %s  %s\n", bold("Project:"), projCfg.ProjectSlug)
-			fmt.Printf("  %s  %s\n", bold("Env:    "), env)
-			fmt.Printf("  %s  %s\n", bold("Name:   "), name)
-			fmt.Println()
-			fmt.Println(rule)
+			sectionTitle("Service token · save it now")
+			item(cyan(token), "shown once; store it in your CI/CD secret manager immediately")
+			blank()
+			kvCyan("project", projCfg.ProjectSlug)
+			kvCyan("environment", env)
+			kv("name", name)
 			fmt.Println()
 			fmt.Println(warn("This token is shown ONCE. Copy it now — it cannot be retrieved again."))
 			fmt.Println()
@@ -122,8 +114,8 @@ user tokens in logs and dashboards.`,
 
 func tokensListCmd() *cobra.Command {
 	cmd := &cobra.Command{
-		Use:   "list",
-		Short: "List service tokens for this project",
+		Use:     "list",
+		Short:   "List service tokens for this project",
 		Example: `  dotsync tokens list`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
@@ -153,48 +145,21 @@ func tokensListCmd() *cobra.Command {
 				return nil
 			}
 
-			// Measure column widths from raw content
-			nameW, envW, createdW := 4, 3, 7
-			for _, t := range tokens {
-				if w := len(truncate(str(t["name"]), 28)); w > nameW    { nameW = w }
-				if w := len(str(t["env"]));                w > envW      { envW = w }
-				if w := len(parseTime(str(t["created_at"]))); w > createdW { createdW = w }
-			}
-
-			rw := nameW + 2 + envW + 2 + createdW + 2 + 10
-			rl := ruleN(rw)
-
-			fmt.Println()
-			fmt.Printf("  %s  %s\n", bold("Service Tokens"), boldCyan(projCfg.ProjectSlug))
-			blank()
-
-			tableHeader(rl,
-				[]string{"NAME", "ENV", "CREATED", "LAST USED"},
-				[]int{nameW, envW, createdW},
-			)
+			sectionTitle("Service tokens · " + projCfg.ProjectSlug)
 
 			for _, t := range tokens {
-				name      := str(t["name"])
-				env       := str(t["env"])
-				id        := str(t["id"])
+				name := str(t["name"])
+				env := str(t["env"])
+				id := str(t["id"])
 				createdAt := parseTime(str(t["created_at"]))
-				lastUsed  := "never"
+				lastUsed := "never"
 				if lu, ok := t["last_used_at"]; ok && lu != nil && lu != "" {
 					lastUsed = parseTime(str(lu))
 				}
-				tableRow("  ",
-					colDim(truncate(name, nameW), nameW),
-					padRight(cyan(env), envW),
-					colDim(createdAt, createdW),
-					dim(lastUsed),
-				)
-				fmt.Printf("  %s  id: %s\n",
-					padRight("", nameW+2+envW+2+createdW), dim(id))
+				item(cyan(name), "environment: "+env+" · created "+createdAt+" · last used "+lastUsed+"\n    id: "+id)
 			}
-
-			fmt.Printf("%s%s\n", msgPad(), rl)
-			fmt.Printf("  %s\n\n", dim(fmt.Sprintf(
-				"%d token(s)  ·  revoke with: dotsync tokens revoke <id>", len(tokens))))
+			blank()
+			hint(fmt.Sprintf("%d token(s) · revoke one with: dotsync tokens revoke <id>", len(tokens)))
 			return nil
 		},
 	}

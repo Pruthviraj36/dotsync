@@ -186,7 +186,7 @@ and writes your .env. The server never sees plaintext.`,
 				}
 				switch {
 				case verified:
-					fmt.Println(info(dim("signature verified · @"+result.PushedBy+" (ed25519)")))
+					fmt.Println(info(dim("signature verified · @" + result.PushedBy + " (ed25519)")))
 				case len(result.Signature) == 0:
 					fmt.Println(dim(msgPad() + "no signature on this version"))
 				}

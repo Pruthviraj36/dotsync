@@ -64,9 +64,7 @@ To see available versions: dotsync history`,
 				return nil
 			}
 
-			blank()
-			fmt.Printf("  %s  %s/%s\n", bold("Rollback"), boldCyan(projCfg.ProjectSlug), cyan(env))
-			blank()
+			sectionTitle("Rollback · " + projCfg.ProjectSlug + "/" + env)
 			kv("From", fmt.Sprintf("v%d", currentVersion))
 			kvCyan("Target", fmt.Sprintf("v%d", version))
 			blank()
@@ -109,12 +107,10 @@ To see available versions: dotsync history`,
 
 			// Confirmation prompt
 			if !forceFlag {
-				rl := ruleN(48)
-				fmt.Println("  " + rl)
+				sectionTitle(fmt.Sprintf("Restore v%d", version))
 				for k := range parsed {
-					fmt.Printf("  %s  %s\n", dim("·"), cyan(k))
+					item(cyan(k), "")
 				}
-				fmt.Println("  " + rl)
 				blank()
 				fmt.Printf("  Re-encrypt v%d content and push as %s? [y/N]: ",
 					version, green(fmt.Sprintf("v%d", currentVersion+1)))
@@ -155,7 +151,7 @@ To see available versions: dotsync history`,
 			}
 
 			blank()
-			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env)+" "+dim(fmt.Sprintf("v%d → v%d (rollback)", version, result.Version))))
+			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env) + " " + dim(fmt.Sprintf("v%d → v%d (rollback)", version, result.Version))))
 			blank()
 			kv("project", projCfg.ProjectSlug)
 			kv("env", env)

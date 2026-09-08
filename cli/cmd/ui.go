@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -12,6 +13,7 @@ import (
 	"os/signal"
 	"runtime"
 	"strings"
+	"sync"
 	"syscall"
 	"time"
 
@@ -20,6 +22,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/identity"
 )
 
 const (
@@ -27,7 +30,42 @@ const (
 	uiReadTimeout  = 10 * time.Second
 	uiWriteTimeout = 0 // disabled for SSE streaming
 	uiIdleTimeout  = 60 * time.Second
+	uiMaxRunOutput = 1 << 20 // 1 MB; prevents a command from exhausting the UI server
 )
+
+type uiLimitedBuffer struct {
+	mu        sync.Mutex
+	buf       bytes.Buffer
+	limit     int
+	truncated bool
+}
+
+func (b *uiLimitedBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	remaining := b.limit - b.buf.Len()
+	if remaining <= 0 {
+		b.truncated = true
+		return len(p), nil
+	}
+	if len(p) > remaining {
+		_, _ = b.buf.Write(p[:remaining])
+		b.truncated = true
+		return len(p), nil
+	}
+	_, _ = b.buf.Write(p)
+	return len(p), nil
+}
+
+func (b *uiLimitedBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	output := b.buf.String()
+	if b.truncated {
+		output += "\n[output truncated at 1 MB]"
+	}
+	return output
+}
 
 func validUISlug(slug string) bool {
 	switch strings.TrimSpace(slug) {
@@ -49,7 +87,7 @@ func uiCmd() *cobra.Command {
 in your browser. All operations run locally — secrets are encrypted
 on your machine, same as the CLI. The server never sees plaintext.`,
 		Example: `  dotsync ui
-  dotsync ui --port 4041
+	  dotsync ui --port 4041
   dotsync ui --no-open`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
@@ -57,7 +95,6 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return err
 			}
 			projCfg, _ := config.LoadProject()
-
 			listener, err := net.Listen("tcp", "127.0.0.1:"+portFlag)
 			if err != nil {
 				return fmt.Errorf("port %s is in use — try: dotsync ui --port 4041", portFlag)
@@ -139,6 +176,60 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"history": history}, nil
 			}))
 
+			// Diff is deliberately key-only, like `dotsync diff`: values never
+			// appear in this response even though both sides are decrypted locally.
+			mux.HandleFunc("/api/diff", uiHandler(func(r *http.Request) (any, error) {
+				slug, env := r.URL.Query().Get("slug"), r.URL.Query().Get("env")
+				if !validUISlug(slug) || strings.TrimSpace(env) == "" {
+					return nil, fmt.Errorf("slug and env are required")
+				}
+				local, err := os.ReadFile(".env")
+				if err != nil {
+					return nil, fmt.Errorf("read local .env: %w", err)
+				}
+				remote, err := client.Pull(slug, env)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := verifySignature(remote.EncryptedData, remote.Signature, remote.PushedByPubKey); err != nil {
+					return nil, fmt.Errorf("signature verification failed: %w", err)
+				}
+				password, err := resolvePassword(client, slug)
+				if err != nil {
+					return nil, err
+				}
+				plain, err := cliCrypto.DecryptEnvFile(remote.EncryptedData, remote.Nonce, password, slug)
+				if err != nil {
+					return nil, fmt.Errorf("decryption failed: %w", err)
+				}
+				added, removed, changed := cliCrypto.DiffEnvFiles(cliCrypto.ParseEnvFile(plain), cliCrypto.ParseEnvFile(string(local)))
+				return map[string]any{"version": remote.Version, "added": added, "removed": removed, "changed": changed}, nil
+			}))
+
+			mux.HandleFunc("/api/version", uiHandler(func(r *http.Request) (any, error) {
+				slug, env := r.URL.Query().Get("slug"), r.URL.Query().Get("env")
+				var version int
+				if _, err := fmt.Sscanf(r.URL.Query().Get("version"), "%d", &version); err != nil || !validUISlug(slug) || env == "" || version < 1 {
+					return nil, fmt.Errorf("slug, env, and a positive version are required")
+				}
+				remote, err := client.PullVersion(slug, env, version)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := verifySignature(remote.EncryptedData, remote.Signature, remote.PushedByPubKey); err != nil {
+					return nil, fmt.Errorf("signature verification failed: %w", err)
+				}
+				password, err := resolvePassword(client, slug)
+				if err != nil {
+					return nil, err
+				}
+				plain, err := cliCrypto.DecryptEnvFile(remote.EncryptedData, remote.Nonce, password, slug)
+				if err != nil {
+					return nil, fmt.Errorf("decryption failed: %w", err)
+				}
+				return map[string]any{"content": plain, "keys": len(cliCrypto.ParseEnvFile(plain)), "version": remote.Version, "by": remote.PushedBy}, nil
+			}))
+
 			mux.HandleFunc("/api/pull", uiHandler(func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
@@ -151,6 +242,11 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				result, err := client.Pull(slug, env)
 				if err != nil {
 					return nil, err
+				}
+				if verified, verifyErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey); verifyErr != nil {
+					return nil, fmt.Errorf("signature verification failed: %w", verifyErr)
+				} else if !verified && len(result.Signature) > 0 {
+					return nil, fmt.Errorf("refusing to decrypt an unverified version")
 				}
 				password, err := resolvePassword(client, slug)
 				if err != nil {
@@ -192,9 +288,17 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err != nil {
 					return nil, fmt.Errorf("encryption failed: %w", err)
 				}
+				signature, _, pub, err := ensureIdentityAndSign(ciphertext)
+				if err != nil {
+					return nil, fmt.Errorf("sign encryption: %w", err)
+				}
+				// A failed public-key sync should not discard a valid local push; it
+				// will be retried by the next signed operation, matching `dotsync push`.
+				_ = client.SetPubKey(identity.Hex(pub))
 				result, err := client.Push(req.Slug, req.Env, api.PushRequest{
 					EncryptedData: ciphertext,
 					Nonce:         nonce,
+					Signature:     signature,
 				})
 				if err != nil {
 					return nil, err
@@ -295,6 +399,11 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err != nil {
 					return nil, fmt.Errorf("fetch v%d: %w", req.Version, err)
 				}
+				if verified, verifyErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); verifyErr != nil {
+					return nil, fmt.Errorf("signature verification failed: %w", verifyErr)
+				} else if !verified && len(old.Signature) > 0 {
+					return nil, fmt.Errorf("refusing to roll back to an unverified version")
+				}
 				password, err := resolvePassword(client, req.Slug)
 				if err != nil {
 					return nil, err
@@ -309,14 +418,101 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if err != nil {
 					return nil, fmt.Errorf("re-encrypt: %w", err)
 				}
+				signature, _, pub, err := ensureIdentityAndSign(ciphertext)
+				if err != nil {
+					return nil, fmt.Errorf("sign encryption: %w", err)
+				}
+				_ = client.SetPubKey(identity.Hex(pub))
 				result, err := client.Push(req.Slug, req.Env, api.PushRequest{
 					EncryptedData: ciphertext,
 					Nonce:         nonce,
+					Signature:     signature,
 				})
 				if err != nil {
 					return nil, err
 				}
 				return map[string]any{"version": result.Version}, nil
+			}))
+
+			// Keep the UI's project context in sync with the CLI's .dotsync.json.
+			// This is intentionally explicit: selecting a project in the dashboard
+			// does not silently relink the folder.
+			mux.HandleFunc("/api/workspace", uiHandler(func(r *http.Request) (any, error) {
+				project, err := config.LoadProject()
+				if err != nil {
+					return map[string]any{"linked": false}, nil
+				}
+				return map[string]any{"linked": true, "project": project}, nil
+			}))
+
+			mux.HandleFunc("/api/workspace/link", uiPostHandler(func(body []byte) (any, error) {
+				var req struct {
+					Slug string `json:"slug"`
+					Env  string `json:"env"`
+				}
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if !validUISlug(req.Slug) || strings.TrimSpace(req.Env) == "" {
+					return nil, fmt.Errorf("slug and environment are required")
+				}
+				if err := config.SaveProject(&config.ProjectConfig{ProjectSlug: strings.TrimSpace(req.Slug), DefaultEnv: strings.TrimSpace(req.Env)}); err != nil {
+					return nil, err
+				}
+				return map[string]any{"ok": true}, nil
+			}))
+
+			// This is the browser counterpart of `dotsync run -- <command>`.
+			// It never writes the decrypted environment to disk; it is passed only
+			// to the child process. A bounded context prevents a stale dashboard
+			// request from leaving a command running forever.
+			mux.HandleFunc("/api/run", uiPostHandler(func(body []byte) (any, error) {
+				var req struct {
+					Slug string   `json:"slug"`
+					Env  string   `json:"env"`
+					Args []string `json:"args"`
+				}
+				if err := json.Unmarshal(body, &req); err != nil {
+					return nil, fmt.Errorf("invalid request: %w", err)
+				}
+				if !validUISlug(req.Slug) || strings.TrimSpace(req.Env) == "" || len(req.Args) == 0 || strings.TrimSpace(req.Args[0]) == "" {
+					return nil, fmt.Errorf("project, environment, and command are required")
+				}
+				remote, err := client.Pull(req.Slug, req.Env)
+				if err != nil {
+					return nil, err
+				}
+				if _, err := verifySignature(remote.EncryptedData, remote.Signature, remote.PushedByPubKey); err != nil {
+					return nil, fmt.Errorf("signature verification failed: %w", err)
+				}
+				password, err := resolvePassword(client, req.Slug)
+				if err != nil {
+					return nil, err
+				}
+				plain, err := cliCrypto.DecryptEnvFile(remote.EncryptedData, remote.Nonce, password, req.Slug)
+				if err != nil {
+					return nil, fmt.Errorf("decryption failed: %w", err)
+				}
+				env := os.Environ()
+				for key, value := range cliCrypto.ParseEnvFile(plain) {
+					env = append(env, key+"="+value)
+				}
+				runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
+				defer cancel()
+				command := exec.CommandContext(runCtx, req.Args[0], req.Args[1:]...)
+				command.Env = env
+				output := &uiLimitedBuffer{limit: uiMaxRunOutput}
+				command.Stdout, command.Stderr = output, output
+				runErr := command.Run()
+				result := map[string]any{"output": output.String(), "exit_code": 0}
+				if runErr != nil {
+					result["exit_code"] = 1
+					result["run_error"] = runErr.Error()
+					if runCtx.Err() != nil {
+						result["run_error"] = "command timed out after 2 minutes"
+					}
+				}
+				return result, nil
 			}))
 
 			mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
@@ -2310,6 +2506,10 @@ body {
         <span class="nav-icon">☰</span>
         Audit Log
       </div>
+      <div class="nav-item" data-page="workspace" onclick="navigate(this, 'workspace')">
+        <span class="nav-icon">⌘</span>
+        Workspace
+      </div>
     </div>
     <div class="sidebar-footer">
       <div id="serverInfo">—</div>
@@ -2441,6 +2641,51 @@ body {
             <div class="empty-icon">☰</div>
             Loading...
           </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Workspace Page -->
+    <div class="page" id="page-workspace">
+      <div class="stats-grid">
+        <div class="stat-card">
+          <div class="stat-label">Local state</div>
+          <div class="stat-value" id="workspaceState">—</div>
+          <div class="stat-sub">.dotsync.json</div>
+        </div>
+        <div class="stat-card">
+          <div class="stat-label">Remote comparison</div>
+          <div class="stat-value" id="diffSummary">—</div>
+          <div class="stat-sub">key names only</div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header">
+          <div class="card-title">Local .env vs remote</div>
+          <div class="card-actions"><button class="btn btn-secondary" onclick="loadDiff()">⇄ Compare</button></div>
+        </div>
+        <div class="card-body" id="diffBody"><div class="empty">Compare your on-disk <code>.env</code> with the selected remote environment. Values are never displayed.</div></div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Link this workspace</div></div>
+        <div class="card-body">
+          <div class="form-row">
+            <select class="select" id="workspaceProject" style="flex: 1;"></select>
+            <select class="select" id="workspaceEnv" style="width: 150px;"></select>
+            <button class="btn btn-primary" onclick="linkWorkspace()">Link folder</button>
+          </div>
+          <p class="editor-note" style="margin-top: 12px;">Updates only this folder’s <code>.dotsync.json</code>; it does not change the selected dashboard project.</p>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-header"><div class="card-title">Run with secrets</div><span class="badge badge-muted">zero disk</span></div>
+        <div class="card-body">
+          <div class="form-row">
+            <input class="input" id="runCommand" placeholder="npm test" style="flex:1; font-family:var(--font-mono);" onkeydown="if(event.key==='Enter')runWithSecrets()">
+            <button class="btn btn-success" onclick="runWithSecrets()">▶ Run</button>
+          </div>
+          <div class="editor-note" style="margin-top:12px;">The selected environment is injected into the child process only. Commands run in this workspace and stop after 2 minutes.</div>
+          <pre id="runOutput" class="editor" style="min-height:80px;max-height:260px;margin-top:12px;white-space:pre-wrap;" aria-live="polite">Output will appear here.</pre>
         </div>
       </div>
     </div>
@@ -2921,10 +3166,11 @@ async function loadHistory() {
       const canRollback = !isCurrent && !passwordUnavailable;
       
       let actionBadge = '';
+      const inspect = '<button class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="inspectVersion(' + entry.version + ')">View</button>';
       if (isCurrent) {
-        actionBadge = '<span class="badge badge-success">current</span>';
+        actionBadge = inspect + '<span class="badge badge-success">current</span>';
       } else if (canRollback) {
-        actionBadge = '<button class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="rollback(' + entry.version + ')">↩ Restore</button>';
+        actionBadge = inspect + '<button class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="rollback(' + entry.version + ')">↩ Restore</button>';
       } else {
         actionBadge = '<span class="badge badge-muted" style="opacity: 0.5;">password required</span>';
       }
@@ -2945,6 +3191,103 @@ async function loadHistory() {
       body.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
     }
   }
+}
+
+async function inspectVersion(version) {
+  if (!confirmDiscard()) return;
+  showLoading('Decrypting v' + version + ' locally...');
+  try {
+    const result = await apiCall('/api/version?' + buildQuery(state.project, state.env) + '&version=' + encodeURIComponent(version));
+    document.getElementById('editor').value = result.content || '';
+    document.getElementById('statVersion').textContent = 'v' + result.version + ' preview';
+    document.getElementById('statAuthor').textContent = result.by ? '@' + result.by : '';
+    countKeys();
+    // A preview must never be mistaken for the current editor baseline.
+    state.baseline = '__preview__';
+    setDirtyUI();
+    navigate(document.querySelector('.nav-item[data-page="secrets"]'), 'secrets');
+    toast('Viewing v' + version + ' — push to make a new current version', 'info');
+  } catch (error) { toast(error.message, 'error'); }
+  finally { hideLoading(); }
+}
+
+async function loadWorkspace() {
+  const projectSelect = document.getElementById('workspaceProject');
+  const envSelect = document.getElementById('workspaceEnv');
+  const projects = Array.from(document.getElementById('projectSelect').options).filter(o => isValidSlug(o.value));
+  projectSelect.innerHTML = projects.map(o => '<option value="' + escapeHtml(o.value) + '">' + escapeHtml(o.textContent) + '</option>').join('');
+  projectSelect.value = state.project || '';
+  const envs = normalizeEnvs(state.data && state.data.envs);
+  envSelect.innerHTML = envs.map(e => '<option value="' + escapeHtml(e) + '">' + escapeHtml(e) + '</option>').join('');
+  envSelect.value = state.env;
+  try {
+    const workspace = await apiCall('/api/workspace');
+    const linked = workspace.linked && workspace.project;
+    document.getElementById('workspaceState').textContent = linked ? 'linked' : 'unlinked';
+    if (linked) {
+      projectSelect.value = workspace.project.project_slug || state.project;
+      envSelect.value = workspace.project.default_env || state.env;
+    }
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function linkWorkspace() {
+  const slug = document.getElementById('workspaceProject').value;
+  const env = document.getElementById('workspaceEnv').value;
+  try {
+    await apiPost('/api/workspace/link', { slug, env });
+    document.getElementById('workspaceState').textContent = 'linked';
+    toast('Workspace linked to ' + slug + '/' + env, 'success');
+  } catch (error) { toast(error.message, 'error'); }
+}
+
+async function loadDiff() {
+  const body = document.getElementById('diffBody');
+  body.innerHTML = '<div class="empty"><span class="spinner"></span></div>';
+  try {
+    const result = await apiCall('/api/diff?' + buildQuery(state.project, state.env));
+    const rows = [];
+    (result.added || []).forEach(k => rows.push('<span style="color:var(--success)">+ ' + escapeHtml(k) + '</span>'));
+    (result.removed || []).forEach(k => rows.push('<span style="color:var(--error)">− ' + escapeHtml(k) + '</span>'));
+    (result.changed || []).forEach(k => rows.push('<span style="color:var(--warning)">~ ' + escapeHtml(k) + '</span>'));
+    document.getElementById('diffSummary').textContent = rows.length ? rows.length + ' changes' : 'in sync';
+    body.innerHTML = rows.length ? '<div style="display:grid;gap:6px;font-family:var(--font-mono);font-size:12px;">' + rows.join('') + '</div>' : '<div class="empty">✓ Local .env is in sync with remote v' + result.version + '.</div>';
+  } catch (error) {
+    document.getElementById('diffSummary').textContent = 'unavailable';
+    body.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
+  }
+}
+
+// Simple shell-like argument splitting deliberately supports quoted paths and
+// arguments, but does not invoke a shell. That keeps the run action equivalent to the
+// CLI argv execution and avoids shell interpolation surprises.
+function commandArgs(input) {
+  const args = [];
+  let token = '', quote = null, escaped = false;
+  for (const char of input.trim()) {
+    if (escaped) { token += char; escaped = false; continue; }
+    if (char === '\\') { escaped = true; continue; }
+    if (quote) { if (char === quote) quote = null; else token += char; continue; }
+    if (char === '"' || char === "'") { quote = char; continue; }
+    if (/\s/.test(char)) { if (token) { args.push(token); token = ''; } continue; }
+    token += char;
+  }
+  if (escaped || quote) throw new Error('Command has an unfinished quote or escape');
+  if (token) args.push(token);
+  return args;
+}
+
+async function runWithSecrets() {
+  const output = document.getElementById('runOutput');
+  try {
+    const args = commandArgs(document.getElementById('runCommand').value);
+    if (!args.length) throw new Error('Enter a command to run');
+    if (!confirm('Run "' + args.join(' ') + '" with ' + state.project + '/' + state.env + ' secrets?')) return;
+    output.textContent = 'Running…';
+    const result = await apiPost('/api/run', { slug: state.project, env: state.env, args });
+    output.textContent = (result.output || '') + (result.run_error ? '\n' + result.run_error : '');
+    toast(result.run_error ? 'Command exited with an error' : 'Command completed', result.run_error ? 'error' : 'success');
+  } catch (error) { output.textContent = error.message; toast(error.message, 'error'); }
 }
 
 async function rollback(version) {
@@ -3166,6 +3509,7 @@ function navigate(element, page) {
   closeSidebar();
   if (page === 'history') loadHistory();
   if (page === 'audit' && state.data) renderAudit(state.data.logs || []);
+  if (page === 'workspace') loadWorkspace();
 }
 
 let sseConnection = null;

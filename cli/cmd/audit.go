@@ -3,6 +3,7 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -55,19 +56,19 @@ Available to all users — no plan required.`,
 				return nil
 			}
 
-			type row struct{ when, who, action, env, detail string }
-			rows := make([]row, 0, len(logs))
+			type event struct{ when, who, action, env, detail string }
+			events := make([]event, 0, len(logs))
 			for _, entry := range logs {
-				action, _    := entry["action"].(string)
-				username, _  := entry["username"].(string)
-				envName, _   := entry["env"].(string)
+				action, _ := entry["action"].(string)
+				username, _ := entry["username"].(string)
+				envName, _ := entry["env"].(string)
 				createdAt, _ := entry["created_at"].(string)
-				metaStr, _   := entry["metadata"].(string)
+				metaStr, _ := entry["metadata"].(string)
 				age := ""
 				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
 					age = formatAge(t)
 				}
-				rows = append(rows, row{
+				events = append(events, event{
 					when:   age,
 					who:    "@" + username,
 					action: action,
@@ -76,44 +77,23 @@ Available to all users — no plan required.`,
 				})
 			}
 
-			// Measure column widths by raw (uncolored) content
-			whenW, whoW, actionW, envW := 4, 3, 6, 3
-			for _, r := range rows {
-				if w := len(r.when);   w > whenW   { whenW = w }
-				if w := len(r.who);    w > whoW     { whoW = w }
-				if w := len(r.action); w > actionW  { actionW = w }
-				if w := len(r.env);    w > envW     { envW = w }
-			}
-
-			// Rule width = sum of cols + separators (2 per gap)
-			rw := whenW + 2 + whoW + 2 + actionW + 2 + envW + 2 + 8 // 8 for DETAIL label
-			rl := ruleN(rw)
-
 			title := fmt.Sprintf("Audit Log  %s", projCfg.ProjectSlug)
 			if envFlag != "" {
 				title += "  " + envFlag
 			}
 
-			blank()
-			fmt.Printf("  %s\n", bold(title))
-			blank()
-			tableHeader(rl,
-				[]string{"WHEN", "WHO", "ACTION", "ENV", "DETAIL"},
-				[]int{whenW, whoW, actionW, envW},
-			)
-
-			for _, r := range rows {
-				tableRow("  ",
-					colDim(r.when, whenW),
-					colCyan(r.who, whoW),
-					padRight(actionColor(r.action), actionW),
-					padRight(blue(r.env), envW),
-					dim(r.detail),
-				)
+			sectionTitle(title)
+			for _, event := range events {
+				detail := "@" + strings.TrimPrefix(event.who, "@") + " · " + event.when
+				if event.env != "" {
+					detail += " · " + event.env
+				}
+				if event.detail != "" {
+					detail += " · " + event.detail
+				}
+				item(actionColor(event.action), detail)
 			}
-
-			fmt.Printf("%s%s\n", msgPad(), rl)
-			fmt.Printf("  %s\n", dim(fmt.Sprintf("%d event(s)", len(rows))))
+			hint(fmt.Sprintf("%d event(s)", len(events)))
 			blank()
 			return nil
 		},

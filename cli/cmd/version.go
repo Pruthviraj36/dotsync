@@ -48,85 +48,51 @@ func versionCmd() *cobra.Command {
 			cfg, _ := config.LoadGlobal()
 			projCfg, _ := config.LoadProject()
 
-			w := termWidth()
-			rule := dim(strings.Repeat("─", w-2))
-
-			blank()
-
-			// ── Title bar ─────────────────────────────────────────────────────
-			fmt.Printf("  %s  %s",
-				boldCyan("dotsync"),
-				bold(version),
-			)
+			sectionTitle("dotsync " + version)
 			if revision != "" {
 				rev := revision
 				if dirty {
 					rev += dim("+dirty")
 				}
-				fmt.Printf("  %s", dim(rev))
+				kvDim("commit", rev)
 			}
 			if buildTime != "" {
-				fmt.Printf("  %s", dim(buildTime))
+				kvDim("built", buildTime)
 			}
-			fmt.Println()
 
-			// ── Horizontal rule ───────────────────────────────────────────────
-			fmt.Printf("  %s\n", rule)
-			blank()
-
-			// ── Build section ─────────────────────────────────────────────────
-			fmt.Printf("  %s\n", dim("build"))
-			fmt.Printf("  %-10s  %s\n", dim("platform"), bold(fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)))
-			fmt.Printf("  %-10s  %s\n", dim("go"), dim(strings.TrimPrefix(runtime.Version(), "go")))
+			sectionTitle("Build")
+			kv("platform", bold(fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)))
+			kvDim("go", strings.TrimPrefix(runtime.Version(), "go"))
 			if revision != "" {
 				revDisplay := revision
 				if dirty {
 					revDisplay += "  " + yellow("(modified)")
 				}
-				fmt.Printf("  %-10s  %s\n", dim("commit"), dim(revDisplay))
+				kvDim("commit", revDisplay)
 			}
 
-			blank()
-
-			// ── Context section ───────────────────────────────────────────────
-			fmt.Printf("  %s\n", dim("context"))
+			sectionTitle("Context")
 
 			// Server
 			if cfg != nil && cfg.ServerURL != "" {
-				fmt.Printf("  %-10s  %s\n", dim("server"), cyan(cfg.ServerURL))
+				kvCyan("server", cfg.ServerURL)
 			} else {
-				fmt.Printf("  %-10s  %s  %s\n", dim("server"),
-					red("not configured"),
-					dim("→ dotsync config set-server <url>"),
-				)
+				kv("server", red("not configured")+dim(" → dotsync config set-server <url>"))
 			}
 
 			// Account
 			if cfg != nil && cfg.Username != "" {
-				fmt.Printf("  %-10s  %s\n", dim("logged in"), boldCyan("@"+cfg.Username))
+				kvCyan("account", "@"+cfg.Username)
 			} else {
-				fmt.Printf("  %-10s  %s  %s\n", dim("logged in"),
-					red("no"),
-					dim("→ dotsync login"),
-				)
+				kv("account", red("not logged in")+dim(" → dotsync login"))
 			}
 
 			// Project
 			if projCfg != nil {
-				fmt.Printf("  %-10s  %s  %s\n",
-					dim("project"),
-					bold(projCfg.ProjectSlug),
-					dim(projCfg.DefaultEnv),
-				)
+				kv("project", bold(projCfg.ProjectSlug)+dim(" · "+projCfg.DefaultEnv))
 			} else {
-				fmt.Printf("  %-10s  %s  %s\n", dim("project"),
-					dim("none"),
-					dim("→ dotsync init"),
-				)
+				kv("project", dim("none → dotsync init"))
 			}
-
-			blank()
-			fmt.Printf("  %s\n", rule)
 			blank()
 		},
 	}

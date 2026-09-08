@@ -128,7 +128,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 
 	blank()
-	fmt.Println(ok(boldGreen(release.TagName)+" "+dim("installed")))
+	fmt.Println(ok(boldGreen(release.TagName) + " " + dim("installed")))
 	blank()
 	return nil
 }

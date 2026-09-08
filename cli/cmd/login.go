@@ -42,7 +42,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if config.IsLoggedIn(cfg) {
-		fmt.Println(ok(boldCyan("@"+cfg.Username)+" "+dim("already authenticated")))
+		fmt.Println(ok(boldCyan("@"+cfg.Username) + " " + dim("already authenticated")))
 		hint("run dotsync logout first to switch accounts")
 		return nil
 	}
@@ -55,7 +55,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if authCfg.GitHubClientID == "" {
 		return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
 	}
-	fmt.Println(ok("Connected to "+cyan(cfg.ServerURL)))
+	fmt.Println(ok("Connected to " + cyan(cfg.ServerURL)))
 
 	// ── Step 1: request a device code from GitHub ──────────────────────────
 	fmt.Println(prog("Requesting", dim("GitHub device code...")))
@@ -98,7 +98,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	fmt.Println(ok("Tokens exchanged"))
 
 	username, _ := result.User["username"].(string)
-	userID, _   := result.User["id"].(string)
+	userID, _ := result.User["id"].(string)
 
 	cfg.AccessToken = result.AccessToken
 	cfg.RefreshToken = result.RefreshToken
@@ -111,7 +111,7 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 	fmt.Println(ok("Credentials saved"))
 
-	fmt.Println(ok(boldCyan("@"+username)))
+	fmt.Println(ok(boldCyan("@" + username)))
 	blank()
 	hint("cd into your project and run:")
 	cmdHint("dotsync init")

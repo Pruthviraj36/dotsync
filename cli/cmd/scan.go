@@ -98,23 +98,23 @@ var secretPatterns = []secretPattern{
 		severity: "high",
 	},
 	{
-		name:     "Database URI (generic variable)",
-		pattern:  regexp.MustCompile(`(?i)(database_url|db_url|mongodb_uri|database_uri|db_uri|connection_string|conn_str)\s*[=:]\s*['"\x60]?(mongodb|postgres|mysql|redis|mssql|sqlite)[^\s'"` + "`" + `]{10,}`),
-		severity: "high",
+		name:      "Database URI (generic variable)",
+		pattern:   regexp.MustCompile(`(?i)(database_url|db_url|mongodb_uri|database_uri|db_uri|connection_string|conn_str)\s*[=:]\s*['"\x60]?(mongodb|postgres|mysql|redis|mssql|sqlite)[^\s'"` + "`" + `]{10,}`),
+		severity:  "high",
 		validator: notInComment,
 	},
 	// NestJS / TypeORM style: uri: 'mongodb://...' inside useFactory etc.
 	{
-		name:     "Hardcoded DB URI in code",
-		pattern:  regexp.MustCompile(`(?i)\buri\s*:\s*['"\x60](mongodb|postgres|mysql|redis)[^\s'"` + "`" + `]{10,}['"\x60]`),
-		severity: "high",
+		name:      "Hardcoded DB URI in code",
+		pattern:   regexp.MustCompile(`(?i)\buri\s*:\s*['"\x60](mongodb|postgres|mysql|redis)[^\s'"` + "`" + `]{10,}['"\x60]`),
+		severity:  "high",
 		validator: notInComment,
 	},
 	// Inline string that IS a connection string (no variable name needed)
 	{
-		name:     "Embedded Connection String",
-		pattern:  regexp.MustCompile(`['"\x60](mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^:'\"\x60\s]{1,}:[^@'\"\x60\s]{3,}@[^\s'\"\x60]{5,}['"\x60]`),
-		severity: "high",
+		name:      "Embedded Connection String",
+		pattern:   regexp.MustCompile(`['"\x60](mongodb(\+srv)?|postgres(ql)?|mysql|redis)://[^:'\"\x60\s]{1,}:[^@'\"\x60\s]{3,}@[^\s'\"\x60]{5,}['"\x60]`),
+		severity:  "high",
 		validator: notInComment,
 	},
 
@@ -221,9 +221,9 @@ var secretPatterns = []secretPattern{
 		severity: "high",
 	},
 	{
-		name:     "Supabase Service Key",
-		pattern:  regexp.MustCompile(`eyJ[0-9a-zA-Z_-]{100,}\.[0-9a-zA-Z_-]{50,}\.[0-9a-zA-Z_-]{43}`),
-		severity: "high",
+		name:      "Supabase Service Key",
+		pattern:   regexp.MustCompile(`eyJ[0-9a-zA-Z_-]{100,}\.[0-9a-zA-Z_-]{50,}\.[0-9a-zA-Z_-]{43}`),
+		severity:  "high",
 		validator: notInComment,
 	},
 
@@ -292,9 +292,9 @@ var secretPatterns = []secretPattern{
 // that don't match known formats. Uses Shannon entropy threshold of 4.5.
 
 type entropyFinding struct {
-	value    string
-	varName  string
-	entropy  float64
+	value   string
+	varName string
+	entropy float64
 }
 
 var entropyVarPattern = regexp.MustCompile(
@@ -530,51 +530,30 @@ Exits with code 1 if anything is found — drop-in CI and pre-commit hook.
 			fmt.Println(warn(fmt.Sprintf("%d secret(s) found across %d files scanned", len(findings), filesScanned)))
 			blank()
 
-			indent := msgPad()
-			ruler := ruleN(termWidth() - (verbCol + verbGap) - 2)
-
 			printFindings := func(severity string, sevFn func(string) string, fs []scanFinding) {
 				if len(fs) == 0 {
 					return
 				}
-				fmt.Printf("%s%s  %s\n", indent, sevFn("■"), bold(severity))
-				fmt.Println(indent + ruler)
+				sectionTitle(sevFn("● ") + severity)
 				for _, f := range fs {
-					fmt.Printf("%s%s  %s\n",
-						indent,
-						yellow(fmt.Sprintf("line %-4d", f.line)),
-						bold(f.file),
-					)
-					fmt.Printf("%s%s  %s\n",
-						indent,
-						padRight("", 9),
-						cyan(f.pattern),
-					)
+					detail := f.pattern + " · line " + fmt.Sprint(f.line)
 					if f.content != "" {
 						truncated := f.content
 						maxW := termWidth() - (verbCol + verbGap) - 8
 						if len(truncated) > maxW {
 							truncated = truncated[:maxW] + dim("…")
 						}
-						fmt.Printf("%s%s  %s\n",
-							indent,
-							padRight("", 9),
-							dim(truncated),
-						)
+						detail += "\n    " + truncated
 					}
-					blank()
+					item(bold(f.file), detail)
 				}
-				fmt.Println(indent + ruler)
-				blank()
 			}
 
 			printFindings("HIGH SEVERITY", red, high)
 			printFindings("MEDIUM SEVERITY", yellow, medium)
 
 			// Remediation
-			fmt.Printf("%s%s\n", indent, bold("Remediation"))
-			fmt.Println(indent + ruler)
-			blank()
+			sectionTitle("Remediation")
 			hint("1. Remove the secret from the file immediately")
 			hint("2. Rotate it — treat it as compromised")
 			hint("3. Rewrite git history if already committed:")
