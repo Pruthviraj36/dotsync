@@ -598,7 +598,7 @@ func uiHandler(fn func(r *http.Request) (any, error)) http.HandlerFunc {
 		data, err := fn(r)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			json.NewEncoder(w).Encode(map[string]string{"error": uiSafeError(err)})
 			return
 		}
 		json.NewEncoder(w).Encode(data)
@@ -626,11 +626,25 @@ func uiPostHandler(fn func(body []byte) (any, error)) http.HandlerFunc {
 		data, err := fn(body)
 		if err != nil {
 			w.WriteHeader(http.StatusInternalServerError)
-			json.NewEncoder(w).Encode(map[string]string{"error": err.Error()})
+			json.NewEncoder(w).Encode(map[string]string{"error": uiSafeError(err)})
 			return
 		}
 		json.NewEncoder(w).Encode(data)
 	}
+}
+
+// uiSafeError keeps implementation details out of the browser. In particular,
+// the local dashboard should describe a missing encryption setup as an action,
+// never expose the internal password-fetch wording used by the CLI.
+func uiSafeError(err error) string {
+	if err == nil {
+		return ""
+	}
+	message := err.Error()
+	if strings.Contains(strings.ToLower(message), "password") || strings.Contains(strings.ToLower(message), "decrypt") {
+		return "Secrets are unavailable for this project. Ask a project owner to publish the first version, then try again."
+	}
+	return message
 }
 
 func openBrowser(url string) {
@@ -2781,16 +2795,16 @@ function escapeHtml(text) {
 }
 
 function handlePasswordError(message) {
-  if (message && message.includes('could not fetch project password')) {
-    toast('Password not set. Ask project owner to push first, or run: dotsync init --rotate-password', 'error');
+  if (message && message.includes('Secrets are unavailable')) {
+    toast('Secrets are unavailable. Ask a project owner to publish the first version, then try again.', 'error');
     return true;
   }
   if (message && message.includes('no password set for this project')) {
-    toast('Password not set. Ask project owner to push first, or run: dotsync init --rotate-password', 'error');
+    toast('Secrets are unavailable. Ask a project owner to publish the first version, then try again.', 'error');
     return true;
   }
   if (message && message.includes('decryption failed')) {
-    toast('Decryption failed. The password may have changed. Ask the owner to rotate it.', 'error');
+    toast('Secrets could not be opened. Ask a project owner to verify the project setup.', 'error');
     return true;
   }
   return false;
@@ -2991,14 +3005,14 @@ async function pullSecrets(showToast = true) {
   } catch (error) {
     document.getElementById('editor').value = '';
     document.getElementById('editor').classList.add('disabled');
-    document.getElementById('editor').placeholder = 'Secrets unavailable — project password not set. Ask the project owner to push first.';
+    document.getElementById('editor').placeholder = 'Secrets unavailable — ask a project owner to publish the first version.';
     document.getElementById('statVersion').textContent = 'unavailable';
     document.getElementById('statVersion').classList.add('warning');
-    document.getElementById('statAuthor').textContent = 'password not set';
+    document.getElementById('statAuthor').textContent = 'setup required';
     document.getElementById('pushBtn').disabled = true;
     document.getElementById('pullBtn').disabled = false; // Allow pull to retry
     document.getElementById('editorNote').classList.add('warning');
-    document.getElementById('editorNote').textContent = '⚠ Password not set — Ask the project owner to push at least once first.';
+    document.getElementById('editorNote').textContent = '⚠ Secrets are unavailable — ask a project owner to publish the first version.';
     markClean('');
     countKeys();
     if (!handlePasswordError(error.message) && showToast) {
@@ -3033,7 +3047,7 @@ async function pushSecrets() {
   // Check if password is already known to be unavailable
   const currentVersion = document.getElementById('statVersion').textContent;
   if (currentVersion === 'unavailable') {
-    toast('Cannot push: project password not set. Ask owner to push first or run: dotsync init --rotate-password', 'error');
+    toast('Cannot push yet. Ask a project owner to publish the first version, then try again.', 'error');
     return;
   }
   
@@ -3172,7 +3186,7 @@ async function loadHistory() {
       } else if (canRollback) {
         actionBadge = inspect + '<button class="btn btn-secondary" style="font-size: 11px; padding: 6px 10px;" onclick="rollback(' + entry.version + ')">↩ Restore</button>';
       } else {
-        actionBadge = '<span class="badge badge-muted" style="opacity: 0.5;">password required</span>';
+        actionBadge = '<span class="badge badge-muted" style="opacity: 0.5;">setup required</span>';
       }
       
       return '<div class="history-item">' +
@@ -3186,7 +3200,7 @@ async function loadHistory() {
     }).join('');
   } catch (error) {
     if (handlePasswordError(error.message)) {
-      body.innerHTML = '<div class="empty"><div class="empty-icon">◷</div>Password not set — cannot load history</div>';
+      body.innerHTML = '<div class="empty"><div class="empty-icon">◷</div>Secrets are unavailable — publish the first version to enable history.</div>';
     } else {
       body.innerHTML = '<div class="empty">' + escapeHtml(error.message) + '</div>';
     }
