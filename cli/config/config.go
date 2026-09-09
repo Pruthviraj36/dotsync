@@ -185,7 +185,14 @@ func ClearGlobal() error {
 	if err != nil {
 		return err
 	}
-	return os.Remove(path)
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	// SaveGlobal stores credentials in the OS keyring. Removing only the JSON
+	// file would leave stale tokens behind, making logout followed by login
+	// appear to do nothing after a rotated/revoked refresh token.
+	clearTokensFromKeyring()
+	return nil
 }
 
 // ── Project config ────────────────────────────────────────────────────────────

@@ -130,6 +130,13 @@ func (c *Client) refreshTokens() error {
 		}
 		_ = json.Unmarshal(body, &apiErr)
 		if apiErr.Error != "" {
+			// A refresh-token reuse response invalidates every session. Clear the
+			// local keyring too, otherwise `dotsync login` keeps seeing the stale
+			// access token and cannot start a fresh device flow.
+			if strings.Contains(strings.ToLower(apiErr.Error), "token reuse") ||
+				strings.Contains(strings.ToLower(apiErr.Error), "all sessions invalidated") {
+				_ = config.ClearGlobal()
+			}
 			return fmt.Errorf("refresh failed: %s", apiErr.Error)
 		}
 		return fmt.Errorf("refresh failed with status %d", resp.StatusCode)
