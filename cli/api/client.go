@@ -85,7 +85,7 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	if resp.StatusCode == http.StatusUnauthorized {
 		resp.Body.Close()
 		if err := c.refreshTokens(); err != nil {
-			return nil, fmt.Errorf("session expired — run: dotsync login")
+			return nil, fmt.Errorf("session expired and refresh failed:\n  %w\n\nplease log in again: dotsync login", err)
 		}
 
 		// Retry with new token
@@ -100,7 +100,7 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 		}
 		resp, err = c.httpClient.Do(req)
 		if err != nil {
-			return nil, err
+			return nil, fmt.Errorf("retry after refresh failed: %w", err)
 		}
 	}
 
@@ -114,25 +114,57 @@ func (c *Client) refreshTokens() error {
 		bytes.NewBufferString(`{"refresh_token":"`+c.cfg.RefreshToken+`"}`),
 	)
 	if err != nil {
-		return err
+		return fmt.Errorf("token refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("refresh failed")
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		return fmt.Errorf("read refresh response: %w", err)
 	}
 
+	// Check HTTP status first
+	if resp.StatusCode != http.StatusOK {
+		var apiErr struct {
+			Error string `json:"error"`
+		}
+		_ = json.Unmarshal(body, &apiErr)
+		if apiErr.Error != "" {
+			return fmt.Errorf("refresh failed: %s", apiErr.Error)
+		}
+		return fmt.Errorf("refresh failed with status %d", resp.StatusCode)
+	}
+
+	// Parse and validate token response
 	var result struct {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return err
+	if err := json.Unmarshal(body, &result); err != nil {
+		return fmt.Errorf("parse refresh response: %w", err)
 	}
 
+	// Validate that tokens were actually provided
+	if result.AccessToken == "" {
+		return fmt.Errorf("refresh response missing access_token — server returned invalid response")
+	}
+	if result.RefreshToken == "" {
+		return fmt.Errorf("refresh response missing refresh_token — server returned invalid response")
+	}
+
+	// Basic format validation (tokens should be non-empty strings)
+	if len(result.AccessToken) < 10 || len(result.RefreshToken) < 10 {
+		return fmt.Errorf("refresh response contains invalid token format")
+	}
+
+	// Update config with new tokens
 	c.cfg.AccessToken = result.AccessToken
 	c.cfg.RefreshToken = result.RefreshToken
-	return config.SaveGlobal(c.cfg)
+	if err := config.SaveGlobal(c.cfg); err != nil {
+		return fmt.Errorf("save refreshed tokens: %w", err)
+	}
+
+	return nil
 }
 
 // decodeResponse reads JSON body and checks for error field.
