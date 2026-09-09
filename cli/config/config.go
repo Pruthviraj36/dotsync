@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 )
@@ -52,15 +53,21 @@ func globalConfigPath() (string, error) {
 }
 
 // userHomeDir returns the home directory for a specific username.
+// Works cross-platform: Linux, macOS, Windows/WSL.
 func userHomeDir(username string) (string, error) {
-	// Try /etc/passwd via os/user — works on Linux/macOS without CGO issues
-	// because we only need a path string, not a full user lookup.
-	// Fallback: construct path as /home/<username> which works on most Linux.
-	if home := os.Getenv("HOME"); home != "" && !strings.HasPrefix(home, "/root") {
-		return home, nil
+	// Use os/user package for proper cross-platform home directory lookup
+	u, err := user.Lookup(username)
+	if err != nil {
+		// If lookup fails, try environment variable as fallback
+		if home := os.Getenv("HOME"); home != "" {
+			return home, nil
+		}
+		return "", fmt.Errorf("could not look up user %q: %w (and HOME not set)", username, err)
 	}
-	// Best guess for most Linux systems
-	return "/home/" + username, nil
+	if u.HomeDir == "" {
+		return "", fmt.Errorf("user %q has no home directory", username)
+	}
+	return u.HomeDir, nil
 }
 
 func LoadGlobal() (*GlobalConfig, error) {
