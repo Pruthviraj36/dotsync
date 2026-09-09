@@ -7,6 +7,8 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+
+	"github.com/zalando/go-keyring"
 )
 
 const (
@@ -70,7 +72,50 @@ func userHomeDir(username string) (string, error) {
 	return u.HomeDir, nil
 }
 
+// ── Credential Storage (System Keyring) ─────────────────────────────────────
+
+// storeTokensInKeyring attempts to store tokens securely in system keyring.
+// Fails silently if keyring is not available (e.g., no desktop environment).
+func storeTokensInKeyring(accessToken, refreshToken string) {
+	// Store access token
+	if accessToken != "" {
+		_ = keyring.Set("dotsync", "access_token", accessToken)
+	}
+	// Store refresh token
+	if refreshToken != "" {
+		_ = keyring.Set("dotsync", "refresh_token", refreshToken)
+	}
+}
+
+// getAccessTokenFromKeyring attempts to retrieve access token from system keyring.
+// Returns empty string if not found or keyring unavailable.
+func getAccessTokenFromKeyring() string {
+	token, err := keyring.Get("dotsync", "access_token")
+	if err != nil {
+		return ""
+	}
+	return token
+}
+
+// getRefreshTokenFromKeyring attempts to retrieve refresh token from system keyring.
+// Returns empty string if not found or keyring unavailable.
+func getRefreshTokenFromKeyring() string {
+	token, err := keyring.Get("dotsync", "refresh_token")
+	if err != nil {
+		return ""
+	}
+	return token
+}
+
+// clearTokensFromKeyring removes tokens from system keyring.
+// Used during logout.
+func clearTokensFromKeyring() {
+	_ = keyring.Delete("dotsync", "access_token")
+	_ = keyring.Delete("dotsync", "refresh_token")
+}
+
 func LoadGlobal() (*GlobalConfig, error) {
+	// Try to load from config file
 	path, err := globalConfigPath()
 	if err != nil {
 		return nil, err
@@ -89,6 +134,14 @@ func LoadGlobal() (*GlobalConfig, error) {
 		return nil, fmt.Errorf("parse config: %w", err)
 	}
 
+	// Try to get tokens from system keyring (more secure than plaintext file)
+	if accessToken := getAccessTokenFromKeyring(); accessToken != "" {
+		cfg.AccessToken = accessToken
+	}
+	if refreshToken := getRefreshTokenFromKeyring(); refreshToken != "" {
+		cfg.RefreshToken = refreshToken
+	}
+
 	// Always let DOTSYNC_SERVER env var override the saved value.
 	// This means switching servers never requires editing config.json.
 	cfg.ServerURL = ServerURL(cfg.ServerURL)
@@ -103,7 +156,16 @@ func SaveGlobal(cfg *GlobalConfig) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return fmt.Errorf("create config dir: %w", err)
 	}
-	data, err := json.MarshalIndent(cfg, "", "  ")
+
+	// Store tokens in system keyring (more secure than plaintext JSON)
+	storeTokensInKeyring(cfg.AccessToken, cfg.RefreshToken)
+
+	// Create a copy for file storage without plaintext tokens
+	cfgForFile := *cfg
+	cfgForFile.AccessToken = "[stored in system keyring]"
+	cfgForFile.RefreshToken = "[stored in system keyring]"
+
+	data, err := json.MarshalIndent(cfgForFile, "", "  ")
 	if err != nil {
 		return err
 	}
