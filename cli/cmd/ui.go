@@ -646,6 +646,17 @@ func uiPostHandler(fn func(body []byte) (any, error)) http.HandlerFunc {
 			return
 		}
 
+		// Validate Content-Type to prevent CSRF attacks via form submissions
+		contentType := r.Header.Get("Content-Type")
+		if contentType != "application/json" {
+			w.WriteHeader(http.StatusUnsupportedMediaType)
+			json.NewEncoder(w).Encode(map[string]string{
+				"error": "Content-Type must be application/json",
+				"help":  "This endpoint only accepts JSON requests, not form submissions",
+			})
+			return
+		}
+
 		body, err := io.ReadAll(io.LimitReader(r.Body, uiMaxBodyBytes))
 		if err != nil {
 			w.WriteHeader(http.StatusBadRequest)
