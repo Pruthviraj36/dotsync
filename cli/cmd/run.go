@@ -73,7 +73,9 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 
 			if verified, vErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey); vErr != nil {
 				return fmt.Errorf("signature verification failed: %w\nRefusing to run with unverified secrets", vErr)
-			} else if verified {
+			} else if !verified {
+				return fmt.Errorf("secrets are not signed — this is a legacy secret pushed before signature verification was enabled\nFor security, re-push secrets using a recent version of dotsync: dotsync push --env %s", env)
+			} else {
 				fmt.Fprintln(os.Stderr, ok(fmt.Sprintf("Signature verified (%s, ed25519)", result.PushedBy)))
 			}
 

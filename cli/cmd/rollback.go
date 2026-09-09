@@ -77,7 +77,9 @@ To see available versions: dotsync history`,
 
 			if verified, vErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); vErr != nil {
 				return fmt.Errorf("signature verification failed: %w\nRefusing to roll back to an unverified version", vErr)
-			} else if verified {
+			} else if !verified {
+				return fmt.Errorf("v%d is not signed — this is a legacy secret pushed before signature verification was enabled\nFor security, cannot roll back to unsigned versions. Re-push secrets with a recent dotsync version.", version)
+			} else {
 				fmt.Println(ok(dim(fmt.Sprintf("signature verified — @%s (ed25519)", old.PushedBy))))
 			}
 

@@ -177,19 +177,18 @@ and writes your .env. The server never sees plaintext.`,
 				return err
 			}
 
-			if verifyFlag {
-				verified, verifyErr := verifySignature(
-					result.EncryptedData, result.Signature, result.PushedByPubKey,
-				)
-				if verifyErr != nil {
-					return fmt.Errorf("signature verification failed: %w\nrefusing to write %s", verifyErr, outputFile)
-				}
-				switch {
-				case verified:
-					fmt.Println(info(dim("signature verified · @" + result.PushedBy + " (ed25519)")))
-				case len(result.Signature) == 0:
-					fmt.Println(dim(msgPad() + "no signature on this version"))
-				}
+			// Always verify signatures if present; warn if unsigned
+			verified, verifyErr := verifySignature(
+				result.EncryptedData, result.Signature, result.PushedByPubKey,
+			)
+			if verifyErr != nil {
+				return fmt.Errorf("signature verification failed: %w\nrefusing to write %s", verifyErr, outputFile)
+			}
+			if verified {
+				fmt.Println(info(dim("signature verified · @" + result.PushedBy + " (ed25519)")))
+			} else if len(result.Signature) == 0 {
+				fmt.Println(warn(dim("⚠️  warning: this secret version is not signed (pushed before signature verification was enabled)")))
+				fmt.Println(dim(msgPad() + "for security, consider re-pushing with: dotsync push --env " + env))
 			}
 
 			fmt.Println(prog("Decrypting", dim("AES-256-GCM")))
