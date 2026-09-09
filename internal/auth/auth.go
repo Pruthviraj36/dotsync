@@ -7,11 +7,11 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/golang-jwt/jwt/v5"
-	"github.com/google/uuid"
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
 	"github.com/Pruthviraj36/dotsync/internal/db"
 	"github.com/Pruthviraj36/dotsync/internal/model"
+	"github.com/golang-jwt/jwt/v5"
+	"github.com/google/uuid"
 )
 
 const (
@@ -77,22 +77,37 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 
 // RotateRefreshToken validates the old token, revokes it, and issues a new pair.
 // This is refresh token rotation — compromised tokens are invalidated on first use.
+//
+// ⚠️  CRITICAL: Uses atomic transaction to prevent token replay attacks.
+// Without FOR UPDATE, two concurrent requests could both pass validation and
+// both get new tokens. The lock ensures only one request processes each token.
 func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*model.User, string, string, error) {
 	tokenHash := crypto.HashToken(rawToken)
+
+	// Start atomic transaction with row-level lock
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, "", "", fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
 
 	var rt model.RefreshToken
 	var user model.User
 
-	err := s.db.QueryRowContext(ctx, `
+	// FOR UPDATE locks this row until transaction ends, preventing concurrent updates
+	err = tx.QueryRowContext(ctx, `
 		SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
-		       u.id, u.username, u.email, u.plan, u.github_id, u.avatar_url
+		       u.id, u.username, u.email, u.plan, u.github_id, u.avatar_url,
+		       u.created_at, u.updated_at
 		FROM refresh_tokens rt
 		JOIN users u ON u.id = rt.user_id
-		WHERE rt.token_hash = $1`,
+		WHERE rt.token_hash = $1
+		FOR UPDATE OF rt`,
 		tokenHash,
 	).Scan(
 		&rt.ID, &rt.UserID, &rt.ExpiresAt, &rt.Revoked,
 		&user.ID, &user.Username, &user.Email, &user.Plan, &user.GitHubID, &user.AvatarURL,
+		&user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
 		return nil, "", "", fmt.Errorf("refresh token not found")
@@ -100,8 +115,10 @@ func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*mod
 
 	// If token already used (revoked), this is a replay attack — revoke ALL tokens for user
 	if rt.Revoked {
-		_, _ = s.db.ExecContext(ctx,
+		// This write is also part of the transaction
+		_, _ = tx.ExecContext(ctx,
 			`UPDATE refresh_tokens SET revoked = true WHERE user_id = $1`, rt.UserID)
+		tx.Commit()
 		return nil, "", "", fmt.Errorf("token reuse detected: all sessions invalidated")
 	}
 
@@ -109,22 +126,28 @@ func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*mod
 		return nil, "", "", fmt.Errorf("refresh token expired")
 	}
 
-	// Revoke the old token
-	_, err = s.db.ExecContext(ctx,
+	// Revoke the old token (within transaction, after lock acquired)
+	_, err = tx.ExecContext(ctx,
 		`UPDATE refresh_tokens SET revoked = true WHERE id = $1`, rt.ID)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", fmt.Errorf("revoke old token: %w", err)
 	}
 
-	// Issue new pair
+	// Commit transaction to release lock before issuing new tokens
+	// This is safe: old token is now revoked in DB, any replay will be caught
+	if err := tx.Commit(); err != nil {
+		return nil, "", "", fmt.Errorf("commit transaction: %w", err)
+	}
+
+	// Issue new pair (outside transaction for better performance)
 	accessToken, err := s.IssueAccessToken(&user)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", fmt.Errorf("issue access token: %w", err)
 	}
 
 	newRefresh, err := s.IssueRefreshToken(ctx, user.ID)
 	if err != nil {
-		return nil, "", "", err
+		return nil, "", "", fmt.Errorf("issue refresh token: %w", err)
 	}
 
 	return &user, accessToken, newRefresh, nil
