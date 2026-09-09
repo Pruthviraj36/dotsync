@@ -674,31 +674,91 @@ func uiPostHandler(fn func(body []byte) (any, error)) http.HandlerFunc {
 	}
 }
 
-// uiSafeError keeps implementation details out of the browser. In particular,
-// the local dashboard should describe a missing encryption setup as an action,
-// never expose the internal password-fetch wording used by the CLI.
+// uiSafeError keeps implementation details out of the browser and provides
+// helpful, actionable error messages. Transforms error messages to guide users
+// towards solutions without exposing internal implementation details.
 func uiSafeError(err error) string {
 	if err == nil {
 		return ""
 	}
 	message := err.Error()
 	lower := strings.ToLower(message)
-	if strings.Contains(lower, "request failed") || strings.Contains(lower, "connection refused") {
-		return "DotSync could not reach the server. Check your connection and try again."
+
+	// Network/Server connectivity
+	if strings.Contains(lower, "connection refused") {
+		return "DotSync server is not running or unreachable. Restart the UI with: dotsync ui"
 	}
-	if strings.Contains(lower, "session expired") || strings.Contains(lower, "unauthorized") {
-		return "Your DotSync session has expired. Run dotsync login, then reopen the UI."
+	if strings.Contains(lower, "request failed") || strings.Contains(lower, "i/o timeout") {
+		return "Network request timed out. Check your internet connection and try again."
 	}
-	if strings.Contains(lower, "no project slug") || strings.Contains(lower, "not a dotsync project") {
-		return "This folder is not linked to a DotSync project. Run dotsync init, then reopen the UI."
+	if strings.Contains(lower, "no such host") || strings.Contains(lower, "cannot resolve") {
+		return "Could not connect to the DotSync server. Check the server URL and your internet connection."
 	}
-	if strings.Contains(lower, "read local .env") || strings.Contains(lower, "no such file or directory") {
-		return "No local .env file was found. Pull the current environment first, then compare again."
+
+	// Authentication
+	if strings.Contains(lower, "session expired") || strings.Contains(lower, "refresh failed") {
+		return "Your DotSync session has expired. Run: dotsync login"
 	}
-	if strings.Contains(lower, "password") || strings.Contains(lower, "decrypt") {
-		return "Secrets are unavailable for this project. Ask a project owner to publish the first version, then try again."
+	if strings.Contains(lower, "unauthorized") {
+		return "Not authorized to perform this action. Your credentials may be invalid. Run: dotsync login"
 	}
-	return message
+	if strings.Contains(lower, "401") || strings.Contains(lower, "invalid token") {
+		return "Authentication failed. Please log in again: dotsync login"
+	}
+
+	// Project/Environment setup
+	if strings.Contains(lower, "project slug") || strings.Contains(lower, "not a dotsync") || strings.Contains(lower, "no project linked") {
+		return "This folder is not linked to a DotSync project. Set it up with: dotsync init"
+	}
+	if strings.Contains(lower, "project not found") || strings.Contains(lower, "no such project") {
+		return "Project not found on server. Check the project name or create it first."
+	}
+	if strings.Contains(lower, "environment") && strings.Contains(lower, "not found") {
+		return "This environment doesn't exist for the selected project. Select a different environment or ask an admin to create it."
+	}
+
+	// Encryption/Passwords
+	if strings.Contains(lower, "decrypt") || strings.Contains(lower, "decryption failed") {
+		return "Failed to decrypt secrets. The encryption password may be incorrect or secrets are corrupted."
+	}
+	if strings.Contains(lower, "password") && strings.Contains(lower, "unavailable") {
+		return "Encryption key is not available for this project. Ask a project owner to set up encryption."
+	}
+	if strings.Contains(lower, "password") || (strings.Contains(lower, "encrypt") && !strings.Contains(lower, "to encrypt")) {
+		return "Failed to handle encryption. The project may not have an encryption key set up yet."
+	}
+
+	// File/Directory issues
+	if strings.Contains(lower, "read local") || strings.Contains(lower, "no such file") {
+		return "Could not read the local .env file. Pull secrets first, then try again."
+	}
+	if strings.Contains(lower, "permission denied") {
+		return "Permission denied. You don't have access to this project or environment."
+	}
+
+	// Signature/Data integrity
+	if strings.Contains(lower, "signature") {
+		return "Secret signature verification failed. The data may be corrupted or tampered with."
+	}
+	if strings.Contains(lower, "invalid json") || strings.Contains(lower, "unmarshal") {
+		return "Received invalid data from server. Try refreshing the page."
+	}
+
+	// Version conflicts
+	if strings.Contains(lower, "version") && strings.Contains(lower, "conflict") {
+		return "This version has been updated by another user. Pull the latest version and try again."
+	}
+
+	// Team/Role issues
+	if strings.Contains(lower, "insufficient") && (strings.Contains(lower, "permission") || strings.Contains(lower, "role")) {
+		return "You don't have permission to perform this action. Ask an admin to upgrade your role."
+	}
+	if strings.Contains(lower, "owner cannot be removed") || strings.Contains(lower, "owner cannot be") {
+		return "Cannot modify the project owner. Only another owner can make this change."
+	}
+
+	// Default fallback with hint
+	return message + " — Contact support if this continues to happen."
 }
 
 func filterUIAuditLogs(logs []map[string]any) []map[string]any {
@@ -2533,6 +2593,127 @@ body {
     scroll-behavior: auto !important;
   }
 }
+
+/* Enhanced Micro-interactions & Loading States */
+
+/* Loading spinner animation */
+@keyframes spin { to { transform: rotate(360deg); } }
+.spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 2px solid var(--border-default);
+  border-top-color: var(--accent-primary);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+}
+
+/* Success pulse animation */
+@keyframes successPulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.7; }
+}
+.success-indicator {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  background: var(--success);
+  border-radius: 50%;
+  animation: successPulse 1.5s ease-in-out;
+}
+
+/* Gentle fade-in for form elements */
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(-2px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.input-group {
+  animation: fadeIn 0.2s ease;
+}
+
+/* Button press feedback */
+.btn:active:not(:disabled) {
+  transform: scale(0.98);
+}
+
+/* Toast notification */
+@keyframes slideUp {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+.toast {
+  position: fixed;
+  bottom: 20px;
+  right: 20px;
+  background: var(--bg-elevated);
+  border: 1px solid var(--border-default);
+  border-radius: var(--radius-md);
+  padding: 12px 16px;
+  font-size: 12px;
+  box-shadow: var(--shadow-elevated);
+  animation: slideUp 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+  max-width: 300px;
+}
+
+.toast.success { border-color: var(--success); }
+.toast.error { border-color: var(--error); }
+.toast.warning { border-color: var(--warning); }
+
+/* Smooth focus ring for keyboard navigation */
+.btn:focus-visible,
+.input:focus-visible,
+.select:focus-visible,
+.nav-item:focus-visible {
+  outline: 2px solid var(--accent-primary);
+  outline-offset: 2px;
+}
+
+/* Improved button state transitions */
+.btn-primary { box-shadow: 0 0 0 0 transparent; }
+.btn-primary:hover { box-shadow: 0 0 0 3px var(--accent-glow); }
+
+.btn-secondary { box-shadow: 0 0 0 0 transparent; }
+.btn-secondary:hover { box-shadow: 0 0 0 2px var(--border-default); }
+
+/* Smooth scrollbar in inputs and editors */
+.editor::-webkit-scrollbar-thumb { background: var(--border-default); }
+.editor::-webkit-scrollbar-thumb:hover { background: var(--text-tertiary); }
+
+/* Copy-to-clipboard feedback */
+.copy-btn { position: relative; }
+.copy-btn.copied::after {
+  content: '✓ copied';
+  position: absolute;
+  right: 100%;
+  top: 50%;
+  transform: translateY(-50%);
+  white-space: nowrap;
+  padding-right: 8px;
+  color: var(--success);
+  font-size: 10px;
+  font-weight: 600;
+  opacity: 1;
+  animation: fadeIn 0.2s;
+}
+
+/* Accessibility: Focus management */
+body.keyboard-nav button:focus,
+body.keyboard-nav .nav-item:focus {
+  outline: 2px dashed var(--accent-primary);
+}
+
+/* Help text styling */
+.help-text {
+  display: block;
+  margin-top: 4px;
+  font-size: 11px;
+  color: var(--text-tertiary);
+  font-family: var(--font-mono);
+}
+
+.help-text.error { color: var(--error); }
+.help-text.warning { color: var(--warning); }
+.help-text.success { color: var(--success); }
 
 </style>
 </head>
