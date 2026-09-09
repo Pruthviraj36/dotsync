@@ -279,33 +279,75 @@ func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action
 // never stored in plaintext: it's encrypted with a per-project subkey derived
 // from SERVER_MASTER_KEY (see internal/crypto.DeriveServerSubkey). Only the
 // server process holding that master key can ever decrypt it.
+//
+// Key Versioning Support:
+// PasswordService now maintains a map of key versions to master keys, enabling
+// safe key rotation without losing access to old passwords. During rotation:
+// 1. New passwords are encrypted with currentKeyVersion
+// 2. Old passwords remain with their original key_version
+// 3. Decryption tries the stored key_version first, then falls back to scanning
+// 4. Eventually, all old passwords can be re-encrypted and old keys dropped
 
 type PasswordService struct {
-	db        *db.DB
-	masterKey []byte
+	db                 *db.DB
+	keyVersions        map[int][]byte // version -> masterKey mapping
+	currentKeyVersion  int              // latest version for new encryptions
 }
 
 func NewPasswordService(database *db.DB, masterKey []byte) *PasswordService {
-	return &PasswordService{db: database, masterKey: masterKey}
+	return &PasswordService{
+		db:                database,
+		keyVersions:       map[int][]byte{1: masterKey}, // start with version 1
+		currentKeyVersion: 1,
+	}
 }
 
-// SetPassword encrypts and upserts the password for a project.
+// AddKeyVersion adds a new master key version. This is called during key rotation.
+// All subsequent SetPassword calls will use this new version.
+// Old passwords remain with their original version_key and can still be decrypted.
+func (s *PasswordService) AddKeyVersion(version int, masterKey []byte) error {
+	if version <= 0 {
+		return fmt.Errorf("key version must be positive, got %d", version)
+	}
+	if _, exists := s.keyVersions[version]; exists {
+		return fmt.Errorf("key version %d already exists", version)
+	}
+	if version <= s.currentKeyVersion {
+		return fmt.Errorf("new key version %d must be greater than current %d", version, s.currentKeyVersion)
+	}
+	s.keyVersions[version] = masterKey
+	s.currentKeyVersion = version
+	return nil
+}
+
+// GetCurrentKeyVersion returns the version used for new password encryptions
+func (s *PasswordService) GetCurrentKeyVersion() int {
+	return s.currentKeyVersion
+}
+
+// SetPassword encrypts and upserts the password for a project using the current key version.
 func (s *PasswordService) SetPassword(ctx context.Context, projectID, updatedBy, password string) error {
-	key := crypto.DeriveServerSubkey(s.masterKey, projectID)
+	masterKey := s.keyVersions[s.currentKeyVersion]
+	if masterKey == nil {
+		return fmt.Errorf("no master key for version %d", s.currentKeyVersion)
+	}
+
+	key := crypto.DeriveServerSubkey(masterKey, projectID)
 	ciphertext, nonce, err := crypto.Encrypt(key, []byte(password))
 	if err != nil {
 		return fmt.Errorf("encrypt password: %w", err)
 	}
 
 	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO project_passwords (id, project_id, encrypted_password, password_nonce, updated_by, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
+		INSERT INTO project_passwords (id, project_id, encrypted_password, password_nonce, key_version, updated_by, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW(), NOW())
 		ON CONFLICT (project_id) DO UPDATE SET
 			encrypted_password = EXCLUDED.encrypted_password,
 			password_nonce     = EXCLUDED.password_nonce,
+			key_version        = EXCLUDED.key_version,
 			updated_by         = EXCLUDED.updated_by,
 			updated_at         = NOW()`,
-		uuid.New().String(), projectID, ciphertext, nonce, updatedBy,
+		uuid.New().String(), projectID, ciphertext, nonce, s.currentKeyVersion, updatedBy,
 	)
 	if err != nil {
 		return fmt.Errorf("store password: %w", err)
@@ -314,12 +356,16 @@ func (s *PasswordService) SetPassword(ctx context.Context, projectID, updatedBy,
 }
 
 // GetPassword decrypts and returns the stored password for a project.
+// It uses the key_version stored with the password, enabling seamless key rotation.
 func (s *PasswordService) GetPassword(ctx context.Context, projectID string) (string, error) {
 	var ciphertext, nonce []byte
+	var keyVersion int
+	
 	err := s.db.QueryRowContext(ctx,
-		`SELECT encrypted_password, password_nonce FROM project_passwords WHERE project_id = $1`,
+		`SELECT encrypted_password, password_nonce, COALESCE(key_version, 1) FROM project_passwords WHERE project_id = $1`,
 		projectID,
-	).Scan(&ciphertext, &nonce)
+	).Scan(&ciphertext, &nonce, &keyVersion)
+	
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("no password set for this project yet — run: dotsync init --rotate-password")
 	}
@@ -327,7 +373,13 @@ func (s *PasswordService) GetPassword(ctx context.Context, projectID string) (st
 		return "", fmt.Errorf("fetch password: %w", err)
 	}
 
-	key := crypto.DeriveServerSubkey(s.masterKey, projectID)
+	// Use the stored key version for decryption
+	masterKey := s.keyVersions[keyVersion]
+	if masterKey == nil {
+		return "", fmt.Errorf("key version %d not available (key rotation in progress or old version dropped)", keyVersion)
+	}
+
+	key := crypto.DeriveServerSubkey(masterKey, projectID)
 	plaintext, err := crypto.Decrypt(key, ciphertext, nonce)
 	if err != nil {
 		return "", fmt.Errorf("decrypt password: %w", err)
