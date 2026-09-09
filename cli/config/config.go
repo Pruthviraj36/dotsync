@@ -28,8 +28,16 @@ type GlobalConfig struct {
 
 // ProjectConfig stores project binding in .dotsync.json (project root)
 type ProjectConfig struct {
-	ProjectSlug string `json:"project_slug"`
-	DefaultEnv  string `json:"default_env"`
+	ProjectSlug      string                 `json:"project_slug"`
+	DefaultEnv       string                 `json:"default_env"`
+	LastPulledStates map[string]PulledState `json:"last_pulled_states,omitempty"`
+}
+
+// PulledState records the exact local file state produced by a successful pull.
+// The digest lets callers avoid a download without hiding edits made manually.
+type PulledState struct {
+	Version int    `json:"version"`
+	Digest  string `json:"digest"`
 }
 
 // ── Global config ─────────────────────────────────────────────────────────────
@@ -193,6 +201,9 @@ func LoadProject() (*ProjectConfig, error) {
 	var cfg ProjectConfig
 	if err := json.Unmarshal(data, &cfg); err != nil {
 		return nil, fmt.Errorf("parse project config: %w", err)
+	}
+	if cfg.LastPulledStates == nil {
+		cfg.LastPulledStates = make(map[string]PulledState)
 	}
 	return &cfg, nil
 }

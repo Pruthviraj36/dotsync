@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/sha256"
+	"encoding/hex"
 	"fmt"
 	"os"
 
@@ -10,6 +12,15 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/identity"
 	"github.com/spf13/cobra"
 )
+
+func localPullDigest(data []byte) string {
+	sum := sha256.Sum256(data)
+	return hex.EncodeToString(sum[:])
+}
+
+func localPullStateKey(env, outputFile string) string {
+	return env + "\x00" + outputFile
+}
 
 func pushCmd() *cobra.Command {
 	var envFlag string
@@ -97,6 +108,18 @@ and uploads the ciphertext. The server never sees plaintext.`,
 			if err != nil {
 				return err
 			}
+			if projCfg.LastPulledStates == nil {
+				projCfg.LastPulledStates = make(map[string]config.PulledState)
+			}
+			// A successful push already leaves the workspace at the server head,
+			// so the next pull can take the same no-op path as a prior pull.
+			projCfg.LastPulledStates[localPullStateKey(env, envFile)] = config.PulledState{
+				Version: result.Version,
+				Digest:  localPullDigest(data),
+			}
+			if err := config.SaveProject(projCfg); err != nil {
+				fmt.Println(warn(dim("could not save pull state: " + err.Error())))
+			}
 
 			rev := revString(digestOf(ciphertext))
 
@@ -132,8 +155,9 @@ func pullCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "pull",
 		Short: "Download and decrypt latest .env from DotSync",
-		Long: `Downloads the latest encrypted blob, decrypts it locally,
-and writes your .env. The server never sees plaintext.`,
+		Long: `Checks the remote version first, then downloads and decrypts only
+when the environment changed (or the local file was edited). The server
+never sees plaintext.`,
 		Example: `  dotsync pull
   dotsync pull --env production
   dotsync pull --env staging --output .env.staging
@@ -157,6 +181,28 @@ and writes your .env. The server never sees plaintext.`,
 				outputFile = ".env"
 			}
 
+			client := api.New(cfg)
+			// A pull first asks for the lightweight history head. We only fetch and
+			// decrypt the payload when the remote changed or the local file was
+			// edited outside DotSync. --force always performs a full pull.
+			if !forceFlag {
+				latestVersion, latestBy, err := client.GetLatestVersion(projCfg.ProjectSlug, env)
+				if err != nil {
+					return fmt.Errorf("check remote version: %w", err)
+				}
+				state, known := projCfg.LastPulledStates[localPullStateKey(env, outputFile)]
+				if known && latestVersion > 0 && state.Version == latestVersion {
+					if data, readErr := os.ReadFile(outputFile); readErr == nil && localPullDigest(data) == state.Digest {
+						who := ""
+						if latestBy != "" {
+							who = " · @" + latestBy
+						}
+						fmt.Printf("%s%s already up to date · v%d%s\n", msgPad(), outputFile, latestVersion, who)
+						return nil
+					}
+				}
+			}
+
 			if !forceFlag {
 				if _, err := os.Stat(outputFile); err == nil {
 					fmt.Printf("%s%s already exists. Overwrite? [y/N]: ", msgPad(), outputFile)
@@ -171,7 +217,6 @@ and writes your .env. The server never sees plaintext.`,
 
 			fmt.Println(prog("Fetching", boldCyan(projCfg.ProjectSlug+"/"+env)))
 
-			client := api.New(cfg)
 			result, err := client.Pull(projCfg.ProjectSlug, env)
 			if err != nil {
 				return err
@@ -213,6 +258,16 @@ and writes your .env. The server never sees plaintext.`,
 
 			if err := os.WriteFile(outputFile, []byte(plaintext), 0600); err != nil {
 				return fmt.Errorf("write %s: %w", outputFile, err)
+			}
+			if projCfg.LastPulledStates == nil {
+				projCfg.LastPulledStates = make(map[string]config.PulledState)
+			}
+			projCfg.LastPulledStates[localPullStateKey(env, outputFile)] = config.PulledState{
+				Version: result.Version,
+				Digest:  localPullDigest([]byte(plaintext)),
+			}
+			if err := config.SaveProject(projCfg); err != nil {
+				fmt.Println(warn(dim("could not save pull state: " + err.Error())))
 			}
 
 			parsed := cliCrypto.ParseEnvFile(plaintext)
