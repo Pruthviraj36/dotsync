@@ -84,9 +84,7 @@ user tokens in logs and dashboards.`,
 			txStep(1, 1, fmt.Sprintf("Issuing token for scope '%s'", env))
 
 			blank()
-			fmt.Println(divider())
 			fmt.Printf(" TOKEN: %s\n", bold(token))
-			fmt.Println(divider())
 			blank()
 			fmt.Println(warn("This token is shown ONCE. Store it in your CI/CD secret manager immediately."))
 

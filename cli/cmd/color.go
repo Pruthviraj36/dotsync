@@ -71,28 +71,8 @@ func boldPurple(s string) string { return colorize(cBold+cMagenta, s) }
 //      Author:  @alice
 //      Age:     just now
 
-const bannerWidth = 80
-
-func ruleChar(r rune) string {
-	w := termWidth()
-	if w > 100 {
-		w = 100
-	}
-	return strings.Repeat(string(r), w)
-}
-
-func divider() string {
-	return ruleChar('=')
-}
-
-func subDivider() string {
-	return ruleChar('-')
-}
-
 func banner(title string) {
-	fmt.Println(divider())
-	fmt.Printf(" %s\n", bold(title))
-	fmt.Println(divider())
+	fmt.Printf("\n%s\n\n", bold(title))
 }
 
 func sectionTitle(s string) {
@@ -207,11 +187,9 @@ func transactionSummary(title string, items [][2]string) {
 		title = "Transaction Summary"
 	}
 	fmt.Println(title)
-	fmt.Println(divider())
 	for _, item := range items {
 		fmt.Printf(" %-15s: %s\n", dim(item[0]), item[1])
 	}
-	fmt.Println(divider())
 }
 
 // ── Labeled record formatting ────────────────────────────────────────────────
@@ -235,50 +213,8 @@ func table(headers []string, rows [][]string) {
 	fmt.Println()
 }
 
-// ── Terminal geometry & layout helpers ────────────────────────────────────────
-
-func termWidth() int {
-	if !isTTY {
-		return bannerWidth
-	}
-	w, _, err := term.GetSize(int(os.Stdout.Fd()))
-	if err != nil || w < 60 {
-		return bannerWidth
-	}
-	if w > 120 {
-		return 120
-	}
-	return w
-}
-
 func msgPad() string {
 	return "  "
-}
-
-func visibleLen(s string) int {
-	inEsc := false
-	n := 0
-	for _, r := range s {
-		if inEsc {
-			if r == 'm' {
-				inEsc = false
-			}
-			continue
-		}
-		if r == '\033' {
-			inEsc = true
-			continue
-		}
-		n++
-	}
-	return n
-}
-
-func padRight(s string, width int) string {
-	if p := width - visibleLen(s); p > 0 {
-		return s + strings.Repeat(" ", p)
-	}
-	return s
 }
 
 func blank() {

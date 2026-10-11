@@ -69,10 +69,8 @@ func runLogin(cmd *cobra.Command, args []string) error {
 
 	fmt.Println()
 	fmt.Println("Device Authorization Required:")
-	fmt.Println(subDivider())
 	fmt.Printf("  1. Open browser URL: %s\n", bold(dc.VerificationURI))
 	fmt.Printf("  2. Enter code:       %s\n", bold(dc.UserCode))
-	fmt.Println(subDivider())
 	fmt.Println("Waiting for browser authorization...")
 
 	ghToken, err := pollForGitHubToken(authCfg.GitHubClientID, dc)

@@ -49,9 +49,7 @@ func makeToken(client *api.Client, projectSlug, env, platform string) (string, e
 func showToken(token, platform, env string) {
 	banner(fmt.Sprintf("Integration · %s (%s)", platform, env))
 	blank()
-	fmt.Println(divider())
 	fmt.Printf(" TOKEN: %s\n", bold(token))
-	fmt.Println(divider())
 	blank()
 	fmt.Println(warn("Add this token to your secret store as DOTSYNC_TOKEN. It is displayed only once."))
 	blank()
