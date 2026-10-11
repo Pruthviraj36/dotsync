@@ -159,7 +159,13 @@ func (s *ProjectService) Create(ctx context.Context, ownerID, name, slug, descri
 		UpdatedAt:   time.Now(),
 	}
 
-	_, err := s.db.ExecContext(ctx, `
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin transaction: %w", err)
+	}
+	defer tx.Rollback()
+
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO projects (id, owner_id, name, slug, description, created_at, updated_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7)`,
 		proj.ID, proj.OwnerID, proj.Name, proj.Slug, proj.Description, proj.CreatedAt, proj.UpdatedAt,
@@ -170,7 +176,7 @@ func (s *ProjectService) Create(ctx context.Context, ownerID, name, slug, descri
 
 	// Auto-create owner as team member
 	memberID := uuid.New().String()
-	_, err = s.db.ExecContext(ctx, `
+	_, err = tx.ExecContext(ctx, `
 		INSERT INTO team_members (id, project_id, user_id, role, invited_by, created_at)
 		VALUES ($1, $2, $3, 'owner', $3, NOW())`,
 		memberID, proj.ID, ownerID,
@@ -181,11 +187,18 @@ func (s *ProjectService) Create(ctx context.Context, ownerID, name, slug, descri
 
 	// Auto-create default environments
 	for _, env := range []string{"dev", "staging", "production"} {
-		_, _ = s.db.ExecContext(ctx, `
+		_, err = tx.ExecContext(ctx, `
 			INSERT INTO environments (id, project_id, name, created_at)
 			VALUES ($1, $2, $3, NOW())`,
 			uuid.New().String(), proj.ID, env,
 		)
+		if err != nil {
+			return nil, fmt.Errorf("create default environment %s: %w", env, err)
+		}
+	}
+
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit project: %w", err)
 	}
 
 	return proj, nil

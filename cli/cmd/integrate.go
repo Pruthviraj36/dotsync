@@ -47,11 +47,13 @@ func makeToken(client *api.Client, projectSlug, env, platform string) (string, e
 }
 
 func showToken(token, platform, env string) {
-	sectionTitle("Service token · save it now")
-	item(cyan(token), "shown once; add it to your CI/CD secret store as DOTSYNC_TOKEN")
+	banner(fmt.Sprintf("Integration · %s (%s)", platform, env))
 	blank()
-	kv("platform", platform)
-	kv("environment", env)
+	fmt.Println(divider())
+	fmt.Printf(" TOKEN: %s\n", bold(token))
+	fmt.Println(divider())
+	blank()
+	fmt.Println(warn("Add this token to your secret store as DOTSYNC_TOKEN. It is displayed only once."))
 	blank()
 }
 
@@ -85,19 +87,18 @@ func integrateGitHubActions() *cobra.Command {
 
 			showToken(token, "GitHub Actions", env)
 
-			fmt.Println(bold("  Two steps:"))
+			fmt.Println("Setup Steps:")
+			fmt.Println("  1. In GitHub Repository -> Settings -> Secrets and variables -> Actions")
+			fmt.Println("     Add secret: DOTSYNC_TOKEN = <token above>")
 			blank()
-			fmt.Printf("  %s  Go to your repo → Settings → Secrets → Actions\n", dim("1."))
-			fmt.Printf("       Add a secret named %s with the token above\n", cyan("DOTSYNC_TOKEN"))
+			fmt.Println("  2. In your .github/workflows/*.yml step:")
+			fmt.Println("     - name: Pull secrets")
+			fmt.Printf("       run: dotsync pull --env %s --force\n", env)
+			fmt.Println("       env:")
+			fmt.Println("         DOTSYNC_TOKEN: ${{ secrets.DOTSYNC_TOKEN }}")
+			fmt.Printf("         DOTSYNC_SERVER: %s\n", serverURL(cfg))
 			blank()
-			fmt.Printf("  %s  Add this to your workflow:\n", dim("2."))
-			blank()
-			fmt.Printf("       %s\n", dim("- name: Pull secrets"))
-			fmt.Printf("         %s\n", dim("run: dotsync pull --env "+env+" --force"))
-			fmt.Printf("         %s\n", dim("env:"))
-			fmt.Printf("           %s\n", dim("DOTSYNC_TOKEN: ${{ secrets.DOTSYNC_TOKEN }}"))
-			fmt.Printf("           %s\n", dim("DOTSYNC_SERVER: "+serverURL(cfg)))
-			blank()
+			complete("")
 			return nil
 		},
 	}
@@ -141,17 +142,14 @@ func integrateVercel() *cobra.Command {
 
 			showToken(token, "Vercel", env)
 
-			fmt.Println(bold("  Two steps:"))
+			fmt.Println("Setup Steps:")
+			fmt.Printf("  1. Pull secrets locally: dotsync pull --env %s --force\n", env)
+			fmt.Printf("  2. Push to Vercel (%d keys):\n", keyCount)
+			fmt.Printf("     cat .env | while IFS='=' read -r k v; do vercel env add \"$k\" %s <<< \"$v\"; done\n", vercelTarget(env))
 			blank()
-			fmt.Printf("  %s  Pull your secrets locally:\n", dim("1."))
-			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
-			blank()
-			fmt.Printf("  %s  Push them to Vercel (%d keys):\n", dim("2."), keyCount)
-			fmt.Printf("       %s\n", cyan("cat .env | while IFS='=' read k v; do vercel env add $k "+vercelTarget(env)+" <<< $v; done"))
-			blank()
-			hint("After this, Vercel injects them into every build automatically.")
+			hint("Vercel injects these secrets into build & deployment runs automatically.")
 			hint("Re-run step 2 whenever you update secrets.")
-			blank()
+			complete("")
 			return nil
 		},
 	}
@@ -189,17 +187,13 @@ func integrateRailway() *cobra.Command {
 
 			showToken(token, "Railway", env)
 
-			fmt.Println(bold("  Two steps:"))
+			fmt.Println("Setup Steps:")
+			fmt.Printf("  1. Pull secrets: dotsync pull --env %s --force\n", env)
+			fmt.Println("  2. Push to Railway:")
+			fmt.Println("     cat .env | while IFS='=' read -r k v; do railway variables set \"$k=$v\"; done")
 			blank()
-			fmt.Printf("  %s  Pull secrets:\n", dim("1."))
-			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
-			blank()
-			fmt.Printf("  %s  Push to Railway:\n", dim("2."))
-			fmt.Printf("       %s\n", cyan("cat .env | while IFS='=' read k v; do railway variables set \"$k=$v\"; done"))
-			blank()
-			hint("Or deploy directly without touching disk:")
-			cmdHint("  dotsync run --env " + env + " -- railway up")
-			blank()
+			hint(fmt.Sprintf("Or deploy directly without touching disk: dotsync run --env %s -- railway up", env))
+			complete("")
 			return nil
 		},
 	}
@@ -237,14 +231,12 @@ func integrateNetlify() *cobra.Command {
 
 			showToken(token, "Netlify", env)
 
-			fmt.Println(bold("  Two steps:"))
+			fmt.Println("Setup Steps:")
+			fmt.Printf("  1. Pull secrets: dotsync pull --env %s --force\n", env)
+			fmt.Println("  2. Push to Netlify:")
+			fmt.Println("     cat .env | while IFS='=' read -r k v; do netlify env:set \"$k\" \"$v\"; done")
 			blank()
-			fmt.Printf("  %s  Pull secrets:\n", dim("1."))
-			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
-			blank()
-			fmt.Printf("  %s  Push to Netlify:\n", dim("2."))
-			fmt.Printf("       %s\n", cyan("cat .env | while IFS='=' read k v; do netlify env:set \"$k\" \"$v\"; done"))
-			blank()
+			complete("")
 			return nil
 		},
 	}
@@ -292,21 +284,16 @@ func integrateDocker() *cobra.Command {
 
 			showToken(token, "Docker / Podman", env)
 
-			fmt.Println(bold("  Options (pick one):"))
+			fmt.Println("Integration Modes:")
+			fmt.Println("  A. In-memory injection (Zero-disk, recommended):")
+			fmt.Printf("     dotsync run --env %s -- %s run your-image\n\n", env, runtime)
+			fmt.Println("  B. Pull to .env and mount:")
+			fmt.Printf("     dotsync pull --env %s --force\n", env)
+			fmt.Printf("     %s run --env-file .env your-image\n\n", runtime)
+			fmt.Println("  C. Docker Compose:")
+			fmt.Printf("     dotsync pull --env %s --force && %s compose up\n", env, runtime)
 			blank()
-			fmt.Printf("  %s  %s %s\n", dim("A."), dim("Zero-disk — nothing written, secrets in memory only:"), "")
-			fmt.Printf("       %s\n", cyan(fmt.Sprintf("dotsync run --env %s -- %s run your-image", env, runtime)))
-			blank()
-			fmt.Printf("  %s  %s\n", dim("B."), dim("Pull .env then pass as file:"))
-			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
-			fmt.Printf("       %s\n", cyan(runtime+" run --env-file .env your-image"))
-			blank()
-			fmt.Printf("  %s  %s\n", dim("C."), dim("Docker Compose:"))
-			fmt.Printf("       %s\n", dim("# In docker-compose.yml → services → app → env_file: [.env]"))
-			fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force && "+runtime+" compose up"))
-			blank()
-			hint("Option A is recommended — secrets never touch disk.")
-			blank()
+			complete("")
 			return nil
 		},
 	}
@@ -345,25 +332,22 @@ func integrateShell() *cobra.Command {
 
 			showToken(token, "Shell ("+shellFlag+")", env)
 
-			fmt.Println(bold("  Options:"))
-			blank()
-
+			fmt.Println("Integration Modes:")
 			switch strings.ToLower(shellFlag) {
 			case "fish":
-				fmt.Printf("  %s  %s\n", dim("A."), dim("Subshell with secrets loaded:"))
-				fmt.Printf("       %s\n", cyan("dotsync run --env "+env+" -- fish"))
-				blank()
-				fmt.Printf("  %s  %s\n", dim("B."), dim("Export into current session:"))
-				fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force"))
-				fmt.Printf("       %s\n", cyan("for line in (cat .env); set -gx (string split -m1 '=' $line); end"))
+				fmt.Println("  A. Subshell (secrets in memory only):")
+				fmt.Printf("     dotsync run --env %s -- fish\n\n", env)
+				fmt.Println("  B. Export into current session:")
+				fmt.Printf("     dotsync pull --env %s --force\n", env)
+				fmt.Println("     for line in (cat .env); set -gx (string split -m1 '=' $line); end")
 			default:
-				fmt.Printf("  %s  %s\n", dim("A."), dim("Subshell with secrets (nothing written to disk):"))
-				fmt.Printf("       %s\n", cyan("dotsync run --env "+env+" -- bash"))
-				blank()
-				fmt.Printf("  %s  %s\n", dim("B."), dim("Export into current shell:"))
-				fmt.Printf("       %s\n", cyan("dotsync pull --env "+env+" --force && source .env"))
+				fmt.Println("  A. Subshell (secrets in memory only, recommended):")
+				fmt.Printf("     dotsync run --env %s -- bash\n\n", env)
+				fmt.Println("  B. Export into current shell:")
+				fmt.Printf("     dotsync pull --env %s --force && source .env\n", env)
 			}
 			blank()
+			complete("")
 			return nil
 		},
 	}

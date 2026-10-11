@@ -3,7 +3,6 @@ package cmd
 import (
 	"fmt"
 	"os"
-	"strings"
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/cli/api"
@@ -44,26 +43,25 @@ func historyCmd() *cobra.Command {
 			}
 
 			if len(history) == 0 {
-				blank()
-				fmt.Println(info("No history yet."))
-				cmdHint("dotsync push")
-				blank()
+				banner(fmt.Sprintf("Version History — %s/%s", projCfg.ProjectSlug, env))
+				fmt.Println(" No history yet.")
+				fmt.Println(" Push initial secrets with: dotsync push")
 				return nil
 			}
 
-			sectionTitle("History · " + projCfg.ProjectSlug + "/" + env)
+			banner(fmt.Sprintf("Version History — %s/%s", projCfg.ProjectSlug, env))
+			rows := make([][]string, len(history))
 			for i, entry := range history {
 				when, _ := time.Parse(time.RFC3339, entry.CreatedAt)
 				version := fmt.Sprintf("v%d", entry.Version)
+				status := ""
 				if i == 0 {
-					item(boldGreen("● "+version+"  current"), "pushed by @"+entry.PushedBy+" · "+formatAge(when))
-				} else {
-					item(cyan(version), "pushed by @"+entry.PushedBy+" · "+formatAge(when)+" · restore: dotsync rollback "+fmt.Sprint(entry.Version))
+					status = "Current"
 				}
+				rows[i] = []string{version, "@" + entry.PushedBy, formatAge(when), status}
 			}
-			blank()
-			hint(fmt.Sprintf("%d versions · restore any earlier version with: dotsync rollback <version>", len(history)))
-			blank()
+			table([]string{"Version", "Author", "Age", "Status"}, rows)
+			fmt.Printf(" %d version(s) found. Restore any version with: dotsync rollback <version>\n", len(history))
 			return nil
 		},
 	}
@@ -76,12 +74,16 @@ func historyCmd() *cobra.Command {
 
 func diffCmd() *cobra.Command {
 	var envFlag string
+	var fileFlag string
 
 	cmd := &cobra.Command{
 		Use:   "diff",
 		Short: "Show what changed between your local .env and remote",
 		Long: `Compares your local .env with the latest remote version.
 Key names are shown; values are never displayed.`,
+		Example: `  dotsync diff
+  dotsync diff --env production
+  dotsync diff --file .env.local`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			cfg, err := requireLogin()
 			if err != nil {
@@ -96,20 +98,21 @@ Key names are shown; values are never displayed.`,
 			if env == "" {
 				env = projCfg.DefaultEnv
 			}
+			localFile := fileFlag
+			if localFile == "" {
+				localFile = ".env"
+			}
 
-			localData, err := os.ReadFile(".env")
+			localData, err := os.ReadFile(localFile)
 			if err != nil {
 				if os.IsNotExist(err) {
-					blank()
-					fmt.Println(warn("No local .env found."))
-					cmdHint("dotsync pull")
-					blank()
+					banner(fmt.Sprintf("Differences — %s/%s", projCfg.ProjectSlug, env))
+					fmt.Printf(" Local file %s does not exist.\n", localFile)
+					fmt.Println(" Download latest secrets with: dotsync pull")
 					return nil
 				}
 				return err
 			}
-
-			fmt.Println(prog("Fetching", boldCyan(projCfg.ProjectSlug+"/"+env)))
 
 			client := api.New(cfg)
 			remote, err := client.Pull(projCfg.ProjectSlug, env)
@@ -132,45 +135,34 @@ Key names are shown; values are never displayed.`,
 			remoteMap := cliCrypto.ParseEnvFile(remotePlain)
 			added, removed, changed := cliCrypto.DiffEnvFiles(remoteMap, localMap)
 
-			sectionTitle(fmt.Sprintf("Diff · %s/%s", projCfg.ProjectSlug, env))
-			fmt.Printf("  %s\n", dim("local .env vs remote "+fmt.Sprintf("v%d", remote.Version)))
+			banner(fmt.Sprintf("Differences — %s/%s (local %s vs remote v%d)", projCfg.ProjectSlug, env, localFile, remote.Version))
 
 			if len(added)+len(removed)+len(changed) == 0 {
-				blank()
-				fmt.Println("  " + ok("No differences — local is in sync with remote."))
-				blank()
+				fmt.Println(" No differences found — local file is in sync with remote.")
+				complete("")
 				return nil
 			}
 
+			var rows [][]string
 			for _, k := range added {
-				item(green("added · ")+boldGreen(k), "present remotely but missing from local .env")
+				rows = append(rows, []string{"+ Added", k, "Present remotely, missing from local file"})
 			}
 			for _, k := range removed {
-				item(red("removed · ")+red(k), "present locally but missing from remote")
+				rows = append(rows, []string{"- Removed", k, "Present locally, missing from remote"})
 			}
 			for _, k := range changed {
-				item(yellow("changed · ")+yellow(k), "key exists in both places with different values")
+				rows = append(rows, []string{"~ Changed", k, "Key exists in both with different values"})
 			}
 
-			parts := []string{}
-			if len(added) > 0 {
-				parts = append(parts, green(fmt.Sprintf("+%d added", len(added))))
-			}
-			if len(removed) > 0 {
-				parts = append(parts, red(fmt.Sprintf("−%d removed", len(removed))))
-			}
-			if len(changed) > 0 {
-				parts = append(parts, yellow(fmt.Sprintf("~%d changed", len(changed))))
-			}
-			item(strings.Join(parts, " · "), "summary")
-			blank()
-			hint("Push local changes: dotsync push")
-			blank()
+			table([]string{"State", "Variable", "Details"}, rows)
+			fmt.Printf(" Summary: %d added, %d removed, %d changed.\n", len(added), len(removed), len(changed))
+			fmt.Println(" Push local changes with: dotsync push")
 			return nil
 		},
 	}
 
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment to compare against")
+	cmd.Flags().StringVarP(&fileFlag, "file", "f", "", "local file to compare (default: .env)")
 	return cmd
 }
 
@@ -193,24 +185,20 @@ func envsCmd() *cobra.Command {
 			client := api.New(cfg)
 			envs, err := client.ListEnvironments(projCfg.ProjectSlug)
 			if err != nil {
-				// fallback — server may not have envs yet
 				envs = []string{"dev", "staging", "production"}
 			}
 
-			sectionTitle("Environments · " + projCfg.ProjectSlug)
-
-			for _, e := range envs {
+			banner(fmt.Sprintf("Environments — %s", projCfg.ProjectSlug))
+			rows := make([][]string, len(envs))
+			for i, e := range envs {
+				status := "Available"
 				if e == projCfg.DefaultEnv {
-					item(boldGreen(e)+"  (default)", "active project environment")
-				} else {
-					item(cyan(e), "available environment")
+					status = "Default"
 				}
+				rows[i] = []string{e, status}
 			}
-
-			blank()
-			hint("dotsync push --env production")
-			hint("dotsync pull --env staging")
-			blank()
+			table([]string{"Environment", "Status"}, rows)
+			fmt.Println(" Target an environment with: dotsync pull --env <name>")
 			return nil
 		},
 	}
@@ -226,72 +214,65 @@ func statusCmd() *cobra.Command {
 			cfg, _ := config.LoadGlobal()
 			projCfg, projErr := config.LoadProject()
 
-			sectionTitle("DotSync status")
+			banner("DotSync Status")
+
+			var rows [][]string
 
 			// ── Auth ─────────────────────────────────────────────────────────
 			if config.IsLoggedIn(cfg) {
-				kvCyan("account", "@"+cfg.Username+" · connected")
-				kvDim("server", cfg.ServerURL)
+				rows = append(rows, []string{"Account", "@" + cfg.Username + " (connected)"})
+				rows = append(rows, []string{"Server", cfg.ServerURL})
 			} else {
-				kvRed("account", "not logged in")
-				blank()
-				hint("dotsync login")
-				blank()
+				rows = append(rows, []string{"Account", "Not logged in (run 'dotsync login')"})
+				table([]string{"Property", "Value"}, rows)
 				return nil
 			}
-
-			blank()
 
 			// ── Project ───────────────────────────────────────────────────────
 			if projErr != nil {
-				kvRed("project", "not linked")
-				blank()
-				hint("dotsync init")
-				blank()
+				rows = append(rows, []string{"Project", "Not linked (run 'dotsync init')"})
+				table([]string{"Property", "Value"}, rows)
 				return nil
 			}
 
-			kvCyan("project", projCfg.ProjectSlug)
-			kvCyan("environment", projCfg.DefaultEnv)
+			rows = append(rows, []string{"Project", projCfg.ProjectSlug})
+			rows = append(rows, []string{"Default Env", projCfg.DefaultEnv})
 
 			client := api.New(cfg)
 
 			// ── Password ──────────────────────────────────────────────────────
 			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
 			if pwErr != nil {
-				kv("password", red("not set")+dim(" → dotsync init --rotate-password"))
+				rows = append(rows, []string{"Password", "Not set (run 'dotsync init')"})
 			} else {
-				kvGreen("password", "available")
+				rows = append(rows, []string{"Password", "Available (server-stored key)"})
 			}
-
-			blank()
 
 			// ── Remote state ──────────────────────────────────────────────────
 			remoteVer, pushedBy, err := client.GetLatestVersion(
 				projCfg.ProjectSlug, projCfg.DefaultEnv)
 			if err != nil {
-				kv("remote", yellow("could not reach server"))
+				rows = append(rows, []string{"Remote State", "Could not reach server"})
 			} else if remoteVer == 0 {
-				kvDim("remote", "no secrets pushed yet")
-				blank()
-				hint("dotsync push")
+				rows = append(rows, []string{"Remote State", "No secrets pushed yet (run 'dotsync push')"})
 			} else {
-				kv("remote", green(fmt.Sprintf("v%d", remoteVer))+dim(" · pushed by @"+pushedBy))
-				if _, err := os.Stat(".env"); err == nil {
-					kv("local", green(".env present")+dim(" → dotsync diff"))
-				} else {
-					kv("local", yellow("no .env")+dim(" → dotsync pull"))
-				}
+				rows = append(rows, []string{"Remote State", fmt.Sprintf("v%d (pushed by @%s)", remoteVer, pushedBy)})
+			}
+
+			// ── Local state ───────────────────────────────────────────────────
+			if _, err := os.Stat(".env"); err == nil {
+				rows = append(rows, []string{"Local State", ".env present (compare with 'dotsync diff')"})
+			} else {
+				rows = append(rows, []string{"Local State", "No local .env found (download with 'dotsync pull')"})
 			}
 
 			// ── Team ─────────────────────────────────────────────────────────
 			members, err := client.ListTeamMembers(projCfg.ProjectSlug)
 			if err == nil {
-				blank()
-				kvDim("team", fmt.Sprintf("%d member(s) → dotsync team list", len(members)))
+				rows = append(rows, []string{"Team Members", fmt.Sprintf("%d member(s)", len(members))})
 			}
 
-			blank()
+			table([]string{"Property", "Value"}, rows)
 			return nil
 		},
 	}

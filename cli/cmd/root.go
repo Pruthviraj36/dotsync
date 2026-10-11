@@ -63,7 +63,6 @@ func init() {
 		rollbackCmd(),
 		historyCmd(),
 		diffCmd(),
-		scanCmd(),
 		envsCmd(),
 		statusCmd(),
 		auditCmd(),

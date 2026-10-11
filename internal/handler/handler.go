@@ -12,6 +12,7 @@ import (
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
+	mw "github.com/Pruthviraj36/dotsync/internal/middleware"
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/Pruthviraj36/dotsync/internal/service"
 	"github.com/go-chi/chi/v5"
@@ -238,6 +239,11 @@ func NewSecretsHandler(
 
 // POST /api/projects/{slug}/envs/{env}/push
 func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens are read-only")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
@@ -297,6 +303,14 @@ func (h *SecretsHandler) Pull(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
 
+	if mw.IsServiceTokenRequest(r.Context()) {
+		scope := mw.ServiceTokenEnv(r.Context())
+		if scope != "*" && scope != envName {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("service token is scoped to %q, cannot pull %q", scope, envName))
+			return
+		}
+	}
+
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found")
@@ -342,6 +356,14 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 	envName := chi.URLParam(r, "env")
 	limits := model.Plans[claims.Plan]
 
+	if mw.IsServiceTokenRequest(r.Context()) {
+		scope := mw.ServiceTokenEnv(r.Context())
+		if scope != "*" && scope != envName {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("service token is scoped to %q, cannot view history for %q", scope, envName))
+			return
+		}
+	}
+
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found")
@@ -379,6 +401,11 @@ func NewTeamHandler(ps *service.ProjectService, ts *service.TeamService, databas
 
 // POST /api/projects/{slug}/team
 func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage team members")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 
@@ -462,6 +489,11 @@ func (h *TeamHandler) ListMembers(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/projects/{slug}/team/{username} — remove a member
 func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage team members")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	username := chi.URLParam(r, "username")
@@ -509,6 +541,11 @@ func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 
 // PATCH /api/projects/{slug}/team/{username} — update a member's role
 func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage team members")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	username := chi.URLParam(r, "username")
@@ -582,6 +619,11 @@ func NewPasswordHandler(
 
 // PUT /api/projects/{slug}/password — set or rotate the project password
 func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot modify passwords")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 
@@ -650,6 +692,14 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
+
+	if mw.IsServiceTokenRequest(r.Context()) {
+		scope := mw.ServiceTokenEnv(r.Context())
+		if scope != "*" && scope != envName {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("service token is scoped to %q, cannot pull %q", scope, envName))
+			return
+		}
+	}
 
 	versionStr := r.URL.Query().Get("version")
 	if versionStr == "" {
@@ -809,6 +859,11 @@ func NewServiceTokenHandler(ts *service.ServiceTokenService, ps *service.Project
 
 // POST /api/projects/{slug}/tokens — create a service token (owners and admins only)
 func (h *ServiceTokenHandler) Create(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage service tokens")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 
@@ -856,6 +911,11 @@ func (h *ServiceTokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/projects/{slug}/tokens — list service tokens for a project
 func (h *ServiceTokenHandler) List(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage service tokens")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 
@@ -882,6 +942,11 @@ func (h *ServiceTokenHandler) List(w http.ResponseWriter, r *http.Request) {
 
 // DELETE /api/projects/{slug}/tokens/{tokenID} — revoke a service token
 func (h *ServiceTokenHandler) Revoke(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage service tokens")
+		return
+	}
+
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	tokenID := chi.URLParam(r, "tokenID")

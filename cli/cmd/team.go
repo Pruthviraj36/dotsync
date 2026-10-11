@@ -46,24 +46,23 @@ func teamListCmd() *cobra.Command {
 				return err
 			}
 
-			fmt.Println(prog("Loading", dim("team members...")))
 			client := api.New(cfg)
 			members, err := client.ListTeamMembers(projCfg.ProjectSlug)
 			if err != nil {
 				return err
 			}
-			fmt.Println(ok("Loaded " + dim(fmt.Sprintf("%d members", len(members)))))
+
+			banner("Team Members · " + projCfg.ProjectSlug)
 
 			if len(members) == 0 {
+				fmt.Println(info("No team members found."))
 				blank()
-				fmt.Println(info("No members yet."))
-				blank()
-				cmdHint("dotsync team add <github-username>")
+				hint("Add a member: dotsync team add <github-username>")
 				blank()
 				return nil
 			}
 
-			sectionTitle("Team · " + projCfg.ProjectSlug)
+			var rows [][]string
 			for _, m := range members {
 				username, _ := m["username"].(string)
 				role, _ := m["role"].(string)
@@ -73,18 +72,16 @@ func teamListCmd() *cobra.Command {
 					age = joinedAt[:10]
 				}
 				unameRaw := "@" + username
-				isMe := username == cfg.Username
-
-				name := cyan(unameRaw)
-				if isMe {
-					name = boldCyan(unameRaw + "  (you)")
+				if username == cfg.Username {
+					unameRaw += " (you)"
 				}
-				item(name, "role: "+role+" · joined "+age)
+				rows = append(rows, []string{unameRaw, roleColor(role), age, "active"})
 			}
-			blank()
-			hint("add:    dotsync team add <username>")
-			hint("remove: dotsync team remove <username>")
-			hint("role:   dotsync team role <username> admin|member|viewer")
+			table([]string{"Member", "Role", "Joined", "Status"}, rows)
+
+			hint("Add member:    dotsync team add <username>")
+			hint("Remove member: dotsync team remove <username>")
+			hint("Change role:   dotsync team role <username> <admin|member|viewer>")
 			blank()
 			return nil
 		},
@@ -117,26 +114,31 @@ with your project slug. The password is fetched automatically.`,
 			username := strings.TrimPrefix(args[0], "@")
 			client := api.New(cfg)
 
-			fmt.Printf("%s  Adding @%s...\n", spin(""), username)
+			banner("Team · Add Member")
+			txRunning("membership transaction")
 
+			txStep(1, 2, fmt.Sprintf("Granting @%s access to %s", username, projCfg.ProjectSlug))
 			if err := client.AddTeamMember(projCfg.ProjectSlug, username); err != nil {
 				return err
 			}
 
 			if roleFlag != "member" {
+				txStep(2, 2, fmt.Sprintf("Assigning role '%s'", roleFlag))
 				if err := client.UpdateTeamRole(projCfg.ProjectSlug, username, roleFlag); err != nil {
 					fmt.Println(warn(fmt.Sprintf("Added but could not set role to %s: %v", roleFlag, err)))
-					return nil
 				}
+			} else {
+				txStep(2, 2, "Default role 'member' assigned")
 			}
 
-			blank()
-			fmt.Printf("%s  @%s added to %s as %s\n",
-				boldGreen("success"), username, boldCyan(projCfg.ProjectSlug), roleColor(roleFlag))
-			blank()
-			hint(fmt.Sprintf("Tell @%s to run:", username))
-			cmdHint("  dotsync init")
-			blank()
+			transactionSummary("Membership Update", [][2]string{
+				{"Project", projCfg.ProjectSlug},
+				{"Member", "@" + username},
+				{"Role", roleFlag},
+			})
+
+			hint(fmt.Sprintf("Tell @%s to run: dotsync init %s", username, projCfg.ProjectSlug))
+			complete(fmt.Sprintf("@%s added successfully.", username))
 			return nil
 		},
 	}
@@ -166,28 +168,33 @@ func teamRemoveCmd() *cobra.Command {
 			username := strings.TrimPrefix(args[0], "@")
 
 			if !forceFlag {
-				fmt.Printf("  Remove @%s from %s? [y/N]: ", username, projCfg.ProjectSlug)
+				fmt.Printf("Remove @%s from %s? [y/N]: ", username, projCfg.ProjectSlug)
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "y" && confirm != "Y" {
-					fmt.Println(dim("  Aborted — nothing changed."))
+					fmt.Println(dim("Aborted — nothing changed."))
 					return nil
 				}
 			}
 
 			client := api.New(cfg)
+			banner("Team · Remove Member")
+			txRunning("membership revocation")
+			txStep(1, 1, fmt.Sprintf("Revoking access for @%s from %s", username, projCfg.ProjectSlug))
+
 			if err := client.RemoveTeamMember(projCfg.ProjectSlug, username); err != nil {
 				return err
 			}
 
-			blank()
-			fmt.Printf("%s  @%s removed from %s\n",
-				boldGreen("success"), username, boldCyan(projCfg.ProjectSlug))
-			blank()
-			hint("Note: they may still have a local .env from a previous pull.")
-			hint("If this is a security concern, push new secrets immediately:")
-			cmdHint("  dotsync push")
-			blank()
+			transactionSummary("Membership Revocation", [][2]string{
+				{"Project", projCfg.ProjectSlug},
+				{"Member", "@" + username},
+				{"Status", "Revoked"},
+			})
+
+			hint("Member may still possess locally cached secrets from prior pulls.")
+			hint("To ensure security, consider rotating secrets: dotsync push")
+			complete(fmt.Sprintf("@%s removed from project.", username))
 			return nil
 		},
 	}
@@ -227,14 +234,21 @@ func teamRoleCmd() *cobra.Command {
 			}
 
 			client := api.New(cfg)
+			banner("Team · Update Role")
+			txRunning("role update")
+			txStep(1, 1, fmt.Sprintf("Updating @%s role to %s", username, role))
+
 			if err := client.UpdateTeamRole(projCfg.ProjectSlug, username, role); err != nil {
 				return err
 			}
 
-			blank()
-			fmt.Printf("%s  @%s is now %s in %s\n",
-				boldGreen("success"), username, roleColor(role), boldCyan(projCfg.ProjectSlug))
-			blank()
+			transactionSummary("Role Update", [][2]string{
+				{"Project", projCfg.ProjectSlug},
+				{"Member", "@" + username},
+				{"New Role", role},
+			})
+
+			complete(fmt.Sprintf("@%s role updated to %s.", username, role))
 			return nil
 		},
 	}

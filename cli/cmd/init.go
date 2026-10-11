@@ -42,15 +42,19 @@ The encryption password is fetched automatically.`,
 
 			blank()
 			if listErr == nil && len(projects) > 0 {
-				fmt.Println(ok(fmt.Sprintf("%s  %s", dim("logged in as"), boldCyan("@"+cfg.Username))))
-				sectionTitle("Your projects")
-				for _, p := range projects {
-					item(boldCyan(fmt.Sprintf("%v", p["slug"])), fmt.Sprintf("%v", p["name"]))
+				banner("DotSync Project Initialization")
+				fmt.Printf(" Authenticated as @%s on %s\n\n", cfg.Username, cfg.ServerURL)
+				rows := make([][]string, len(projects))
+				for i, p := range projects {
+					rows[i] = []string{fmt.Sprintf("%v", p["slug"]), fmt.Sprintf("%v", p["name"])}
 				}
-				blank()
+				table([]string{"Project Slug", "Project Name"}, rows)
+				fmt.Println()
+			} else {
+				banner("DotSync Project Initialization")
 			}
 
-			fmt.Printf("%sProject slug (or %s to create new): ", msgPad(), cyan("new"))
+			fmt.Print(" Project slug (or 'new' to create): ")
 			slug, _ := reader.ReadString('\n')
 			slug = strings.TrimSpace(slug)
 
@@ -72,16 +76,14 @@ The encryption password is fetched automatically.`,
 				if !matched {
 					return fmt.Errorf(
 						"project %q not found\n\n"+
-							"%sRun %s to see your projects\n"+
-							"%sRun %s to create it",
+							"  Run 'dotsync init' to view projects\n"+
+							"  Run 'dotsync init --new' to create a new project",
 						slug,
-						msgPad(), cyan("dotsync init"),
-						msgPad(), cyan("dotsync init --new"),
 					)
 				}
 			}
 
-			fmt.Printf("%sEnvironment [dev]: ", msgPad())
+			fmt.Print(" Environment [dev]: ")
 			env, _ := reader.ReadString('\n')
 			env = strings.TrimSpace(env)
 			if env == "" {
@@ -99,14 +101,18 @@ The encryption password is fetched automatically.`,
 				return fmt.Errorf("save config: %w", err)
 			}
 
+			txRunning("linking")
+			txStep(1, 2, fmt.Sprintf("Saved project binding in .dotsync.json (%s/%s)", slug, env))
 			ensureGitignore()
+			txStep(2, 2, "Verified .gitignore protection")
 
-			blank()
-			fmt.Println(ok(boldCyan(slug) + "  " + dim("linked · "+env)))
-			blank()
-			hint("password fetched automatically on first pull/push")
-			cmdHint("dotsync pull")
-			blank()
+			transactionSummary("Project Configuration", [][2]string{
+				{"Project Slug", slug},
+				{"Default Env", env},
+				{"Config File", ".dotsync.json"},
+			})
+
+			complete(fmt.Sprintf("Linked workspace to %s/%s", slug, env))
 			return nil
 		},
 	}
@@ -116,19 +122,17 @@ The encryption password is fetched automatically.`,
 }
 
 func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufio.Reader) error {
-	blank()
-	fmt.Println(bold(msgPad() + "Create a new project"))
-	blank()
+	banner("Create New Project")
 
-	fmt.Printf("%sProject name: ", msgPad())
+	fmt.Print(" Project name: ")
 	name, _ := reader.ReadString('\n')
 	name = strings.TrimSpace(name)
 
-	fmt.Printf("%sSlug (lowercase, hyphens): ", msgPad())
+	fmt.Print(" Slug (lowercase, hyphens): ")
 	slug, _ := reader.ReadString('\n')
 	slug = strings.TrimSpace(slug)
 
-	fmt.Printf("%sDescription (optional): ", msgPad())
+	fmt.Print(" Description (optional): ")
 	desc, _ := reader.ReadString('\n')
 	desc = strings.TrimSpace(desc)
 
@@ -136,12 +140,11 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("name and slug are required")
 	}
 
-	blank()
-	password, err := readPassword(msgPad() + "Encryption password: ")
+	password, err := readPassword(" Encryption password: ")
 	if err != nil {
 		return err
 	}
-	confirm, err := readPassword(msgPad() + "Confirm password: ")
+	confirm, err := readPassword(" Confirm password: ")
 	if err != nil {
 		return err
 	}
@@ -149,8 +152,8 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("passwords do not match")
 	}
 
-	blank()
-	fmt.Println(prog("Creating", boldCyan(slug)))
+	txRunning("creation")
+
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
 		return err
@@ -165,39 +168,34 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if err := config.SaveProject(projCfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
+	txStep(1, 3, fmt.Sprintf("Created project record '%s' on server", actualSlug))
 
-	fmt.Println(prog("Securing", dim("encryption key...")))
 	if err := setPassword(client, actualSlug, password); err != nil {
 		return err
 	}
-
-	// Derive key once so any error surfaces here, not at push time
 	_ = crypto.DeriveKey(password, actualSlug)
+	txStep(2, 3, "Encrypted and secured project password on server")
 
-	fmt.Println(prog("Identity", dim("ed25519 signing key...")))
 	_, pub, _, err := identity.Ensure()
 	if err != nil {
 		return fmt.Errorf("ed25519 identity: %w", err)
 	}
 	if err := client.SetPubKey(identity.Hex(pub)); err != nil {
-		fmt.Println(dim(msgPad() + "(public key sync will retry on next push)"))
+		fmt.Println("  " + warn("public key sync will retry on next push"))
 	}
+	txStep(3, 3, "Initialized ed25519 signing identity")
 
 	ensureGitignore()
 
-	blank()
-	fmt.Println(ok(boldCyan(actualSlug) + "  " + dim("ready")))
-	blank()
-	kv("Project", name)
-	kv("Slug", actualSlug)
-	kv("Envs", "dev · staging · production")
-	kv("Encryption", "AES-256-GCM + Argon2id")
-	kv("Signing", "ed25519")
-	blank()
-	hint("push your first secrets:")
-	cmdHint("dotsync push")
-	blank()
+	transactionSummary("New Project Summary", [][2]string{
+		{"Project Name", name},
+		{"Project Slug", actualSlug},
+		{"Environments", "dev, staging, production"},
+		{"Encryption", "AES-256-GCM + Argon2id"},
+		{"Signing", "ed25519"},
+	})
 
+	complete(fmt.Sprintf("Created project '%s'", actualSlug))
 	return nil
 }
 
@@ -273,7 +271,7 @@ func requireLogin() (*config.GlobalConfig, error) {
 			msg += "\n" + msgPad() + "running under sudo? preserve env with:\n" +
 				msgPad() + "  sudo -E dotsync run -- your-command\n"
 		}
-		return nil, fmt.Errorf(msg)
+		return nil, fmt.Errorf("%s", msg)
 	}
 	if !config.IsLoggedIn(cfg) {
 		return nil, fmt.Errorf("not logged in\n\n%sdotsync login", msgPad())

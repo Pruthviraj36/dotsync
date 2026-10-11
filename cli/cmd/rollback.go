@@ -17,6 +17,7 @@ func rollbackCmd() *cobra.Command {
 	var envFlag string
 	var outputFlag string
 	var forceFlag bool
+	var allowUnsignedFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "rollback <version>",
@@ -64,12 +65,10 @@ To see available versions: dotsync history`,
 				return nil
 			}
 
-			sectionTitle("Rollback · " + projCfg.ProjectSlug + "/" + env)
-			kv("From", fmt.Sprintf("v%d", currentVersion))
-			kvCyan("Target", fmt.Sprintf("v%d", version))
-			blank()
+			banner(fmt.Sprintf("Rollback · %s/%s", projCfg.ProjectSlug, env))
+			txRunning("rollback preparation")
 
-			fmt.Println(prog("Fetching", dim(fmt.Sprintf("v%d", version))))
+			txStep(1, 2, fmt.Sprintf("Fetching v%d payload", version))
 			old, err := client.PullVersion(projCfg.ProjectSlug, env, version)
 			if err != nil {
 				return fmt.Errorf("could not fetch v%d: %w", version, err)
@@ -78,9 +77,12 @@ To see available versions: dotsync history`,
 			if verified, vErr := verifySignature(old.EncryptedData, old.Signature, old.PushedByPubKey); vErr != nil {
 				return fmt.Errorf("signature verification failed: %w\nRefusing to roll back to an unverified version", vErr)
 			} else if !verified {
-				return fmt.Errorf("v%d is not signed — this is a legacy secret pushed before signature verification was enabled\nFor security, cannot roll back to unsigned versions. Re-push secrets with a recent dotsync version.", version)
+				if !allowUnsignedFlag && !forceFlag {
+					return fmt.Errorf("v%d is not signed (legacy secret pushed before signature verification was enabled)\nUse --allow-unsigned to proceed with rollback", version)
+				}
+				fmt.Println(warn(fmt.Sprintf("v%d is unsigned (proceeding per --allow-unsigned)", version)))
 			} else {
-				fmt.Println(ok(dim(fmt.Sprintf("signature verified — @%s (ed25519)", old.PushedBy))))
+				txStep(2, 2, fmt.Sprintf("Verifying signature (@%s ed25519)", old.PushedBy))
 			}
 
 			plaintext, err := cliCrypto.DecryptEnvFile(
@@ -91,41 +93,43 @@ To see available versions: dotsync history`,
 			}
 
 			parsed := cliCrypto.ParseEnvFile(plaintext)
-			blank()
-			kvCyan("Secrets", fmt.Sprintf("%d secrets (originally pushed by @%s)", len(parsed), old.PushedBy))
-			blank()
 
 			// Inspect mode — write to file, don't push
 			if outputFlag != "" {
 				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
-				fmt.Println(ok(dim(fmt.Sprintf("v%d written to %s", version, outputFlag))))
+				blank()
+				fmt.Println(ok(fmt.Sprintf("v%d decrypted and written to %s", version, outputFlag)))
 				hint("Inspect the file, then push it manually if it looks right:")
 				cmdHint(fmt.Sprintf("cp %s .env && dotsync push --env %s", outputFlag, env))
-				blank()
+				complete("")
 				return nil
 			}
 
 			// Confirmation prompt
 			if !forceFlag {
-				sectionTitle(fmt.Sprintf("Restore v%d", version))
-				for k := range parsed {
-					item(cyan(k), "")
-				}
 				blank()
-				fmt.Printf("  Re-encrypt v%d content and push as %s? [y/N]: ",
-					version, green(fmt.Sprintf("v%d", currentVersion+1)))
+				var rows [][]string
+				for k := range parsed {
+					rows = append(rows, []string{k, fmt.Sprintf("Restore from v%d", version)})
+				}
+				table([]string{"Secret Key", "Action"}, rows)
+
+				fmt.Printf("Re-encrypt v%d (%d secrets) and push as v%d? [y/N]: ",
+					version, len(parsed), currentVersion+1)
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm != "y" && confirm != "Y" {
-					fmt.Println(dim("  Aborted — nothing changed."))
+					fmt.Println(dim("Aborted — nothing changed."))
 					blank()
 					return nil
 				}
 			}
 
-			fmt.Println(prog("Encrypting", dim("fresh nonce...")))
+			blank()
+			txRunning("rollback transaction")
+			txStep(1, 3, fmt.Sprintf("Re-encrypting %d secret(s) with fresh nonce", len(parsed)))
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, projCfg.ProjectSlug)
 			if err != nil {
 				return fmt.Errorf("re-encryption failed: %w", err)
@@ -136,13 +140,15 @@ To see available versions: dotsync history`,
 				return err
 			}
 			if identityCreated {
-				fmt.Println(info("ed25519 identity created: " + identity.PubKeyPath()))
+				fmt.Println(info("Created new ed25519 identity: " + identity.PubKeyPath()))
 			}
 			if err := client.SetPubKey(identity.Hex(pub)); err != nil {
-				fmt.Println(dim("  (could not sync public key)"))
+				// non-fatal
 			}
 
-			fmt.Println(prog("Uploading", dim("...")))
+			txStep(2, 3, "Signing payload with local ed25519 key")
+			txStep(3, 3, fmt.Sprintf("Uploading payload (%s)", humanSize(len(ciphertext))))
+
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
@@ -152,24 +158,25 @@ To see available versions: dotsync history`,
 				return err
 			}
 
-			blank()
-			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env) + " " + dim(fmt.Sprintf("v%d → v%d (rollback)", version, result.Version))))
-			blank()
-			kv("project", projCfg.ProjectSlug)
-			kv("env", env)
-			kvGreen("restored", fmt.Sprintf("v%d content as v%d", version, result.Version))
-			kvDim("history", fmt.Sprintf("v1–v%d all still accessible via dotsync history", currentVersion))
-			blank()
+			transactionSummary("Rollback Summary", [][2]string{
+				{"Project", projCfg.ProjectSlug},
+				{"Environment", env},
+				{"Restored From", fmt.Sprintf("v%d", version)},
+				{"New Version", fmt.Sprintf("v%d", result.Version)},
+				{"Secrets Count", fmt.Sprintf("%d", len(parsed))},
+				{"Size", humanSize(len(ciphertext))},
+			})
+
+			complete(fmt.Sprintf("%s/%s rolled back to v%d content as v%d", projCfg.ProjectSlug, env, version, result.Version))
 
 			// Offer to update local .env
 			if _, err := os.Stat(".env"); err == nil {
-				fmt.Printf("  Update local .env? [Y/n]: ")
+				fmt.Printf("Update local .env file? [Y/n]: ")
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
-					os.WriteFile(".env", []byte(plaintext), 0600)
-					fmt.Println(ok(dim(".env updated")))
-					blank()
+					_ = os.WriteFile(".env", []byte(plaintext), 0600)
+					fmt.Println(ok(".env updated."))
 				}
 			}
 
@@ -180,5 +187,6 @@ To see available versions: dotsync history`,
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
 	cmd.Flags().StringVarP(&outputFlag, "output", "o", "", "write to file instead of pushing")
 	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "skip confirmation")
+	cmd.Flags().BoolVar(&allowUnsignedFlag, "allow-unsigned", false, "allow rolling back to legacy unsigned versions")
 	return cmd
 }

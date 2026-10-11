@@ -27,23 +27,35 @@ func configShowCmd() *cobra.Command {
 				return err
 			}
 
-			sectionTitle("CLI configuration")
+			banner("CLI Configuration")
 
-			if cfg.ServerURL != "" {
-				kvCyan("server", cfg.ServerURL)
-			} else {
-				kv("server", red("not set  ")+dim("→ dotsync config set-server <url>"))
+			serverVal := cfg.ServerURL
+			serverStatus := green("configured")
+			if serverVal == "" {
+				serverVal = "not configured"
+				serverStatus = yellow("missing")
 			}
 
-			if config.IsLoggedIn(cfg) {
-				kvCyan("account", "@"+cfg.Username)
-			} else {
-				kv("account", dim("not logged in  ")+dim("→ dotsync login"))
+			accountVal := "@" + cfg.Username
+			accountStatus := green("authenticated")
+			if !config.IsLoggedIn(cfg) {
+				accountVal = "not logged in"
+				accountStatus = dim("unauthenticated")
 			}
 
-			blank()
-			hint("Change server: dotsync config set-server <url>")
-			hint("Override with: export DOTSYNC_SERVER=<url>")
+			var rows [][]string
+			rows = append(rows, []string{"Server Endpoint", serverVal, serverStatus})
+			rows = append(rows, []string{"Active Account", accountVal, accountStatus})
+
+			projCfg, _ := config.LoadProject()
+			if projCfg != nil {
+				rows = append(rows, []string{"Linked Project", projCfg.ProjectSlug, green("linked")})
+				rows = append(rows, []string{"Default Env", projCfg.DefaultEnv, dim("active")})
+			}
+
+			table([]string{"Configuration Key", "Value", "Status"}, rows)
+			hint("Change server:   dotsync config set-server <url>")
+			hint("Environment var: export DOTSYNC_SERVER=<url>")
 			blank()
 			return nil
 		},
@@ -71,14 +83,17 @@ this saved value — useful for CI/CD or temporary server switches.`,
 				return fmt.Errorf("save config: %w", err)
 			}
 
-			blank()
-			fmt.Println(ok("Server URL saved"))
-			blank()
-			kvCyan("server", args[0])
-			blank()
-			hint("Now authenticate:")
-			cmdHint("dotsync login")
-			blank()
+			banner("Configure Server Endpoint")
+			txRunning("configuration update")
+			txStep(1, 1, fmt.Sprintf("Writing endpoint '%s' to configuration", args[0]))
+
+			transactionSummary("Configuration Summary", [][2]string{
+				{"Server URL", args[0]},
+				{"Storage Path", "~/.dotsync/config.json"},
+			})
+
+			hint("Next step: authenticate with 'dotsync login'")
+			complete("Server configuration updated.")
 			return nil
 		},
 	}

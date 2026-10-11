@@ -194,7 +194,9 @@ func decodeResponse(resp *http.Response, target any) error {
 	}
 
 	if target != nil {
-		return json.Unmarshal(body, target)
+		if err := json.Unmarshal(body, target); err != nil {
+			return fmt.Errorf("unmarshal response: %w", err)
+		}
 	}
 	return nil
 }

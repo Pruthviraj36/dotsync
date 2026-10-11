@@ -78,7 +78,10 @@ and uploads the ciphertext. The server never sees plaintext.`,
 				}
 			}
 
-			fmt.Println(prog("Encrypting", boldCyan(projCfg.ProjectSlug+"/"+env)+dim(fmt.Sprintf("  %d secrets", len(keys)))))
+			banner(fmt.Sprintf("Push Secrets — %s/%s", projCfg.ProjectSlug, env))
+			txRunning("transaction")
+
+			txStep(1, 3, fmt.Sprintf("Encrypting %d secrets with AES-256-GCM", len(keys)))
 
 			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(
 				string(data), password, projCfg.ProjectSlug,
@@ -92,13 +95,14 @@ and uploads the ciphertext. The server never sees plaintext.`,
 				return err
 			}
 			if identityCreated {
-				fmt.Println(info("ed25519 identity created · " + dim(identity.PubKeyPath())))
+				fmt.Println("  " + info("ed25519 identity created: "+identity.PubKeyPath()))
 			}
 			if err := client.SetPubKey(identity.Hex(pub)); err != nil {
-				fmt.Println(dim(msgPad() + "(public key sync failed — will retry)"))
+				fmt.Println("  " + warn(fmt.Sprintf("public key sync warning: %v", err)))
 			}
 
-			fmt.Println(prog("Uploading", dim(humanSize(len(ciphertext)))))
+			txStep(2, 3, "Verifying and attaching ed25519 signature")
+			txStep(3, 3, fmt.Sprintf("Uploading encrypted payload (%s)", humanSize(len(ciphertext))))
 
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
@@ -118,23 +122,22 @@ and uploads the ciphertext. The server never sees plaintext.`,
 				Digest:  localPullDigest(data),
 			}
 			if err := config.SaveProject(projCfg); err != nil {
-				fmt.Println(warn(dim("could not save pull state: " + err.Error())))
+				fmt.Println("  " + warn("could not save pull state: "+err.Error()))
 			}
 
 			rev := revString(digestOf(ciphertext))
 
-			blank()
-			fmt.Println(ok(boldCyan(projCfg.ProjectSlug+"/"+env) + "  " + green(fmt.Sprintf("v%d", result.Version))))
-			blank()
-			kv("project", projCfg.ProjectSlug)
-			kv("env", env)
-			kvGreen("version", fmt.Sprintf("v%d", result.Version))
-			kvGreen("secrets", fmt.Sprintf("%d encrypted", len(keys)))
-			kvDim("size", humanSize(len(ciphertext)))
-			kvDim("rev", rev)
-			blank()
-			hint("teammates can run: dotsync pull")
-			blank()
+			transactionSummary("Transaction Summary", [][2]string{
+				{"Operation", "Push"},
+				{"Project", projCfg.ProjectSlug},
+				{"Environment", env},
+				{"Version", fmt.Sprintf("v%d", result.Version)},
+				{"Secrets", fmt.Sprintf("%d encrypted", len(keys))},
+				{"Payload Size", humanSize(len(ciphertext))},
+				{"Revision", rev},
+			})
+
+			complete(fmt.Sprintf("Pushed %s/%s as v%d", projCfg.ProjectSlug, env, result.Version))
 			return nil
 		},
 	}
@@ -195,9 +198,11 @@ never sees plaintext.`,
 					if data, readErr := os.ReadFile(outputFile); readErr == nil && localPullDigest(data) == state.Digest {
 						who := ""
 						if latestBy != "" {
-							who = " · @" + latestBy
+							who = " by @" + latestBy
 						}
-						fmt.Printf("%s%s already up to date · v%d%s\n", msgPad(), outputFile, latestVersion, who)
+						fmt.Printf("%s is already up to date (version v%d%s).\n", outputFile, latestVersion, who)
+						fmt.Println("Nothing to do.")
+						complete("")
 						return nil
 					}
 				}
@@ -205,17 +210,19 @@ never sees plaintext.`,
 
 			if !forceFlag {
 				if _, err := os.Stat(outputFile); err == nil {
-					fmt.Printf("%s%s already exists. Overwrite? [y/N]: ", msgPad(), outputFile)
+					fmt.Printf("%s already exists. Overwrite? [y/N]: ", outputFile)
 					var confirm string
 					fmt.Scanln(&confirm)
 					if confirm != "y" && confirm != "Y" {
-						fmt.Println(dim(msgPad() + "aborted"))
+						fmt.Println(dim("Operation aborted."))
 						return nil
 					}
 				}
 			}
 
-			fmt.Println(prog("Fetching", boldCyan(projCfg.ProjectSlug+"/"+env)))
+			banner(fmt.Sprintf("Pull Secrets — %s/%s", projCfg.ProjectSlug, env))
+			txRunning("transaction")
+			txStep(1, 3, fmt.Sprintf("Fetching %s/%s payload from server", projCfg.ProjectSlug, env))
 
 			result, err := client.Pull(projCfg.ProjectSlug, env)
 			if err != nil {
@@ -230,13 +237,12 @@ never sees plaintext.`,
 				return fmt.Errorf("signature verification failed: %w\nrefusing to write %s", verifyErr, outputFile)
 			}
 			if verified {
-				fmt.Println(info(dim("signature verified · @" + result.PushedBy + " (ed25519)")))
+				fmt.Println("  " + info(fmt.Sprintf("signature verified (@%s, ed25519)", result.PushedBy)))
 			} else if len(result.Signature) == 0 {
-				fmt.Println(warn(dim("⚠️  warning: this secret version is not signed (pushed before signature verification was enabled)")))
-				fmt.Println(dim(msgPad() + "for security, consider re-pushing with: dotsync push --env " + env))
+				fmt.Println("  " + warn("secret version is not signed (pushed before signature verification was enabled)"))
 			}
 
-			fmt.Println(prog("Decrypting", dim("AES-256-GCM")))
+			txStep(2, 3, "Verifying ed25519 push signature")
 
 			var password string
 			if localFlag {
@@ -267,23 +273,26 @@ never sees plaintext.`,
 				Digest:  localPullDigest([]byte(plaintext)),
 			}
 			if err := config.SaveProject(projCfg); err != nil {
-				fmt.Println(warn(dim("could not save pull state: " + err.Error())))
+				fmt.Println("  " + warn("could not save pull state: "+err.Error()))
 			}
+
+			txStep(3, 3, fmt.Sprintf("Decrypting AES-256-GCM and writing %s", outputFile))
 
 			parsed := cliCrypto.ParseEnvFile(plaintext)
 			rev := revString(digestOf(result.EncryptedData))
 
-			blank()
-			fmt.Println(ok(cyan(outputFile) + dim(fmt.Sprintf("  %d secrets", len(parsed)))))
-			blank()
-			kv("project", projCfg.ProjectSlug)
-			kv("env", env)
-			kvGreen("version", fmt.Sprintf("v%d", result.Version))
-			kvDim("pushed by", "@"+result.PushedBy)
-			kvDim("rev", rev)
-			blank()
-			hint("dotsync diff  — see what changed")
-			blank()
+			transactionSummary("Transaction Summary", [][2]string{
+				{"Operation", "Pull"},
+				{"Project", projCfg.ProjectSlug},
+				{"Environment", env},
+				{"Version", fmt.Sprintf("v%d", result.Version)},
+				{"Secrets", fmt.Sprintf("%d decrypted", len(parsed))},
+				{"Output File", outputFile},
+				{"Pushed by", "@" + result.PushedBy},
+				{"Revision", rev},
+			})
+
+			complete(fmt.Sprintf("Synchronized %s (v%d)", outputFile, result.Version))
 			return nil
 		},
 	}

@@ -79,28 +79,28 @@ user tokens in logs and dashboards.`,
 				return fmt.Errorf("create token: %w", err)
 			}
 
-			fmt.Println(ok("Service token created."))
-			sectionTitle("Service token · save it now")
-			item(cyan(token), "shown once; store it in your CI/CD secret manager immediately")
+			banner("Service Token Generation")
+			txRunning("token issuance")
+			txStep(1, 1, fmt.Sprintf("Issuing token for scope '%s'", env))
+
 			blank()
-			kvCyan("project", projCfg.ProjectSlug)
-			kvCyan("environment", env)
-			kv("name", name)
-			fmt.Println()
-			fmt.Println(warn("This token is shown ONCE. Copy it now — it cannot be retrieved again."))
-			fmt.Println()
-			fmt.Println("  Add it to your CI/CD platform as a secret named DOTSYNC_TOKEN.")
-			fmt.Println()
-			fmt.Println("  Then in CI, pull secrets with:")
-			fmt.Println()
-			fmt.Printf("    %s\n", cyan("dotsync pull --env "+env+" --force"))
-			fmt.Println()
-			fmt.Println("  Or generate a full CI snippet:")
-			fmt.Println()
-			fmt.Printf("    %s\n", cyan("dotsync integrate github-actions --env "+env))
-			fmt.Printf("    %s\n", cyan("dotsync integrate vercel --env "+env))
-			fmt.Printf("    %s\n", cyan("dotsync integrate railway --env "+env))
-			fmt.Println()
+			fmt.Println(divider())
+			fmt.Printf(" TOKEN: %s\n", bold(token))
+			fmt.Println(divider())
+			blank()
+			fmt.Println(warn("This token is shown ONCE. Store it in your CI/CD secret manager immediately."))
+
+			transactionSummary("Token Details", [][2]string{
+				{"Project", projCfg.ProjectSlug},
+				{"Environment", env},
+				{"Name", name},
+				{"Format", "dst_<hex>"},
+			})
+
+			hint("Add to your CI/CD platform as a secret named DOTSYNC_TOKEN")
+			hint("Pull secrets in CI: dotsync pull --env " + env + " --force")
+			hint("Or inspect CI snippets: dotsync integrate github-actions --env " + env)
+			complete("Service token created successfully.")
 			return nil
 		},
 	}
@@ -133,20 +133,17 @@ func tokensListCmd() *cobra.Command {
 				return fmt.Errorf("list tokens: %w", err)
 			}
 
-			fmt.Println()
-			fmt.Printf("  Service Tokens — %s\n", bold(projCfg.ProjectSlug))
-			fmt.Println()
+			banner("Service Tokens · " + projCfg.ProjectSlug)
 
 			if len(tokens) == 0 {
-				fmt.Println(dim("  No service tokens yet."))
-				fmt.Println()
-				fmt.Printf("  Create one with: %s\n", cyan("dotsync tokens create"))
-				fmt.Println()
+				fmt.Println(info("No service tokens found for this project."))
+				blank()
+				hint("Create one with: dotsync tokens create")
+				blank()
 				return nil
 			}
 
-			sectionTitle("Service tokens · " + projCfg.ProjectSlug)
-
+			var rows [][]string
 			for _, t := range tokens {
 				name := str(t["name"])
 				env := str(t["env"])
@@ -156,10 +153,12 @@ func tokensListCmd() *cobra.Command {
 				if lu, ok := t["last_used_at"]; ok && lu != nil && lu != "" {
 					lastUsed = parseTime(str(lu))
 				}
-				item(cyan(name), "environment: "+env+" · created "+createdAt+" · last used "+lastUsed+"\n    id: "+id)
+				rows = append(rows, []string{name, env, createdAt, lastUsed, id})
 			}
+			table([]string{"Name", "Scope", "Created", "Last Used", "Token ID"}, rows)
+
+			hint(fmt.Sprintf("%d token(s) configured · revoke with: dotsync tokens revoke <id>", len(tokens)))
 			blank()
-			hint(fmt.Sprintf("%d token(s) · revoke one with: dotsync tokens revoke <id>", len(tokens)))
 			return nil
 		},
 	}
@@ -190,16 +189,23 @@ Get the token ID from: dotsync tokens list`,
 
 			tokenID := args[0]
 			client := api.New(cfg)
+
+			banner("Service Token Revocation")
+			txRunning("token revocation")
+			txStep(1, 1, fmt.Sprintf("Invalidating token %s", tokenID))
+
 			if err := client.RevokeServiceToken(projCfg.ProjectSlug, tokenID); err != nil {
 				return fmt.Errorf("revoke token: %w", err)
 			}
 
-			fmt.Println()
-			fmt.Println(ok(fmt.Sprintf("Token %s revoked.", bold(tokenID))))
-			fmt.Println()
-			fmt.Println("  Any CI/CD pipeline using this token will receive 401 Unauthorized.")
-			fmt.Printf("  Run %s to see remaining tokens.\n", cyan("dotsync tokens list"))
-			fmt.Println()
+			transactionSummary("Revocation Summary", [][2]string{
+				{"Project", projCfg.ProjectSlug},
+				{"Token ID", tokenID},
+				{"Status", "Revoked"},
+			})
+
+			hint("Any CI/CD pipeline using this token will now receive 401 Unauthorized.")
+			complete("Service token revoked successfully.")
 			return nil
 		},
 	}

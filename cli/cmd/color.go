@@ -11,170 +11,247 @@ import (
 // ── ANSI codes ────────────────────────────────────────────────────────────────
 
 const (
-	cReset        = "\033[0m"
-	cBold         = "\033[1m"
-	cDim          = "\033[2m"
-	cItalic       = "\033[3m"
-	cGreen        = "\033[32m"
-	cYellow       = "\033[33m"
-	cRed          = "\033[31m"
-	cCyan         = "\033[36m"
-	cBlue         = "\033[34m"
-	cMagenta      = "\033[35m"
-	cBrightGreen  = "\033[92m"
-	cBrightCyan   = "\033[96m"
-	cBrightRed    = "\033[91m"
-	cBrightYellow = "\033[93m"
-	cBrightPurple = "\033[95m"
+	cReset   = "\033[0m"
+	cBold    = "\033[1m"
+	cDim     = "\033[2m"
+	cItalic  = "\033[3m"
+	cGreen   = "\033[32m"
+	cYellow  = "\033[33m"
+	cRed     = "\033[31m"
+	cCyan    = "\033[36m"
+	cBlue    = "\033[34m"
+	cMagenta = "\033[35m"
 )
 
 var isTTY = term.IsTerminal(int(os.Stdout.Fd()))
 
 func colorize(code, s string) string {
-	if !isTTY {
+	if !isTTY || os.Getenv("NO_COLOR") != "" {
 		return s
 	}
 	return code + s + cReset
 }
 
-// ── Color primitives ──────────────────────────────────────────────────────────
+// ── Color primitives (clean & minimal) ────────────────────────────────────────
 
-func green(s string) string      { return colorize(cBrightGreen, s) }
-func yellow(s string) string     { return colorize(cBrightYellow, s) }
-func red(s string) string        { return colorize(cBrightRed, s) }
-func cyan(s string) string       { return colorize(cBrightCyan, s) }
+func green(s string) string      { return colorize(cGreen, s) }
+func yellow(s string) string     { return colorize(cYellow, s) }
+func red(s string) string        { return colorize(cRed, s) }
+func cyan(s string) string       { return colorize(cCyan, s) }
 func blue(s string) string       { return colorize(cBlue, s) }
 func magenta(s string) string    { return colorize(cMagenta, s) }
-func purple(s string) string     { return colorize(cBrightPurple, s) }
+func purple(s string) string     { return colorize(cMagenta, s) }
 func bold(s string) string       { return colorize(cBold, s) }
 func dim(s string) string        { return colorize(cDim, s) }
 func italic(s string) string     { return colorize(cItalic, s) }
-func boldCyan(s string) string   { return colorize(cBold+cBrightCyan, s) }
-func boldGreen(s string) string  { return colorize(cBold+cBrightGreen, s) }
-func boldRed(s string) string    { return colorize(cBold+cBrightRed, s) }
-func boldPurple(s string) string { return colorize(cBold+cBrightPurple, s) }
+func boldCyan(s string) string   { return colorize(cBold+cCyan, s) }
+func boldGreen(s string) string  { return colorize(cBold+cGreen, s) }
+func boldRed(s string) string    { return colorize(cBold+cRed, s) }
+func boldPurple(s string) string { return colorize(cBold+cMagenta, s) }
 
-// ── Layout system ─────────────────────────────────────────────────────────────
+// ── Pure DNF / Fedora Layout System ───────────────────────────────────────────
 //
-// Two visual tiers:
+// Minimal, structured, monospace, user-friendly terminal presentation:
 //
-// TIER 1 — Progress lines (while something is happening)
-//   Right-aligned verb in 12-char column, 2-space gap, message.
-//   Feels like cargo/bun. Used during active operations.
+// 1. Transaction Banners (80-col rules)
+//    ================================================================================
+//     Target: gods-eye/production
+//    ================================================================================
 //
-//       Encrypting  gods-eye/dev — 18 secrets
-//         Uploading  1.4 KB
-//             done  gods-eye/dev → v1
+// 2. Numbered step progress (Running transaction)
+//    Running transaction:
+//      [1/3] Encrypting secrets (18 items)... done.
+//      [2/3] Verifying and attaching ed25519 signature... done.
+//      [3/3] Uploading ciphertext (1.4 KB)... done.
 //
-// TIER 2 — Summary/info blocks (after completion, or for status/version)
-//   Simple 2-space indent, dim label, two spaces, value.
-//   Labels are left-aligned in their own narrow column.
-//   Feels like git status / gh cli.
+//    Complete!
 //
-//   project   gods-eye
-//   env       dev
-//   version   v1
-//   secrets   18 encrypted
-//
-// This separation makes it clear what's "happening" vs "here's the result".
+// 3. Tabular summaries for inspectable data (status, diff, history, team, tokens)
+//    ================================================================================
+//     Version    Author        Age         Status
+//    ================================================================================
+//     v3         @alice        just now    current
+//    ================================================================================
 
-const (
-	// Tier 1: progress verb column
-	verbCol = 12
-	verbGap = 2
+const bannerWidth = 80
 
-	// Tier 2: summary label column
-	lblCol = 10 // left-aligned, no right-alignment
-)
-
-// ── Tier 1: progress lines ────────────────────────────────────────────────────
-
-func progLine(verb, colorFn func(string) string, text string) string {
-	// right-align verb in verbCol chars
-	vLen := len(verb("")) // len of colorized empty string = just ansi codes, not useful
-	_ = vLen
-	rawVerb := verb
-	_ = rawVerb
-	pad := verbCol - len(text)
-	if pad < 0 {
-		pad = 0
+func ruleChar(r rune) string {
+	w := termWidth()
+	if w > 100 {
+		w = 100
 	}
-	return strings.Repeat(" ", pad) + colorFn(text) + strings.Repeat(" ", verbGap)
+	return strings.Repeat(string(r), w)
 }
 
-// prog prints a named operation in progress.
-// verb: the action word (e.g. "Encrypting") — bold cyan, right-aligned.
-// msg: the detail — printed as-is.
-func prog(verb, msg string) string {
-	pad := verbCol - len(verb)
-	if pad < 0 {
-		pad = 0
-	}
-	return strings.Repeat(" ", pad) + boldCyan(verb) + strings.Repeat(" ", verbGap) + msg
+func divider() string {
+	return ruleChar('=')
 }
 
-// ok prints a completion line.
+func subDivider() string {
+	return ruleChar('-')
+}
+
+func banner(title string) {
+	fmt.Println(divider())
+	fmt.Printf(" %s\n", bold(title))
+	fmt.Println(divider())
+}
+
+func sectionTitle(s string) {
+	banner(s)
+}
+
+func txRunning(label string) {
+	if label == "" {
+		label = "transaction"
+	}
+	fmt.Printf("Running %s:\n", label)
+}
+
+func txStep(curr, total int, msg string) {
+	fmt.Printf("  [%d/%d] %s... %s\n", curr, total, msg, green("done."))
+}
+
+func txStepCustom(curr, total int, msg, status string) {
+	fmt.Printf("  [%d/%d] %s... %s\n", curr, total, msg, status)
+}
+
+func complete(msg string) {
+	fmt.Println()
+	if msg != "" {
+		fmt.Printf("%s %s\n", boldGreen("Complete!"), msg)
+	} else {
+		fmt.Println(boldGreen("Complete!"))
+	}
+}
+
+// ── Standard status indicators ────────────────────────────────────────────────
+
 func ok(msg string) string {
-	pad := verbCol - len("done")
-	return strings.Repeat(" ", pad) + boldGreen("done") + strings.Repeat(" ", verbGap) + msg
-}
-
-// step prints an anonymous in-progress line.
-func step(msg string) string {
-	pad := verbCol - 1
-	return strings.Repeat(" ", pad) + dim("·") + strings.Repeat(" ", verbGap) + dim(msg)
-}
-
-func spin(msg string) string { return step(msg) }
-
-func fail(msg string) string {
-	pad := verbCol - len("error")
-	return strings.Repeat(" ", pad) + boldRed("error") + strings.Repeat(" ", verbGap) + msg
-}
-
-func warn(msg string) string {
-	pad := verbCol - len("warn")
-	return strings.Repeat(" ", pad) + yellow("warn") + strings.Repeat(" ", verbGap) + msg
+	return fmt.Sprintf("[  %s  ] %s", green("OK"), msg)
 }
 
 func info(msg string) string {
-	pad := verbCol - len("info")
-	return strings.Repeat(" ", pad) + cyan("info") + strings.Repeat(" ", verbGap) + msg
+	return fmt.Sprintf("[ %s ] %s", dim("INFO"), msg)
 }
 
-// ── Tier 2: summary/info blocks ───────────────────────────────────────────────
-// Labels are dim, left-aligned, value follows after padding to lblCol.
-// Total left indent: 2 spaces.
+func warn(msg string) string {
+	return fmt.Sprintf("[ %s ] %s", yellow("WARN"), msg)
+}
+
+func fail(msg string) string {
+	return fmt.Sprintf("[ %s ] %s", red("FAIL"), msg)
+}
+
+func step(msg string) string {
+	return fmt.Sprintf("  * %s", msg)
+}
+
+func spin(msg string) string {
+	return step(msg)
+}
+
+func prog(verb, msg string) string {
+	return fmt.Sprintf("  * %s: %s", bold(verb), msg)
+}
+
+// ── Key-Value & Summary blocks ────────────────────────────────────────────────
 
 func kv(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(dim(label), lblCol), value)
+	fmt.Printf(" %-15s: %s\n", dim(label), value)
 }
 
 func kvGreen(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(dim(label), lblCol), green(value))
+	fmt.Printf(" %-15s: %s\n", dim(label), green(value))
 }
 
 func kvCyan(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(dim(label), lblCol), cyan(value))
+	fmt.Printf(" %-15s: %s\n", dim(label), value)
 }
 
 func kvDim(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(dim(label), lblCol), dim(value))
+	fmt.Printf(" %-15s: %s\n", dim(label), dim(value))
 }
 
 func kvRed(label, value string) {
-	fmt.Printf("  %s  %s\n", padRight(dim(label), lblCol), red(value))
+	fmt.Printf(" %-15s: %s\n", dim(label), red(value))
 }
 
-// ── Terminal geometry ─────────────────────────────────────────────────────────
+func transactionSummary(title string, items [][2]string) {
+	fmt.Println()
+	if title == "" {
+		title = "Transaction Summary"
+	}
+	fmt.Println(title)
+	fmt.Println(divider())
+	for _, item := range items {
+		fmt.Printf(" %-15s: %s\n", dim(item[0]), item[1])
+	}
+	fmt.Println(divider())
+}
+
+// ── Tabular formatting (DNF package list style) ──────────────────────────────
+
+func table(headers []string, rows [][]string) {
+	colCount := len(headers)
+	if colCount == 0 {
+		return
+	}
+
+	widths := make([]int, colCount)
+	for i, h := range headers {
+		widths[i] = visibleLen(h)
+	}
+
+	for _, row := range rows {
+		for i := 0; i < colCount && i < len(row); i++ {
+			if l := visibleLen(row[i]); l > widths[i] {
+				widths[i] = l
+			}
+		}
+	}
+
+	// Print table header
+	fmt.Println(divider())
+	var headerLine strings.Builder
+	headerLine.WriteString(" ")
+	for i, h := range headers {
+		headerLine.WriteString(padRight(bold(h), widths[i]))
+		if i < colCount-1 {
+			headerLine.WriteString("  ")
+		}
+	}
+	fmt.Println(headerLine.String())
+	fmt.Println(divider())
+
+	// Print rows
+	for _, row := range rows {
+		var rowLine strings.Builder
+		rowLine.WriteString(" ")
+		for i := 0; i < colCount; i++ {
+			val := ""
+			if i < len(row) {
+				val = row[i]
+			}
+			rowLine.WriteString(padRight(val, widths[i]))
+			if i < colCount-1 {
+				rowLine.WriteString("  ")
+			}
+		}
+		fmt.Println(rowLine.String())
+	}
+	fmt.Println(divider())
+}
+
+// ── Terminal geometry & layout helpers ────────────────────────────────────────
 
 func termWidth() int {
 	if !isTTY {
-		return 80
+		return bannerWidth
 	}
 	w, _, err := term.GetSize(int(os.Stdout.Fd()))
 	if err != nil || w < 60 {
-		return 80
+		return bannerWidth
 	}
 	if w > 120 {
 		return 120
@@ -182,13 +259,9 @@ func termWidth() int {
 	return w
 }
 
-// msgPad returns leading whitespace that aligns with the end of the verb column.
-// Use for hints and cmds that sit below a prog/ok line.
 func msgPad() string {
-	return strings.Repeat(" ", verbCol+verbGap)
+	return "  "
 }
-
-// ── ANSI-aware measurement ────────────────────────────────────────────────────
 
 func visibleLen(s string) int {
 	inEsc := false
@@ -216,26 +289,24 @@ func padRight(s string, width int) string {
 	return s
 }
 
-// ── Layout helpers ────────────────────────────────────────────────────────────
-
-func blank() { fmt.Println() }
-
-func hint(s string) { fmt.Printf("%s%s\n", msgPad(), dim(s)) }
-
-func cmdHint(s string) { fmt.Printf("%s%s\n", msgPad(), cyan(s)) }
-
-// item uses a vertical, narrative layout rather than a terminal table. It is
-// readable in narrow terminals and when pasted into a ticket or CI log.
-func item(primary, detail string) {
-	if detail == "" {
-		fmt.Printf("  %s %s\n", cyan("•"), primary)
-		return
-	}
-	fmt.Printf("  %s %s\n    %s\n", cyan("•"), primary, dim(detail))
+func blank() {
+	fmt.Println()
 }
 
-func sectionTitle(s string) {
-	fmt.Printf("\n  %s\n", bold(s))
+func hint(s string) {
+	fmt.Printf("  Note: %s\n", dim(s))
+}
+
+func cmdHint(s string) {
+	fmt.Printf("  Run:  %s\n", s)
+}
+
+func item(primary, detail string) {
+	if detail == "" {
+		fmt.Printf("  * %s\n", primary)
+		return
+	}
+	fmt.Printf("  * %s\n    %s\n", primary, dim(detail))
 }
 
 // ── Semantic helpers ──────────────────────────────────────────────────────────
@@ -243,11 +314,11 @@ func sectionTitle(s string) {
 func roleColor(role string) string {
 	switch role {
 	case "owner":
-		return boldCyan(role)
+		return bold(role)
 	case "admin":
-		return cyan(role)
+		return bold(role)
 	case "member":
-		return green(role)
+		return role
 	default:
 		return dim(role)
 	}
@@ -258,13 +329,13 @@ func actionColor(action string) string {
 	case "push":
 		return green(action)
 	case "pull":
-		return cyan(action)
+		return bold(action)
 	case "invite":
 		return yellow(action)
 	case "revoke", "token_revoke":
 		return red(action)
 	case "token_create":
-		return boldCyan(action)
+		return bold(action)
 	default:
 		return dim(action)
 	}

@@ -48,51 +48,47 @@ func versionCmd() *cobra.Command {
 			cfg, _ := config.LoadGlobal()
 			projCfg, _ := config.LoadProject()
 
-			sectionTitle("dotsync " + version)
-			if revision != "" {
-				rev := revision
-				if dirty {
-					rev += dim("+dirty")
-				}
-				kvDim("commit", rev)
-			}
-			if buildTime != "" {
-				kvDim("built", buildTime)
-			}
+			banner("DotSync System & Version")
 
-			sectionTitle("Build")
-			kv("platform", bold(fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH)))
-			kvDim("go", strings.TrimPrefix(runtime.Version(), "go"))
+			var rows [][]string
+			rows = append(rows, []string{"Version", version, green("installed")})
+			rows = append(rows, []string{"Platform", fmt.Sprintf("%s/%s", runtime.GOOS, runtime.GOARCH), "target"})
+			rows = append(rows, []string{"Go Runtime", strings.TrimPrefix(runtime.Version(), "go"), "toolchain"})
+
 			if revision != "" {
 				revDisplay := revision
 				if dirty {
-					revDisplay += "  " + yellow("(modified)")
+					revDisplay += " (modified)"
 				}
-				kvDim("commit", revDisplay)
+				rows = append(rows, []string{"Git Commit", revDisplay, "vcs"})
 			}
-
-			sectionTitle("Context")
+			if buildTime != "" {
+				rows = append(rows, []string{"Build Date", buildTime, "timestamp"})
+			}
 
 			// Server
 			if cfg != nil && cfg.ServerURL != "" {
-				kvCyan("server", cfg.ServerURL)
+				rows = append(rows, []string{"Server Endpoint", cfg.ServerURL, green("configured")})
 			} else {
-				kv("server", red("not configured")+dim(" → dotsync config set-server <url>"))
+				rows = append(rows, []string{"Server Endpoint", "not configured", yellow("missing")})
 			}
 
 			// Account
 			if cfg != nil && cfg.Username != "" {
-				kvCyan("account", "@"+cfg.Username)
+				rows = append(rows, []string{"Account", "@" + cfg.Username, green("logged in")})
 			} else {
-				kv("account", red("not logged in")+dim(" → dotsync login"))
+				rows = append(rows, []string{"Account", "not logged in", dim("unauthenticated")})
 			}
 
 			// Project
 			if projCfg != nil {
-				kv("project", bold(projCfg.ProjectSlug)+dim(" · "+projCfg.DefaultEnv))
+				rows = append(rows, []string{"Active Project", fmt.Sprintf("%s (%s)", projCfg.ProjectSlug, projCfg.DefaultEnv), green("linked")})
 			} else {
-				kv("project", dim("none → dotsync init"))
+				rows = append(rows, []string{"Active Project", "none", dim("unlinked")})
 			}
+
+			table([]string{"Property", "Value", "Status"}, rows)
+			hint("Check for updates: dotsync update")
 			blank()
 		},
 	}

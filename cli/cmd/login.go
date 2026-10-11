@@ -42,12 +42,16 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	}
 
 	if config.IsLoggedIn(cfg) {
-		fmt.Println(ok(boldCyan("@"+cfg.Username) + " " + dim("already authenticated")))
-		hint("run dotsync logout first to switch accounts")
+		banner("DotSync Authentication")
+		fmt.Printf(" Account @%s is already authenticated on %s.\n", cfg.Username, cfg.ServerURL)
+		fmt.Println(" To switch accounts, run: dotsync logout")
+		complete("")
 		return nil
 	}
 
-	fmt.Println(prog("Connecting", dim("to server...")))
+	banner("DotSync Authentication")
+	txRunning("pre-check")
+
 	authCfg, err := api.GetAuthConfig(cfg.ServerURL)
 	if err != nil {
 		return fmt.Errorf("could not reach server: %w", err)
@@ -55,47 +59,35 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	if authCfg.GitHubClientID == "" {
 		return fmt.Errorf("server has no GITHUB_CLIENT_ID configured — contact the server admin")
 	}
-	fmt.Println(ok("Connected to " + cyan(cfg.ServerURL)))
+	txStep(1, 2, fmt.Sprintf("Connected to %s", cfg.ServerURL))
 
-	// ── Step 1: request a device code from GitHub ──────────────────────────
-	fmt.Println(prog("Requesting", dim("GitHub device code...")))
 	dc, err := api.StartGitHubDeviceFlow(authCfg.GitHubClientID)
 	if err != nil {
 		return err
 	}
-	fmt.Println(ok("Device code received"))
+	txStep(2, 2, "Device authorization code received")
 
-	// ── Step 2: show the user code clearly — this IS the UI, no browser
-	// redirect page needed, no copy-pasting long tokens ──────────────────
 	fmt.Println()
-	blank()
-	fmt.Println(prog("Device flow", "open this URL on any device:"))
-	hint(dc.VerificationURI)
-	blank()
-	fmt.Println(prog("Enter code", bold(yellow(dc.UserCode))))
-	blank()
-	fmt.Println(step("waiting for you to approve in browser..."))
-	blank()
+	fmt.Println("Device Authorization Required:")
+	fmt.Println(subDivider())
+	fmt.Printf("  1. Open browser URL: %s\n", bold(dc.VerificationURI))
+	fmt.Printf("  2. Enter code:       %s\n", bold(dc.UserCode))
+	fmt.Println(subDivider())
+	fmt.Println("Waiting for browser authorization...")
 
-	// ── Step 3: poll GitHub until the user approves (or it expires) ────────
 	ghToken, err := pollForGitHubToken(authCfg.GitHubClientID, dc)
 	if err != nil {
-		fmt.Println()
 		return err
 	}
+	fmt.Println("Authorization approved.")
 
-	fmt.Println(ok("Authorization approved"))
-	fmt.Println(prog("Exchanging", dim("tokens...")))
+	txRunning("authentication")
 
-	// ── Step 4: hand the verified GitHub token to our server, get DotSync
-	// tokens back. The server independently re-verifies this token against
-	// GitHub's own API — it never just trusts what the CLI claims. ─────────
 	result, err := api.ExchangeGitHubDeviceToken(cfg.ServerURL, ghToken)
 	if err != nil {
 		return fmt.Errorf("login failed: %w", err)
 	}
-
-	fmt.Println(ok("Tokens exchanged"))
+	txStep(1, 2, "Exchanging device token with server")
 
 	username, _ := result.User["username"].(string)
 	userID, _ := result.User["id"].(string)
@@ -105,18 +97,18 @@ func runLogin(cmd *cobra.Command, args []string) error {
 	cfg.UserID = userID
 	cfg.Username = username
 
-	fmt.Println(prog("Saving", dim("credentials...")))
 	if err := config.SaveGlobal(cfg); err != nil {
 		return fmt.Errorf("save credentials: %w", err)
 	}
-	fmt.Println(ok("Credentials saved"))
+	txStep(2, 2, "Saving credentials securely")
 
-	fmt.Println(ok(boldCyan("@" + username)))
-	blank()
-	hint("cd into your project and run:")
-	cmdHint("dotsync init")
-	blank()
+	transactionSummary("Authentication Summary", [][2]string{
+		{"Status", "Connected"},
+		{"Account", "@" + username},
+		{"Server", cfg.ServerURL},
+	})
 
+	complete(fmt.Sprintf("Logged in as @%s", username))
 	return nil
 }
 
@@ -144,12 +136,9 @@ func pollForGitHubToken(clientID string, dc *api.DeviceCodeResponse) (string, er
 
 		switch err {
 		case api.PollErrAuthorizationPending:
-			fmt.Print(spin(""))
 			continue
 		case api.PollErrSlowDown:
-			// RFC 8628 §3.5: add 5s to the interval, cumulatively, and keep polling.
 			interval += 5 * time.Second
-			fmt.Print(dim("↓"))
 			continue
 		case api.PollErrExpired:
 			return "", fmt.Errorf("code expired before authorization — run 'dotsync login' again")
@@ -172,23 +161,23 @@ func logoutCmd() *cobra.Command {
 			}
 
 			if !config.IsLoggedIn(cfg) {
-				fmt.Println(dim("Not logged in."))
+				fmt.Println("Not logged in.")
 				return nil
 			}
 
-			fmt.Println(prog("Revoking", dim("server sessions...")))
-			client := api.New(cfg)
-			// Best-effort server-side revocation
-			_ = client.Logout()
-			fmt.Println(ok("Sessions revoked"))
+			banner("DotSync Logout")
+			txRunning("logout")
 
-			fmt.Println(prog("Clearing", dim("local credentials...")))
+			client := api.New(cfg)
+			_ = client.Logout()
+			txStep(1, 2, "Revoking server sessions")
+
 			if err := config.ClearGlobal(); err != nil {
 				return fmt.Errorf("clear credentials: %w", err)
 			}
-			fmt.Println(ok("Credentials cleared"))
+			txStep(2, 2, "Clearing stored credentials")
 
-			fmt.Println(ok(dim("logged out")))
+			complete("Successfully logged out.")
 			return nil
 		},
 	}

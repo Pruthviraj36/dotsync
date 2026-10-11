@@ -83,16 +83,19 @@ func userHomeDir(username string) (string, error) {
 // ── Credential Storage (System Keyring) ─────────────────────────────────────
 
 // storeTokensInKeyring attempts to store tokens securely in system keyring.
-// Fails silently if keyring is not available (e.g., no desktop environment).
-func storeTokensInKeyring(accessToken, refreshToken string) {
-	// Store access token
+// Returns true only if both tokens were stored successfully.
+func storeTokensInKeyring(accessToken, refreshToken string) bool {
 	if accessToken != "" {
-		_ = keyring.Set("dotsync", "access_token", accessToken)
+		if err := keyring.Set("dotsync", "access_token", accessToken); err != nil {
+			return false
+		}
 	}
-	// Store refresh token
 	if refreshToken != "" {
-		_ = keyring.Set("dotsync", "refresh_token", refreshToken)
+		if err := keyring.Set("dotsync", "refresh_token", refreshToken); err != nil {
+			return false
+		}
 	}
+	return true
 }
 
 // getAccessTokenFromKeyring attempts to retrieve access token from system keyring.
@@ -123,6 +126,12 @@ func clearTokensFromKeyring() {
 }
 
 func LoadGlobal() (*GlobalConfig, error) {
+	// Try environment variable override first (useful for CI/CD)
+	envAccessToken := os.Getenv("DOTSYNC_ACCESS_TOKEN")
+	if envAccessToken == "" {
+		envAccessToken = os.Getenv("DOTSYNC_TOKEN")
+	}
+
 	// Try to load from config file
 	path, err := globalConfigPath()
 	if err != nil {
@@ -131,7 +140,11 @@ func LoadGlobal() (*GlobalConfig, error) {
 
 	data, err := os.ReadFile(path)
 	if os.IsNotExist(err) {
-		return &GlobalConfig{ServerURL: ServerURL("")}, nil
+		cfg := &GlobalConfig{ServerURL: ServerURL("")}
+		if envAccessToken != "" {
+			cfg.AccessToken = envAccessToken
+		}
+		return cfg, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("read config: %w", err)
@@ -145,9 +158,19 @@ func LoadGlobal() (*GlobalConfig, error) {
 	// Try to get tokens from system keyring (more secure than plaintext file)
 	if accessToken := getAccessTokenFromKeyring(); accessToken != "" {
 		cfg.AccessToken = accessToken
+	} else if cfg.AccessToken == "[stored in system keyring]" {
+		cfg.AccessToken = ""
 	}
+
 	if refreshToken := getRefreshTokenFromKeyring(); refreshToken != "" {
 		cfg.RefreshToken = refreshToken
+	} else if cfg.RefreshToken == "[stored in system keyring]" {
+		cfg.RefreshToken = ""
+	}
+
+	// Env token takes highest precedence
+	if envAccessToken != "" {
+		cfg.AccessToken = envAccessToken
 	}
 
 	// Always let DOTSYNC_SERVER env var override the saved value.
@@ -165,13 +188,14 @@ func SaveGlobal(cfg *GlobalConfig) error {
 		return fmt.Errorf("create config dir: %w", err)
 	}
 
-	// Store tokens in system keyring (more secure than plaintext JSON)
-	storeTokensInKeyring(cfg.AccessToken, cfg.RefreshToken)
-
-	// Create a copy for file storage without plaintext tokens
 	cfgForFile := *cfg
-	cfgForFile.AccessToken = "[stored in system keyring]"
-	cfgForFile.RefreshToken = "[stored in system keyring]"
+
+	// Store tokens in system keyring if available. If keyring fails (e.g. headless/no dbus),
+	// keep tokens in the 0600 file so authentication is not lost.
+	if storeTokensInKeyring(cfg.AccessToken, cfg.RefreshToken) {
+		cfgForFile.AccessToken = "[stored in system keyring]"
+		cfgForFile.RefreshToken = "[stored in system keyring]"
+	}
 
 	data, err := json.MarshalIndent(cfgForFile, "", "  ")
 	if err != nil {

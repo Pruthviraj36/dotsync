@@ -3,7 +3,6 @@ package cmd
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -49,15 +48,19 @@ Available to all users — no plan required.`,
 				logs = filtered
 			}
 
+			title := fmt.Sprintf("Audit Log · %s", projCfg.ProjectSlug)
+			if envFlag != "" {
+				title += " (" + envFlag + ")"
+			}
+			banner(title)
+
 			if len(logs) == 0 {
-				blank()
-				fmt.Println(info(fmt.Sprintf("No audit events for %s.", projCfg.ProjectSlug)))
+				fmt.Println(info(fmt.Sprintf("No audit events recorded for %s.", projCfg.ProjectSlug)))
 				blank()
 				return nil
 			}
 
-			type event struct{ when, who, action, env, detail string }
-			events := make([]event, 0, len(logs))
+			var rows [][]string
 			for _, entry := range logs {
 				action, _ := entry["action"].(string)
 				username, _ := entry["username"].(string)
@@ -68,32 +71,17 @@ Available to all users — no plan required.`,
 				if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
 					age = formatAge(t)
 				}
-				events = append(events, event{
-					when:   age,
-					who:    "@" + username,
-					action: action,
-					env:    envName,
-					detail: parseAuditDetail(action, metaStr),
+				rows = append(rows, []string{
+					age,
+					"@" + username,
+					actionColor(action),
+					envName,
+					parseAuditDetail(action, metaStr),
 				})
 			}
 
-			title := fmt.Sprintf("Audit Log  %s", projCfg.ProjectSlug)
-			if envFlag != "" {
-				title += "  " + envFlag
-			}
-
-			sectionTitle(title)
-			for _, event := range events {
-				detail := "@" + strings.TrimPrefix(event.who, "@") + " · " + event.when
-				if event.env != "" {
-					detail += " · " + event.env
-				}
-				if event.detail != "" {
-					detail += " · " + event.detail
-				}
-				item(actionColor(event.action), detail)
-			}
-			hint(fmt.Sprintf("%d event(s)", len(events)))
+			table([]string{"Time", "User", "Action", "Environment", "Detail"}, rows)
+			hint(fmt.Sprintf("%d audit event(s) recorded.", len(rows)))
 			blank()
 			return nil
 		},

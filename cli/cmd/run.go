@@ -18,6 +18,7 @@ import (
 func runCmd() *cobra.Command {
 	var envFlag string
 	var versionFlag int
+	var allowUnsignedFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "run -- <command> [args...]",
@@ -74,9 +75,12 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 			if verified, vErr := verifySignature(result.EncryptedData, result.Signature, result.PushedByPubKey); vErr != nil {
 				return fmt.Errorf("signature verification failed: %w\nRefusing to run with unverified secrets", vErr)
 			} else if !verified {
-				return fmt.Errorf("secrets are not signed — this is a legacy secret pushed before signature verification was enabled\nFor security, re-push secrets using a recent version of dotsync: dotsync push --env %s", env)
+				if !allowUnsignedFlag {
+					return fmt.Errorf("secrets are not signed (legacy secret pushed before signature verification was enabled)\nUse --allow-unsigned to proceed: dotsync run --allow-unsigned -- %s", strings.Join(args, " "))
+				}
+				fmt.Fprintln(os.Stderr, warn("Running with legacy unsigned secrets (--allow-unsigned)"))
 			} else {
-				fmt.Fprintln(os.Stderr, ok(fmt.Sprintf("Signature verified (%s, ed25519)", result.PushedBy)))
+				fmt.Fprintln(os.Stderr, ok(fmt.Sprintf("Signature verified (@%s ed25519)", result.PushedBy)))
 			}
 
 			password, err := resolvePassword(client, projCfg.ProjectSlug)
@@ -161,8 +165,8 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				}
 			}()
 
-			fmt.Fprintln(os.Stderr, info(fmt.Sprintf("Injecting %d secrets (%s/%s v%d)",
-				len(secrets), projCfg.ProjectSlug, env, result.Version)))
+			fmt.Fprintln(os.Stderr, info(fmt.Sprintf("Injected %d secret(s) from %s/%s v%d into %s",
+				len(secrets), projCfg.ProjectSlug, env, result.Version, command)))
 
 			if err := proc.Run(); err != nil {
 				// Propagate the exit code from the subprocess
@@ -180,6 +184,7 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
 	cmd.Flags().IntVar(&versionFlag, "version", 0, "use a specific secret version (default: latest)")
+	cmd.Flags().BoolVar(&allowUnsignedFlag, "allow-unsigned", false, "allow running with unsigned legacy secrets")
 	return cmd
 }
 

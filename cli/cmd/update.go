@@ -44,8 +44,9 @@ will never silently install an unverified binary.`,
 }
 
 func runUpdate(cmd *cobra.Command, args []string) error {
-	blank()
-	fmt.Println(prog("Checking", dim("latest release...")))
+	banner("DotSync Software Update")
+	txRunning("update metadata check")
+	txStep(1, 1, "Checking GitHub releases for latest version")
 
 	release, err := fetchLatestRelease()
 	if err != nil {
@@ -56,23 +57,21 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	latestNorm := strings.TrimPrefix(release.TagName, "v")
 	if Version != "dev" && currentNorm == latestNorm {
 		blank()
-		fmt.Println(ok(dim(fmt.Sprintf("already at %s", Version))))
-		blank()
+		fmt.Println(ok(fmt.Sprintf("Installed version %s is already up to date.", Version)))
+		complete("")
 		return nil
 	}
 
 	blank()
-	fmt.Println(info(fmt.Sprintf("New version available: %s  (current: %s)",
-		bold(release.TagName), dim(Version))))
-	blank()
+	fmt.Printf("Upgrading package: dotsync (%s -> %s)\n\n", Version, release.TagName)
 
-	fmt.Println(prog("Verifying", dim("checksums...")))
+	txRunning("transaction")
+
 	checksums, err := fetchChecksums(release)
 	if err != nil {
-		return fmt.Errorf(
-			"refusing to update: could not fetch checksums.txt: %w\n"+
-				"  DotSync will not install an unverifiable binary.", err)
+		return fmt.Errorf("refusing to update: could not fetch checksums.txt: %w\n  DotSync will not install an unverifiable binary.", err)
 	}
+	txStep(1, 4, "Verifying release checksums.txt")
 
 	ext := ".tar.gz"
 	if runtime.GOOS == "windows" {
@@ -96,7 +95,7 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 		return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
 	}
 
-	fmt.Println(prog("Downloading", dim(release.TagName)))
+	txStep(2, 4, fmt.Sprintf("Downloading %s asset (%s/%s)", release.TagName, runtime.GOOS, runtime.GOARCH))
 	archiveBytes, err := downloadAll(downloadURL)
 	if err != nil {
 		return fmt.Errorf("failed to download update: %w", err)
@@ -112,24 +111,29 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 				"  Nothing was changed. Report this if it persists.",
 			assetName, expectedChecksum, actualChecksum)
 	}
-	fmt.Println(ok(dim("checksum verified")))
+	txStep(3, 4, "Validating SHA-256 integrity")
 
 	binaryReader, err := extractBinary(archiveBytes, ext)
 	if err != nil {
 		return err
 	}
 
-	fmt.Println(prog("Installing", dim(release.TagName)))
+	txStep(4, 4, "Applying self-update binary to system")
 	if err := selfupdate.Apply(binaryReader, selfupdate.Options{}); err != nil {
 		if strings.Contains(err.Error(), "permission denied") {
-			return fmt.Errorf("permission denied — try running with sudo")
+			return fmt.Errorf("permission denied — try running with sudo: sudo dotsync update")
 		}
 		return fmt.Errorf("failed to apply update: %w", err)
 	}
 
-	blank()
-	fmt.Println(ok(boldGreen(release.TagName) + " " + dim("installed")))
-	blank()
+	transactionSummary("Update Summary", [][2]string{
+		{"Package", "dotsync"},
+		{"Platform", runtime.GOOS + "/" + runtime.GOARCH},
+		{"Previous Version", Version},
+		{"Installed Version", release.TagName},
+	})
+
+	complete(fmt.Sprintf("DotSync updated to %s.", release.TagName))
 	return nil
 }
 
