@@ -240,13 +240,8 @@ func statusCmd() *cobra.Command {
 
 			client := api.New(cfg)
 
-			// ── Password ──────────────────────────────────────────────────────
-			_, pwErr := resolvePassword(client, projCfg.ProjectSlug)
-			if pwErr != nil {
-				rows = append(rows, []string{"Password", "Not set (run 'dotsync init')"})
-			} else {
-				rows = append(rows, []string{"Password", "Available (server-stored key)"})
-			}
+			// Do not fetch the plaintext project password just to render status.
+			rows = append(rows, []string{"Password", "Server-managed (used when syncing)"})
 
 			// ── Remote state ──────────────────────────────────────────────────
 			remoteVer, pushedBy, err := client.GetLatestVersion(

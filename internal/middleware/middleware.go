@@ -8,10 +8,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-chi/httprate"
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
 	"github.com/Pruthviraj36/dotsync/internal/service"
+	"github.com/go-chi/httprate"
 )
 
 // serviceTokenKey is the unexported context key for service token metadata.

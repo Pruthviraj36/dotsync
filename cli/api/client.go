@@ -108,17 +108,21 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 }
 
 func (c *Client) refreshTokens() error {
+	requestBody, err := json.Marshal(map[string]string{"refresh_token": c.cfg.RefreshToken})
+	if err != nil {
+		return fmt.Errorf("marshal refresh request: %w", err)
+	}
 	resp, err := c.httpClient.Post(
 		c.baseURL+"/api/auth/refresh",
 		"application/json",
-		bytes.NewBufferString(`{"refresh_token":"`+c.cfg.RefreshToken+`"}`),
+		bytes.NewReader(requestBody),
 	)
 	if err != nil {
 		return fmt.Errorf("token refresh request failed: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return fmt.Errorf("read refresh response: %w", err)
 	}
@@ -128,7 +132,7 @@ func (c *Client) refreshTokens() error {
 		var apiErr struct {
 			Error string `json:"error"`
 		}
-		_ = json.Unmarshal(body, &apiErr)
+		_ = json.Unmarshal(responseBody, &apiErr)
 		if apiErr.Error != "" {
 			// A refresh-token reuse response invalidates every session. Clear the
 			// local keyring too, otherwise `dotsync login` keeps seeing the stale
@@ -147,7 +151,7 @@ func (c *Client) refreshTokens() error {
 		AccessToken  string `json:"access_token"`
 		RefreshToken string `json:"refresh_token"`
 	}
-	if err := json.Unmarshal(body, &result); err != nil {
+	if err := json.Unmarshal(responseBody, &result); err != nil {
 		return fmt.Errorf("parse refresh response: %w", err)
 	}
 
@@ -329,7 +333,7 @@ func (c *Client) ListProjects() ([]map[string]any, error) {
 // SetProjectPassword stores/rotates the E2EE project password on the server.
 // Requires owner or admin role on the project.
 func (c *Client) SetProjectPassword(slug, password string) error {
-	resp, err := c.do("PUT", fmt.Sprintf("/api/projects/%s/password", slug), map[string]string{
+	resp, err := c.do("PUT", fmt.Sprintf("/api/projects/%s/password", url.PathEscape(slug)), map[string]string{
 		"password": password,
 	})
 	if err != nil {
@@ -341,7 +345,7 @@ func (c *Client) SetProjectPassword(slug, password string) error {
 // GetProjectPassword fetches the E2EE project password from the server.
 // Any project member can call this.
 func (c *Client) GetProjectPassword(slug string) (string, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/password", slug), nil)
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/password", url.PathEscape(slug)), nil)
 	if err != nil {
 		return "", err
 	}
@@ -355,7 +359,7 @@ func (c *Client) GetProjectPassword(slug string) (string, error) {
 }
 
 func (c *Client) AddTeamMember(slug, username string) error {
-	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/team", slug), map[string]string{
+	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/team", url.PathEscape(slug)), map[string]string{
 		"username": username,
 	})
 	if err != nil {
@@ -574,7 +578,7 @@ type LoginResponse struct {
 
 // ListTeamMembers returns all members of a project with their roles.
 func (c *Client) ListTeamMembers(slug string) ([]map[string]any, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/team", slug), nil)
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/team", url.PathEscape(slug)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -584,7 +588,7 @@ func (c *Client) ListTeamMembers(slug string) ([]map[string]any, error) {
 
 // RemoveTeamMember removes a user from the project team.
 func (c *Client) RemoveTeamMember(slug, username string) error {
-	resp, err := c.do("DELETE", fmt.Sprintf("/api/projects/%s/team/%s", slug, username), nil)
+	resp, err := c.do("DELETE", fmt.Sprintf("/api/projects/%s/team/%s", url.PathEscape(slug), url.PathEscape(username)), nil)
 	if err != nil {
 		return err
 	}
@@ -593,7 +597,7 @@ func (c *Client) RemoveTeamMember(slug, username string) error {
 
 // UpdateTeamRole changes a member's role.
 func (c *Client) UpdateTeamRole(slug, username, role string) error {
-	resp, err := c.do("PATCH", fmt.Sprintf("/api/projects/%s/team/%s", slug, username),
+	resp, err := c.do("PATCH", fmt.Sprintf("/api/projects/%s/team/%s", url.PathEscape(slug), url.PathEscape(username)),
 		map[string]string{"role": role})
 	if err != nil {
 		return err
@@ -622,7 +626,7 @@ func (c *Client) PullVersion(slug, env string, version int) (*PullResponse, erro
 
 // AuditLogs fetches the audit log for a project.
 func (c *Client) AuditLogs(slug string) ([]map[string]any, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/audit", slug), nil)
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/audit", url.PathEscape(slug)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -659,7 +663,7 @@ func (c *Client) GetLatestVersion(slug, env string) (int, string, error) {
 // CreateServiceToken creates a scoped CI/CD service token for a project+env.
 // Returns the raw token (shown once — store it immediately as a secret).
 func (c *Client) CreateServiceToken(projectSlug, env, name string) (string, error) {
-	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/tokens", projectSlug), map[string]string{
+	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/tokens", url.PathEscape(projectSlug)), map[string]string{
 		"env":  env,
 		"name": name,
 	})
@@ -680,7 +684,7 @@ func (c *Client) CreateServiceToken(projectSlug, env, name string) (string, erro
 
 // ListServiceTokens lists all service tokens for a project.
 func (c *Client) ListServiceTokens(projectSlug string) ([]map[string]any, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/tokens", projectSlug), nil)
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/tokens", url.PathEscape(projectSlug)), nil)
 	if err != nil {
 		return nil, err
 	}
@@ -695,17 +699,16 @@ func (c *Client) ListServiceTokens(projectSlug string) ([]map[string]any, error)
 
 // RevokeServiceToken revokes a service token by ID.
 func (c *Client) RevokeServiceToken(projectSlug, tokenID string) error {
-	resp, err := c.do("DELETE", fmt.Sprintf("/api/projects/%s/tokens/%s", projectSlug, tokenID), nil)
+	resp, err := c.do("DELETE", fmt.Sprintf("/api/projects/%s/tokens/%s", url.PathEscape(projectSlug), url.PathEscape(tokenID)), nil)
 	if err != nil {
 		return err
 	}
-	resp.Body.Close()
-	return nil
+	return decodeResponse(resp, nil)
 }
 
 // ListEnvironments returns environment names for a project (e.g. ["dev","staging","production"]).
 func (c *Client) ListEnvironments(projectSlug string) ([]string, error) {
-	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs", projectSlug), nil)
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/envs", url.PathEscape(projectSlug)), nil)
 	if err != nil {
 		return nil, err
 	}

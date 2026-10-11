@@ -1,4 +1,10 @@
 {
-  "project_slug": "demo-test",
-  "default_env": "dev"
+  "project_slug": "demo24",
+  "default_env": "dev",
+  "last_pulled_states": {
+    "dev\u0000.env": {
+      "version": 8,
+      "digest": "acec06b9457fdc4aa6d5deabba84446be92f981bc6cd4d10429d6b306125bb65"
+    }
+  }
 }

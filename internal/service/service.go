@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"log"
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
@@ -268,7 +269,11 @@ func NewAuditService(database *db.DB) *AuditService {
 }
 
 func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action, ip string, meta map[string]any) {
-	metaJSON, _ := json.Marshal(meta)
+	metaJSON, err := json.Marshal(meta)
+	if err != nil {
+		log.Printf("audit log: marshal metadata for %s: %v", action, err)
+		return
+	}
 
 	// environment_id is a nullable FK — actions like password rotation
 	// aren't scoped to a single environment, so pass NULL rather than an
@@ -278,11 +283,13 @@ func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action
 		envIDArg = envID
 	}
 
-	_, _ = s.db.ExecContext(ctx, `
+	if _, err := s.db.ExecContext(ctx, `
 		INSERT INTO audit_logs (id, user_id, project_id, environment_id, action, metadata, ip_address, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
 		uuid.New().String(), userID, projectID, envIDArg, action, string(metaJSON), ip,
-	)
+	); err != nil {
+		log.Printf("audit log: persist %s: %v", action, err)
+	}
 }
 
 // --- Project Password Service ---
@@ -302,9 +309,9 @@ func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action
 // 4. Eventually, all old passwords can be re-encrypted and old keys dropped
 
 type PasswordService struct {
-	db                 *db.DB
-	keyVersions        map[int][]byte // version -> masterKey mapping
-	currentKeyVersion  int              // latest version for new encryptions
+	db                *db.DB
+	keyVersions       map[int][]byte // version -> masterKey mapping
+	currentKeyVersion int            // latest version for new encryptions
 }
 
 func NewPasswordService(database *db.DB, masterKey []byte) *PasswordService {
@@ -373,12 +380,12 @@ func (s *PasswordService) SetPassword(ctx context.Context, projectID, updatedBy,
 func (s *PasswordService) GetPassword(ctx context.Context, projectID string) (string, error) {
 	var ciphertext, nonce []byte
 	var keyVersion int
-	
+
 	err := s.db.QueryRowContext(ctx,
 		`SELECT encrypted_password, password_nonce, COALESCE(key_version, 1) FROM project_passwords WHERE project_id = $1`,
 		projectID,
 	).Scan(&ciphertext, &nonce, &keyVersion)
-	
+
 	if errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("no password set for this project yet — run: dotsync init --rotate-password")
 	}
