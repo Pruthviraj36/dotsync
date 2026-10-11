@@ -1,6 +1,6 @@
 # DotSync
 
-End-to-end encrypted `.env` sync for dev teams. Secrets are encrypted on your machine before they ever reach the server — the server only stores ciphertext it cannot read.
+Client-encrypted `.env` sync for dev teams. Secrets are encrypted on your machine before they reach the server. The server stores ciphertext plus an encrypted project password used for team-assisted key distribution; this is not a zero-knowledge design.
 
 ---
 
@@ -41,10 +41,10 @@ That's it for most use cases.
 2. The key is derived from your project password using **Argon2id** (64MB, 3 iterations)
 3. Only the ciphertext travels to the server
 4. Every push is signed with an **Ed25519** machine key
-5. Every API request is signed with **HMAC-SHA256** — replay attacks don't work
+5. Each signed version stores the Ed25519 public-key snapshot used to create it
 6. JWTs are short-lived with **refresh token rotation** and replay detection
 
-The server never sees your raw secrets. Even if the database leaked, secrets would be unreadable without the project password.
+The server does not receive plaintext `.env` contents, but an operator with the server master key can decrypt stored project passwords. Protect `SERVER_MASTER_KEY` as a production secret.
 
 ---
 
@@ -62,7 +62,6 @@ The server never sees your raw secrets. Even if the database leaked, secrets wou
 | `dotsync history` | Version history for an environment |
 | `dotsync rollback <n>` | Roll back to a previous version |
 | `dotsync audit` | Full audit log — who did what and when |
-| `dotsync scan` | Scan source files for accidentally committed secrets |
 | `dotsync status` | Show login, project, and sync state |
 | `dotsync version` | Version, build info, and current context |
 | `dotsync team add <user>` | Invite a GitHub user |
@@ -88,7 +87,7 @@ dotsync ui --port 4041   # custom port
 dotsync ui --no-open     # don't auto-open browser
 ```
 
-Opens a local web dashboard at `localhost:4040`. Everything runs locally — secrets are decrypted on your machine, same as the CLI. The server never sees plaintext.
+Opens a local web dashboard at `localhost:4040`. Secrets are decrypted on your machine, same as the CLI. The dashboard is protected by a per-launch local session token and should still only be exposed on a trusted workstation.
 
 Features available in the UI:
 - View and edit secrets with a syntax-highlighted editor
@@ -165,30 +164,13 @@ dotsync tokens list
 dotsync tokens revoke <id>
 ```
 
-Tokens are prefixed `dst_` and scoped to a project+environment. Only the SHA-256 hash is stored — the raw token is shown once.
-
----
-
-## Secret scanning
-
-```bash
-dotsync scan             # scan current directory
-dotsync scan --path ./src
-dotsync scan --all       # include .env files
-```
-
-Detects AWS keys, GitHub tokens, Stripe keys, private keys, database URLs, JWTs, and 20+ other patterns. Exits with code 1 if anything is found — works as a pre-commit hook:
-
-```bash
-echo "dotsync scan" >> .git/hooks/pre-commit
-chmod +x .git/hooks/pre-commit
-```
+Tokens are prefixed `dst_` and bound to a project and environment scope. They are read-only and limited to secret retrieval. Only the SHA-256 hash is stored; the raw token is shown once.
 
 ---
 
 ## Audit logs
 
-Every push, pull, and team change is logged with user, timestamp, and IP.
+Pushes, pulls, and project-password access are logged with user, timestamp, and IP. Team and token-management audit coverage is not yet complete.
 
 ```bash
 dotsync audit
@@ -267,12 +249,15 @@ export DOTSYNC_SERVER=https://your-server.example.com
 
 ## Security
 
-- Server never sees plaintext secrets
+- Client-side AES-256-GCM encryption; the server stores an encrypted project password for team-assisted distribution
 - AES-256-GCM encryption + Argon2id key derivation
-- Ed25519 push signatures — teammates can verify who pushed
-- HMAC-SHA256 request signing — replay protection
+- Ed25519 push signatures with per-version signer-key snapshots
 - Short-lived JWTs + refresh token rotation with replay detection
-- Audit log for every access
+- Service tokens are project-bound, read-only, and environment-scoped for secret retrieval
+- Audit logging for secret access, team changes, and service-token changes
+- Local dashboard requests require a per-launch session token and loopback host
+
+The project password is intentionally server-assisted for team convenience. A server operator with `SERVER_MASTER_KEY` can decrypt stored project passwords, so this implementation is encrypted-at-rest and client-encrypted, not zero-knowledge end-to-end encryption. Removing a team member does not revoke secrets they already downloaded; rotate affected upstream credentials separately.
 
 Found a security issue? Email the maintainer directly. Do not open a public GitHub issue.
 

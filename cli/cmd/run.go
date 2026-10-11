@@ -96,8 +96,11 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				return fmt.Errorf("decrypt secrets: %w", err)
 			}
 
-			// Parse decrypted secrets into key=value pairs
-			secrets := cliCrypto.ParseEnvFile(plaintext)
+			// Reject malformed names before putting remote data into a process environment.
+			secrets, err := cliCrypto.ParseEnvFileStrict(plaintext)
+			if err != nil {
+				return fmt.Errorf("parse secrets: %w", err)
+			}
 
 			// Build subprocess environment: start from current shell env,
 			// overlay with DotSync secrets. DotSync values win on conflict.
@@ -282,8 +285,8 @@ func injectContainerEnv(args []string, secrets map[string]string) []string {
 	}
 
 	envFlags := make([]string, 0, len(secrets)*2)
-	for k, v := range secrets {
-		envFlags = append(envFlags, "--env", k+"="+v)
+	for k := range secrets {
+		envFlags = append(envFlags, "--env", k)
 	}
 
 	result := make([]string, 0, len(args)+len(envFlags))

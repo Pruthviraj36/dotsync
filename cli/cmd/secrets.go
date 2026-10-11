@@ -25,7 +25,6 @@ func localPullStateKey(env, outputFile string) string {
 func pushCmd() *cobra.Command {
 	var envFlag string
 	var fileFlag string
-	var localFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "push",
@@ -68,14 +67,9 @@ and uploads the ciphertext. The server never sees plaintext.`,
 			client := api.New(cfg)
 			keys := cliCrypto.ParseEnvFile(string(data))
 
-			var password string
-			if localFlag {
-				password = cfg.AccessToken
-			} else {
-				password, err = resolvePassword(client, projCfg.ProjectSlug)
-				if err != nil {
-					return err
-				}
+			password, err := resolvePassword(client, projCfg.ProjectSlug)
+			if err != nil {
+				return err
 			}
 
 			banner(fmt.Sprintf("Push Secrets — %s/%s", projCfg.ProjectSlug, env))
@@ -109,6 +103,7 @@ and uploads the ciphertext. The server never sees plaintext.`,
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
 				Signature:     signature,
+				SignerPubKey:  identity.Hex(pub),
 			})
 			if err != nil {
 				if isTTY {
@@ -149,7 +144,6 @@ and uploads the ciphertext. The server never sees plaintext.`,
 
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
 	cmd.Flags().StringVarP(&fileFlag, "file", "f", "", "path to .env file (default: .env)")
-	cmd.Flags().BoolVar(&localFlag, "local", false, "encrypt with personal token instead of team password")
 	return cmd
 }
 
@@ -157,8 +151,6 @@ func pullCmd() *cobra.Command {
 	var envFlag string
 	var outputFlag string
 	var forceFlag bool
-	var localFlag bool
-	var verifyFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "pull",
@@ -254,14 +246,9 @@ never sees plaintext.`,
 
 			txStep(2, 3, "Verifying ed25519 push signature")
 
-			var password string
-			if localFlag {
-				password = cfg.AccessToken
-			} else {
-				password, err = resolvePassword(client, projCfg.ProjectSlug)
-				if err != nil {
-					return err
-				}
+			password, err := resolvePassword(client, projCfg.ProjectSlug)
+			if err != nil {
+				return err
 			}
 
 			plaintext, err := cliCrypto.DecryptEnvFile(
@@ -272,7 +259,7 @@ never sees plaintext.`,
 				return err
 			}
 
-			if err := os.WriteFile(outputFile, []byte(plaintext), 0600); err != nil {
+			if err := writeFileAtomic(outputFile, []byte(plaintext), 0600); err != nil {
 				return fmt.Errorf("write %s: %w", outputFile, err)
 			}
 			if projCfg.LastPulledStates == nil {
@@ -310,7 +297,5 @@ never sees plaintext.`,
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
 	cmd.Flags().StringVarP(&outputFlag, "output", "o", "", "output file path (default: .env)")
 	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "overwrite without confirmation")
-	cmd.Flags().BoolVar(&localFlag, "local", false, "decrypt with personal token instead of team password")
-	cmd.Flags().BoolVar(&verifyFlag, "verify", true, "verify ed25519 push signature")
 	return cmd
 }

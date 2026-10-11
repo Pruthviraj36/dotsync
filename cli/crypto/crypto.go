@@ -3,6 +3,7 @@ package cliCrypto
 import (
 	"fmt"
 	"regexp"
+	"sort"
 	"strings"
 
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
@@ -99,5 +100,8 @@ func DiffEnvFiles(old, new map[string]string) (added, removed, changed []string)
 			removed = append(removed, k)
 		}
 	}
+	sort.Strings(added)
+	sort.Strings(removed)
+	sort.Strings(changed)
 	return
 }

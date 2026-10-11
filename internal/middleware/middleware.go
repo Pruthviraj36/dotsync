@@ -3,7 +3,6 @@ package middleware
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"strings"
 	"time"
@@ -20,8 +19,8 @@ type serviceTokenKey struct{}
 // serviceTokenMeta holds the minimal fields downstream handlers need from a
 // service token request — avoids importing model here and keeps context values simple.
 type serviceTokenMeta struct {
-	Env      string // "dev" | "staging" | "production" | "*" (all)
-	ReadOnly bool   // always true for service tokens
+	ProjectID string
+	Env       string // "dev" | "staging" | "production" | "*" (all)
 }
 
 // JSON error helper
@@ -66,10 +65,14 @@ func Authenticate(authSvc *auth.Service, tokenSvc *service.ServiceTokenService) 
 					Username: "service-token:" + st.Name,
 					Plan:     "free",
 				}
+				if !serviceTokenRouteAllowed(r) {
+					writeError(w, http.StatusForbidden, "service tokens are read-only and limited to secret retrieval")
+					return
+				}
 				ctx := context.WithValue(r.Context(), auth.UserClaimsKey, claims)
 				ctx = context.WithValue(ctx, serviceTokenKey{}, serviceTokenMeta{
-					Env:      st.Env,
-					ReadOnly: true,
+					ProjectID: st.ProjectID,
+					Env:       st.Env,
 				})
 				next.ServeHTTP(w, r.WithContext(ctx))
 				return
@@ -104,45 +107,24 @@ func ServiceTokenEnv(ctx context.Context) string {
 	return ""
 }
 
-// VerifyHMAC checks the X-DotSync-Signature header on CLI requests.
-// Service token requests skip HMAC verification — they authenticate by token
-// value alone (the token is already a secret with sufficient entropy).
-func VerifyHMAC(next http.Handler) http.Handler {
-	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		// Service tokens don't sign request bodies — they prove identity by
-		// possession of the token itself.
-		if IsServiceTokenRequest(r.Context()) {
-			next.ServeHTTP(w, r)
-			return
-		}
+// ServiceTokenProjectID returns the project bound to a service token, or ""
+// for a normal user request.
+func ServiceTokenProjectID(ctx context.Context) string {
+	if meta, ok := ctx.Value(serviceTokenKey{}).(serviceTokenMeta); ok {
+		return meta.ProjectID
+	}
+	return ""
+}
 
-		sig := r.Header.Get("X-DotSync-Signature")
-		if sig == "" {
-			writeError(w, http.StatusBadRequest, "missing X-DotSync-Signature header")
-			return
-		}
-
-		header := r.Header.Get("Authorization")
-		if !strings.HasPrefix(header, "Bearer ") {
-			writeError(w, http.StatusUnauthorized, "missing or invalid authorization header")
-			return
-		}
-		tokenStr := strings.TrimPrefix(header, "Bearer ")
-
-		body, err := io.ReadAll(io.LimitReader(r.Body, 10<<20)) // 10 MB max
-		if err != nil {
-			writeError(w, http.StatusBadRequest, "failed to read body")
-			return
-		}
-		r.Body = io.NopCloser(strings.NewReader(string(body)))
-
-		if !crypto.HMACVerify([]byte(tokenStr), body, sig) {
-			writeError(w, http.StatusUnauthorized, "invalid request signature")
-			return
-		}
-
-		next.ServeHTTP(w, r)
-	})
+func serviceTokenRouteAllowed(r *http.Request) bool {
+	if r.Method != http.MethodGet {
+		return false
+	}
+	path := r.URL.Path
+	return strings.HasSuffix(path, "/pull") ||
+		strings.HasSuffix(path, "/pull/version") ||
+		strings.HasSuffix(path, "/history") ||
+		strings.HasSuffix(path, "/password")
 }
 
 // RateLimitByIP rate-limits per remote IP address.
@@ -159,6 +141,17 @@ func RateLimitByUser(limit int, window time.Duration) func(http.Handler) http.Ha
 		}
 		return httprate.KeyByIP(r)
 	}))
+}
+
+// LimitBody bounds request payloads before handlers decode JSON or allocate
+// encrypted secret blobs. The limit includes base64 JSON overhead.
+func LimitBody(maxBytes int64) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			r.Body = http.MaxBytesReader(w, r.Body, maxBytes)
+			next.ServeHTTP(w, r)
+		})
+	}
 }
 
 // SecurityHeaders sets standard security headers on every response.

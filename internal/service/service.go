@@ -26,10 +26,23 @@ func NewSecretService(database *db.DB) *SecretService {
 // PushSecrets stores a new version of encrypted secrets for an environment.
 // The ciphertext, nonce, and signature are already produced client-side —
 // we store blobs only and never see plaintext or private key material.
-func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce, signature []byte) (*model.Secret, error) {
-	// Get current version
+func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce, signature []byte, signerPubKey string) (*model.Secret, error) {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return nil, fmt.Errorf("begin secret push: %w", err)
+	}
+	defer tx.Rollback()
+
+	// Lock the parent environment so concurrent pushes allocate distinct versions.
+	var lockedEnvironmentID string
+	if err := tx.QueryRowContext(ctx,
+		`SELECT id FROM environments WHERE id = $1 FOR UPDATE`, envID,
+	).Scan(&lockedEnvironmentID); err != nil {
+		return nil, fmt.Errorf("lock environment: %w", err)
+	}
+
 	var currentVersion int
-	err := s.db.QueryRowContext(ctx,
+	err = tx.QueryRowContext(ctx,
 		`SELECT COALESCE(MAX(version), 0) FROM secrets WHERE environment_id = $1`, envID,
 	).Scan(&currentVersion)
 	if err != nil {
@@ -42,19 +55,23 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 		EncryptedData: encryptedData,
 		DataNonce:     nonce,
 		Signature:     signature,
+		SignerPubKey:  signerPubKey,
 		Version:       currentVersion + 1,
 		PushedBy:      pushedBy,
 		CreatedAt:     time.Now(),
 	}
 
-	_, err = s.db.ExecContext(ctx, `
-		INSERT INTO secrets (id, environment_id, encrypted_data, data_nonce, signature, version, pushed_by, created_at)
-		VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+	_, err = tx.ExecContext(ctx, `
+		INSERT INTO secrets (id, environment_id, encrypted_data, data_nonce, signature, signer_pubkey, version, pushed_by, created_at)
+		VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)`,
 		secret.ID, secret.EnvironmentID, secret.EncryptedData,
-		secret.DataNonce, secret.Signature, secret.Version, secret.PushedBy, secret.CreatedAt,
+		secret.DataNonce, secret.Signature, secret.SignerPubKey, secret.Version, secret.PushedBy, secret.CreatedAt,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("insert secret: %w", err)
+	}
+	if err := tx.Commit(); err != nil {
+		return nil, fmt.Errorf("commit secret push: %w", err)
 	}
 
 	return secret, nil
@@ -73,10 +90,9 @@ type PulledSecret struct {
 // along with the pusher's username and public key for signature verification.
 func (s *SecretService) PullLatest(ctx context.Context, envID string) (*PulledSecret, error) {
 	var sec PulledSecret
-	var pubkey sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.signature,
-		       s.version, s.pushed_by, s.created_at, u.username, u.ed25519_pubkey
+		       COALESCE(s.signer_pubkey, u.ed25519_pubkey), s.version, s.pushed_by, s.created_at, u.username
 		FROM secrets s
 		JOIN users u ON u.id = s.pushed_by
 		WHERE s.environment_id = $1
@@ -84,13 +100,13 @@ func (s *SecretService) PullLatest(ctx context.Context, envID string) (*PulledSe
 		LIMIT 1`, envID,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
-		&sec.DataNonce, &sec.Signature, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
-		&sec.PushedByUsername, &pubkey,
+		&sec.DataNonce, &sec.Signature, &sec.SignerPubKey, &sec.Version,
+		&sec.PushedBy, &sec.CreatedAt, &sec.PushedByUsername,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, fmt.Errorf("no secrets found for this environment")
 	}
-	sec.PushedByPubKey = pubkey.String
+	sec.PushedByPubKey = sec.SignerPubKey
 	return &sec, err
 }
 
@@ -546,23 +562,22 @@ func (s *TeamService) UpdateRole(ctx context.Context, projectID, targetUserID, n
 // along with the pusher's username and public key for signature verification.
 func (s *SecretService) PullVersion(ctx context.Context, envID string, version int) (*PulledSecret, error) {
 	var sec PulledSecret
-	var pubkey sql.NullString
 	err := s.db.QueryRowContext(ctx, `
 		SELECT s.id, s.environment_id, s.encrypted_data, s.data_nonce, s.signature,
-		       s.version, s.pushed_by, s.created_at, u.username, u.ed25519_pubkey
+		       COALESCE(s.signer_pubkey, u.ed25519_pubkey), s.version, s.pushed_by, s.created_at, u.username
 		FROM secrets s
 		JOIN users u ON u.id = s.pushed_by
 		WHERE s.environment_id = $1 AND s.version = $2`,
 		envID, version,
 	).Scan(
 		&sec.ID, &sec.EnvironmentID, &sec.EncryptedData,
-		&sec.DataNonce, &sec.Signature, &sec.Version, &sec.PushedBy, &sec.CreatedAt,
-		&sec.PushedByUsername, &pubkey,
+		&sec.DataNonce, &sec.Signature, &sec.SignerPubKey, &sec.Version,
+		&sec.PushedBy, &sec.CreatedAt, &sec.PushedByUsername,
 	)
 	if err != nil {
 		return nil, fmt.Errorf("version %d not found", version)
 	}
-	sec.PushedByPubKey = pubkey.String
+	sec.PushedByPubKey = sec.SignerPubKey
 	return &sec, nil
 }
 

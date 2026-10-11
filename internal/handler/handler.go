@@ -2,13 +2,13 @@ package handler
 
 import (
 	"crypto/ed25519"
+	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"log"
 	"net/http"
 	"os"
-	"strings"
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
@@ -29,10 +29,12 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 }
 
 func realIP(r *http.Request) string {
-	if ip := r.Header.Get("X-Forwarded-For"); ip != "" {
-		return strings.Split(ip, ",")[0]
-	}
 	return r.RemoteAddr
+}
+
+func serviceTokenProjectAllowed(r *http.Request, projectID string) bool {
+	tokenProjectID := mw.ServiceTokenProjectID(r.Context())
+	return tokenProjectID == "" || tokenProjectID == projectID
 }
 
 // ============================================================
@@ -271,6 +273,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		EncryptedData []byte `json:"encrypted_data"` // base64 decoded by json.Unmarshal
 		Nonce         []byte `json:"nonce"`
 		Signature     []byte `json:"signature,omitempty"`
+		SignerPubKey  string `json:"signer_pubkey,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -280,8 +283,24 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "encrypted_data and nonce required")
 		return
 	}
+	if len(req.Signature) > 0 {
+		if req.SignerPubKey == "" {
+			writeError(w, http.StatusBadRequest, "signer_pubkey required when signature is provided")
+			return
+		}
+		pubKey, decodeErr := hex.DecodeString(req.SignerPubKey)
+		if decodeErr != nil || len(pubKey) != ed25519.PublicKeySize {
+			writeError(w, http.StatusBadRequest, "signer_pubkey must be a valid Ed25519 public key")
+			return
+		}
+		digest := sha256.Sum256(req.EncryptedData)
+		if !ed25519.Verify(ed25519.PublicKey(pubKey), digest[:], req.Signature) {
+			writeError(w, http.StatusBadRequest, "signature does not match encrypted_data")
+			return
+		}
+	}
 
-	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce, req.Signature)
+	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce, req.Signature, req.SignerPubKey)
 	if err != nil {
 		log.Printf("ERROR push [project=%s env=%s user=%s]: %v", slug, envName, claims.Username, err)
 		writeError(w, http.StatusInternalServerError, "push failed")
@@ -314,6 +333,10 @@ func (h *SecretsHandler) Pull(w http.ResponseWriter, r *http.Request) {
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if !serviceTokenProjectAllowed(r, proj.ID) {
+		writeError(w, http.StatusForbidden, "service token is not scoped to this project")
 		return
 	}
 
@@ -369,6 +392,10 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
+	if !serviceTokenProjectAllowed(r, proj.ID) {
+		writeError(w, http.StatusForbidden, "service token is not scoped to this project")
+		return
+	}
 
 	env, err := h.projectSvc.GetEnvironment(r.Context(), proj.ID, envName)
 	if err != nil {
@@ -393,10 +420,11 @@ type TeamHandler struct {
 	projectSvc *service.ProjectService
 	teamSvc    *service.TeamService
 	db         *db.DB
+	auditSvc   *service.AuditService
 }
 
-func NewTeamHandler(ps *service.ProjectService, ts *service.TeamService, database *db.DB) *TeamHandler {
-	return &TeamHandler{projectSvc: ps, teamSvc: ts, db: database}
+func NewTeamHandler(ps *service.ProjectService, ts *service.TeamService, database *db.DB, auditSvc *service.AuditService) *TeamHandler {
+	return &TeamHandler{projectSvc: ps, teamSvc: ts, db: database, auditSvc: auditSvc}
 }
 
 // POST /api/projects/{slug}/team
@@ -424,9 +452,17 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 
 	var req struct {
 		Username string `json:"username"`
+		Role     string `json:"role"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil || req.Username == "" {
 		writeError(w, http.StatusBadRequest, "username required")
+		return
+	}
+	if req.Role == "" {
+		req.Role = "member"
+	}
+	if req.Role != "admin" && req.Role != "member" && req.Role != "viewer" {
+		writeError(w, http.StatusBadRequest, "role must be admin, member, or viewer")
 		return
 	}
 
@@ -455,11 +491,12 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 
-	err = h.teamSvc.InviteMember(r.Context(), proj.ID, targetUser.ID, "member", claims.UserID)
+	err = h.teamSvc.InviteMember(r.Context(), proj.ID, targetUser.ID, req.Role, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to add member")
 		return
 	}
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "team_add", realIP(r), map[string]any{"username": targetUser.Username, "role": req.Role})
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message":  "user added successfully",
@@ -532,6 +569,7 @@ func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "team_remove", realIP(r), map[string]any{"username": username})
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message":  "member removed",
@@ -583,6 +621,7 @@ func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, err.Error())
 		return
 	}
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "team_role", realIP(r), map[string]any{"username": username, "role": req.Role})
 
 	writeJSON(w, http.StatusOK, map[string]string{
 		"message":  "role updated",
@@ -669,6 +708,10 @@ func (h *PasswordHandler) Get(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
+	if !serviceTokenProjectAllowed(r, proj.ID) {
+		writeError(w, http.StatusForbidden, "service token is not scoped to this project")
+		return
+	}
 
 	isMember, _ := h.teamSvc.IsProjectMember(r.Context(), proj.ID, claims.UserID)
 	if !isMember {
@@ -715,6 +758,10 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if !serviceTokenProjectAllowed(r, proj.ID) {
+		writeError(w, http.StatusForbidden, "service token is not scoped to this project")
 		return
 	}
 
@@ -851,10 +898,11 @@ type ServiceTokenHandler struct {
 	tokenSvc   *service.ServiceTokenService
 	projectSvc *service.ProjectService
 	teamSvc    *service.TeamService
+	auditSvc   *service.AuditService
 }
 
-func NewServiceTokenHandler(ts *service.ServiceTokenService, ps *service.ProjectService, tms *service.TeamService) *ServiceTokenHandler {
-	return &ServiceTokenHandler{tokenSvc: ts, projectSvc: ps, teamSvc: tms}
+func NewServiceTokenHandler(ts *service.ServiceTokenService, ps *service.ProjectService, tms *service.TeamService, auditSvc *service.AuditService) *ServiceTokenHandler {
+	return &ServiceTokenHandler{tokenSvc: ts, projectSvc: ps, teamSvc: tms, auditSvc: auditSvc}
 }
 
 // POST /api/projects/{slug}/tokens — create a service token (owners and admins only)
@@ -899,6 +947,7 @@ func (h *ServiceTokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusInternalServerError, "failed to create service token")
 		return
 	}
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "token_create", realIP(r), map[string]any{"token_id": record.ID, "env": record.Env, "name": record.Name})
 
 	writeJSON(w, http.StatusCreated, map[string]any{
 		"token":      rawToken, // shown once, never stored
@@ -967,6 +1016,7 @@ func (h *ServiceTokenHandler) Revoke(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, "token not found")
 		return
 	}
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "token_revoke", realIP(r), map[string]any{"token_id": tokenID})
 
 	writeJSON(w, http.StatusOK, map[string]string{"message": "token revoked"})
 }

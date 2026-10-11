@@ -118,18 +118,10 @@ with your project slug. The password is fetched automatically.`,
 			txRunning("membership transaction")
 
 			txStep(1, 2, fmt.Sprintf("Granting @%s access to %s", username, projCfg.ProjectSlug))
-			if err := client.AddTeamMember(projCfg.ProjectSlug, username); err != nil {
+			if err := client.AddTeamMember(projCfg.ProjectSlug, username, roleFlag); err != nil {
 				return err
 			}
-
-			if roleFlag != "member" {
-				txStep(2, 2, fmt.Sprintf("Assigning role '%s'", roleFlag))
-				if err := client.UpdateTeamRole(projCfg.ProjectSlug, username, roleFlag); err != nil {
-					fmt.Println(warn(fmt.Sprintf("Added but could not set role to %s: %v", roleFlag, err)))
-				}
-			} else {
-				txStep(2, 2, "Default role 'member' assigned")
-			}
+			txStep(2, 2, fmt.Sprintf("Assigned role '%s'", roleFlag))
 
 			transactionSummary("Membership Update", [][2]string{
 				{"Project", projCfg.ProjectSlug},

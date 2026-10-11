@@ -36,6 +36,7 @@ type Secret struct {
 	EncryptedData []byte    `db:"encrypted_data" json:"-"`
 	DataNonce     []byte    `db:"data_nonce"     json:"-"`
 	Signature     []byte    `db:"signature"      json:"-"` // ed25519 over sha256(encrypted_data)
+	SignerPubKey  string    `db:"signer_pubkey"  json:"-"` // key snapshot used for this version
 	Version       int       `db:"version"        json:"version"`
 	PushedBy      string    `db:"pushed_by"      json:"pushed_by"`
 	CreatedAt     time.Time `db:"created_at"     json:"created_at"`
@@ -75,7 +76,7 @@ type RefreshToken struct {
 type ServiceToken struct {
 	ID         string     `db:"id"           json:"id"`
 	ProjectID  string     `db:"project_id"   json:"project_id"`
-	Env        string     `db:"env"          json:"env"`  // dev | staging | production | * (all)
+	Env        string     `db:"env"          json:"env"` // dev | staging | production | * (all)
 	Name       string     `db:"name"         json:"name"`
 	TokenHash  string     `db:"token_hash"   json:"-"`
 	CreatedBy  string     `db:"created_by"   json:"created_by"`

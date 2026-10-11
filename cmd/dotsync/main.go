@@ -77,10 +77,10 @@ func main() {
 	authHandler := handler.NewAuthHandler(authSvc, database)
 	projectHandler := handler.NewProjectHandler(projectSvc, teamSvc)
 	secretsHandler := handler.NewSecretsHandler(secretSvc, projectSvc, teamSvc, auditSvc)
-	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database)
+	teamHandler := handler.NewTeamHandler(projectSvc, teamSvc, database, auditSvc)
 	passwordHandler := handler.NewPasswordHandler(passwordSvc, projectSvc, teamSvc, auditSvc)
 	identityHandler := handler.NewIdentityHandler(database)
-	serviceTokenHandler := handler.NewServiceTokenHandler(serviceTokenSvc, projectSvc, teamSvc)
+	serviceTokenHandler := handler.NewServiceTokenHandler(serviceTokenSvc, projectSvc, teamSvc, auditSvc)
 
 	// ── Router ───────────────────────────────────────────────────────────────
 	r := chi.NewRouter()
@@ -90,6 +90,7 @@ func main() {
 	r.Use(chimiddleware.Logger)
 	r.Use(chimiddleware.Recoverer)
 	r.Use(mw.SecurityHeaders)
+	r.Use(mw.LimitBody(4 << 20))
 
 	// CORS — defaults to same origin; set FRONTEND_URL for web dashboards
 	frontendURL := getEnv("FRONTEND_URL", "http://localhost:3000")

@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/cli/config"
-	"github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 type Client struct {
@@ -65,17 +64,6 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
 
-	// HMAC-sign the request body using access token as HMAC secret
-	// This proves the request came from a holder of a valid token
-	if len(bodyBytes) > 0 {
-		sig := crypto.HMACSign([]byte(c.cfg.AccessToken), bodyBytes)
-		req.Header.Set("X-DotSync-Signature", sig)
-	} else {
-		// Sign an empty body marker for GET requests
-		sig := crypto.HMACSign([]byte(c.cfg.AccessToken), []byte(""))
-		req.Header.Set("X-DotSync-Signature", sig)
-	}
-
 	resp, err := c.httpClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("request failed: %w", err)
@@ -92,11 +80,6 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
 		if len(bodyBytes) > 0 {
 			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-			sig := crypto.HMACSign([]byte(c.cfg.AccessToken), bodyBytes)
-			req.Header.Set("X-DotSync-Signature", sig)
-		} else {
-			sig := crypto.HMACSign([]byte(c.cfg.AccessToken), []byte(""))
-			req.Header.Set("X-DotSync-Signature", sig)
 		}
 		resp, err = c.httpClient.Do(req)
 		if err != nil {
@@ -220,6 +203,7 @@ type PushRequest struct {
 	EncryptedData []byte `json:"encrypted_data"`
 	Nonce         []byte `json:"nonce"`
 	Signature     []byte `json:"signature,omitempty"` // ed25519 sig over sha256(encrypted_data)
+	SignerPubKey  string `json:"signer_pubkey,omitempty"`
 }
 
 type PushResponse struct {
@@ -358,9 +342,10 @@ func (c *Client) GetProjectPassword(slug string) (string, error) {
 	return result.Password, nil
 }
 
-func (c *Client) AddTeamMember(slug, username string) error {
+func (c *Client) AddTeamMember(slug, username, role string) error {
 	resp, err := c.do("POST", fmt.Sprintf("/api/projects/%s/team", url.PathEscape(slug)), map[string]string{
 		"username": username,
+		"role":     role,
 	})
 	if err != nil {
 		return err

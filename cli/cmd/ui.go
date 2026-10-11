@@ -3,6 +3,7 @@ package cmd
 import (
 	"bytes"
 	"context"
+	"crypto/subtle"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -23,6 +24,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
 	"github.com/Pruthviraj36/dotsync/cli/identity"
+	serverCrypto "github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 const (
@@ -107,6 +109,10 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 			}
 
 			client := api.New(cfg)
+			sessionToken, err := serverCrypto.GenerateRandomToken(32)
+			if err != nil {
+				return fmt.Errorf("create dashboard session: %w", err)
+			}
 			mux := http.NewServeMux()
 
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -119,7 +125,9 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 					"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline' https://fonts.googleapis.com https://fonts.gstatic.com; font-src 'self' https://fonts.gstatic.com data:; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'")
 				w.Header().Set("X-Frame-Options", "DENY")
 				w.Header().Set("X-Content-Type-Options", "nosniff")
-				w.Write([]byte(dashboardHTML))
+				sessionScript := fmt.Sprintf(`<meta name="dotsync-session" content="%s"><script>(function(){const token="%s";const nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};const headers=new Headers(init.headers||{});headers.set("X-DotSync-Session",token);return nativeFetch(input,Object.assign({},init,{headers:headers}))}})();</script>`, sessionToken, sessionToken)
+				dashboard := strings.Replace(dashboardHTML, "</head>", sessionScript+"</head>", 1)
+				w.Write([]byte(dashboard))
 			})
 
 			mux.HandleFunc("/api/me", uiHandler(func(r *http.Request) (any, error) {
@@ -332,6 +340,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 					EncryptedData: ciphertext,
 					Nonce:         nonce,
 					Signature:     signature,
+					SignerPubKey:  identity.Hex(pub),
 				})
 				if err != nil {
 					return nil, err
@@ -351,13 +360,11 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				if !validUISlug(req.Slug) || req.Username == "" {
 					return nil, fmt.Errorf("slug and username are required")
 				}
-				if err := client.AddTeamMember(req.Slug, req.Username); err != nil {
-					return nil, err
+				if req.Role == "" {
+					req.Role = "member"
 				}
-				if req.Role != "" && req.Role != "member" {
-					if err := client.UpdateTeamRole(req.Slug, req.Username, req.Role); err != nil {
-						return nil, err
-					}
+				if err := client.AddTeamMember(req.Slug, req.Username, req.Role); err != nil {
+					return nil, err
 				}
 				return map[string]any{"ok": true}, nil
 			}))
@@ -483,6 +490,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 					EncryptedData: ciphertext,
 					Nonce:         nonce,
 					Signature:     signature,
+					SignerPubKey:  identity.Hex(pub),
 				})
 				if err != nil {
 					return nil, err
@@ -602,7 +610,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 
 			url := fmt.Sprintf("http://localhost:%s", portFlag)
 			srv := &http.Server{
-				Handler:      mux,
+				Handler:      uiSessionGuard(sessionToken, portFlag, mux),
 				ReadTimeout:  uiReadTimeout,
 				WriteTimeout: uiWriteTimeout,
 				IdleTimeout:  uiIdleTimeout,
@@ -643,6 +651,25 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 	cmd.Flags().StringVar(&portFlag, "port", "4040", "local port to listen on")
 	cmd.Flags().BoolVar(&noOpenFlag, "no-open", false, "don't open browser automatically")
 	return cmd
+}
+
+func uiSessionGuard(sessionToken, port string, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		hostAllowed := r.Host == "127.0.0.1:"+port || r.Host == "localhost:"+port
+		if !hostAllowed || r.Header.Get("Sec-Fetch-Site") == "cross-site" {
+			http.Error(w, "forbidden", http.StatusForbidden)
+			return
+		}
+		if r.URL.Path != "/" {
+			provided := []byte(r.Header.Get("X-DotSync-Session"))
+			expected := []byte(sessionToken)
+			if len(provided) != len(expected) || subtle.ConstantTimeCompare(provided, expected) != 1 {
+				http.Error(w, "forbidden", http.StatusForbidden)
+				return
+			}
+		}
+		next.ServeHTTP(w, r)
+	})
 }
 
 func uiHandler(fn func(r *http.Request) (any, error)) http.HandlerFunc {

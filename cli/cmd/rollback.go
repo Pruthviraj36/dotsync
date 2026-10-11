@@ -96,7 +96,7 @@ To see available versions: dotsync history`,
 
 			// Inspect mode — write to file, don't push
 			if outputFlag != "" {
-				if err := os.WriteFile(outputFlag, []byte(plaintext), 0600); err != nil {
+				if err := writeFileAtomic(outputFlag, []byte(plaintext), 0600); err != nil {
 					return err
 				}
 				blank()
@@ -153,6 +153,7 @@ To see available versions: dotsync history`,
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
 				Signature:     signature,
+				SignerPubKey:  identity.Hex(pub),
 			})
 			if err != nil {
 				return err
@@ -175,7 +176,7 @@ To see available versions: dotsync history`,
 				var confirm string
 				fmt.Scanln(&confirm)
 				if confirm == "" || strings.ToLower(confirm) == "y" {
-					_ = os.WriteFile(".env", []byte(plaintext), 0600)
+					_ = writeFileAtomic(".env", []byte(plaintext), 0600)
 					fmt.Println(ok(".env updated."))
 				}
 			}
