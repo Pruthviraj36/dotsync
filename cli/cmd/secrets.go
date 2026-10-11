@@ -102,7 +102,8 @@ and uploads the ciphertext. The server never sees plaintext.`,
 			}
 
 			txStep(2, 3, "Verifying and attaching ed25519 signature")
-			txStep(3, 3, fmt.Sprintf("Uploading encrypted payload (%s)", humanSize(len(ciphertext))))
+			transferLabel := fmt.Sprintf("Uploading %s", humanSize(len(ciphertext)))
+			transferProgress(transferLabel, len(ciphertext), 0)
 
 			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
 				EncryptedData: ciphertext,
@@ -110,8 +111,12 @@ and uploads the ciphertext. The server never sees plaintext.`,
 				Signature:     signature,
 			})
 			if err != nil {
+				if isTTY {
+					fmt.Println()
+				}
 				return err
 			}
+			transferProgress(transferLabel, len(ciphertext), len(ciphertext))
 			if projCfg.LastPulledStates == nil {
 				projCfg.LastPulledStates = make(map[string]config.PulledState)
 			}
@@ -222,12 +227,17 @@ never sees plaintext.`,
 
 			banner(fmt.Sprintf("Pull Secrets — %s/%s", projCfg.ProjectSlug, env))
 			txRunning("transaction")
-			txStep(1, 3, fmt.Sprintf("Fetching %s/%s payload from server", projCfg.ProjectSlug, env))
+			transferLabel := fmt.Sprintf("Fetching %s/%s", projCfg.ProjectSlug, env)
+			transferProgress(transferLabel, 1, 0)
 
 			result, err := client.Pull(projCfg.ProjectSlug, env)
 			if err != nil {
+				if isTTY {
+					fmt.Println()
+				}
 				return err
 			}
+			transferProgress(transferLabel, len(result.EncryptedData), len(result.EncryptedData))
 
 			// Always verify signatures if present; warn if unsigned
 			verified, verifyErr := verifySignature(

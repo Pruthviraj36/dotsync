@@ -66,12 +66,10 @@ func boldPurple(s string) string { return colorize(cBold+cMagenta, s) }
 //
 //    Complete!
 //
-// 3. Tabular summaries for inspectable data (status, diff, history, team, tokens)
-//    ================================================================================
-//     Version    Author        Age         Status
-//    ================================================================================
-//     v3         @alice        just now    current
-//    ================================================================================
+// 3. Labeled records for inspectable data (status, diff, history, team, tokens)
+//      Version: v3
+//      Author:  @alice
+//      Age:     just now
 
 const bannerWidth = 80
 
@@ -114,6 +112,32 @@ func txStep(curr, total int, msg string) {
 
 func txStepCustom(curr, total int, msg, status string) {
 	fmt.Printf("  [%d/%d] %s... %s\n", curr, total, msg, status)
+}
+
+func transferProgress(label string, total, completed int) {
+	if total < 1 {
+		total = 1
+	}
+	if completed < 0 {
+		completed = 0
+	}
+	if completed > total {
+		completed = total
+	}
+
+	const width = 28
+	filled := width * completed / total
+	bar := strings.Repeat("#", filled) + strings.Repeat("-", width-filled)
+	percent := completed * 100 / total
+	line := fmt.Sprintf("  %-11s [%s] %3d%%", label, bar, percent)
+	if isTTY {
+		fmt.Printf("\r%s", line)
+		if completed == total {
+			fmt.Println()
+		}
+		return
+	}
+	fmt.Println(line)
 }
 
 func complete(msg string) {
@@ -190,57 +214,25 @@ func transactionSummary(title string, items [][2]string) {
 	fmt.Println(divider())
 }
 
-// ── Tabular formatting (DNF package list style) ──────────────────────────────
+// ── Labeled record formatting ────────────────────────────────────────────────
 
 func table(headers []string, rows [][]string) {
-	colCount := len(headers)
-	if colCount == 0 {
+	if len(headers) == 0 || len(rows) == 0 {
 		return
 	}
 
-	widths := make([]int, colCount)
-	for i, h := range headers {
-		widths[i] = visibleLen(h)
-	}
-
-	for _, row := range rows {
-		for i := 0; i < colCount && i < len(row); i++ {
-			if l := visibleLen(row[i]); l > widths[i] {
-				widths[i] = l
+	for rowIndex, row := range rows {
+		if rowIndex > 0 {
+			fmt.Println()
+		}
+		for i, header := range headers {
+			if i >= len(row) || row[i] == "" {
+				continue
 			}
+			fmt.Printf("  %s: %s\n", dim(header), row[i])
 		}
 	}
-
-	// Print table header
-	fmt.Println(divider())
-	var headerLine strings.Builder
-	headerLine.WriteString(" ")
-	for i, h := range headers {
-		headerLine.WriteString(padRight(bold(h), widths[i]))
-		if i < colCount-1 {
-			headerLine.WriteString("  ")
-		}
-	}
-	fmt.Println(headerLine.String())
-	fmt.Println(divider())
-
-	// Print rows
-	for _, row := range rows {
-		var rowLine strings.Builder
-		rowLine.WriteString(" ")
-		for i := 0; i < colCount; i++ {
-			val := ""
-			if i < len(row) {
-				val = row[i]
-			}
-			rowLine.WriteString(padRight(val, widths[i]))
-			if i < colCount-1 {
-				rowLine.WriteString("  ")
-			}
-		}
-		fmt.Println(rowLine.String())
-	}
-	fmt.Println(divider())
+	fmt.Println()
 }
 
 // ── Terminal geometry & layout helpers ────────────────────────────────────────
