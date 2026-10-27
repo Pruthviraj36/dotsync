@@ -19,6 +19,23 @@ $env:DOTSYNC_SERVER = "https://<your-server>"
 dotsync login
 ```
 
+The Windows installer puts `dotsync.exe` in `%LOCALAPPDATA%\dotsync` and adds that
+folder to your **user** PATH, so `dotsync` works in the terminal that ran the
+installer and in new terminals afterwards. If an already-open terminal still says
+`'dotsync' is not recognized`, open a new one (or set the path yourself):
+
+```powershell
+$dir = "$env:LOCALAPPDATA\dotsync"
+$userPath = [Environment]::GetEnvironmentVariable('Path','User')
+if (($userPath -split ';') -notcontains $dir) {
+  [Environment]::SetEnvironmentVariable('Path', ($userPath.TrimEnd(';') + ';' + $dir), 'User')
+}
+```
+
+Use a different location by setting `$env:DOTSYNC_INSTALL_DIR` before installing
+(it is added to PATH too). The installer verifies the release SHA-256 before
+installing anything.
+
 ---
 
 ## Quick start

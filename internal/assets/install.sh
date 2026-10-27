@@ -98,7 +98,8 @@ fi
 
 say ""
 say "dotsync ${tag} installed to ${INSTALL_DIR}/${BIN_NAME}"
-"${INSTALL_DIR}/${BIN_NAME}" --version 2>/dev/null || true
+# Not every release implements --version; `help` proves the binary runs.
+"${INSTALL_DIR}/${BIN_NAME}" help >/dev/null 2>&1 || say "  warning: the installed binary did not run — check antivirus/quarantine"
 say ""
 say "Next: set your server and log in:"
 say "  export DOTSYNC_SERVER=https://<your-server>"
