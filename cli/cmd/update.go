@@ -88,44 +88,17 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	}
 	txStep(1, 4, "Verifying release checksums.txt")
 
-	ext := ".tar.gz"
-	if runtime.GOOS == "windows" {
-		ext = ".zip"
-	}
-	preferred := fmt.Sprintf("dotsync-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
-	// Windows on ARM runs x64 binaries under emulation, so a release without a
-	// windows/arm64 asset is still installable — same fallback as install.ps1.
-	candidates := []string{preferred}
-	if runtime.GOOS == "windows" && runtime.GOARCH == "arm64" {
-		candidates = append(candidates, "dotsync-windows-amd64.zip")
-	}
-
-	var assetName, downloadURL, expectedChecksum string
-	for _, name := range candidates {
-		sum, found := checksums[name]
-		if !found {
-			continue
-		}
-		assetURL := ""
-		for _, asset := range release.Assets {
-			if asset.Name == name {
-				assetURL = asset.BrowserDownloadURL
-				break
-			}
-		}
-		if assetURL == "" {
-			continue
-		}
-		assetName, downloadURL, expectedChecksum = name, assetURL, sum
-		break
-	}
-	if assetName == "" {
-		return fmt.Errorf("refusing to update: release %s publishes no binary for %s/%s (%s)",
-			release.TagName, runtime.GOOS, runtime.GOARCH, strings.Join(candidates, ", "))
+	preferred := archiveName(runtime.GOOS, runtime.GOARCH)
+	assetName, downloadURL, expectedChecksum, err :=
+		selectAsset(runtime.GOOS, runtime.GOARCH, release.Assets, checksums)
+	if err != nil {
+		return fmt.Errorf("refusing to update: release %s %w", release.TagName, err)
 	}
 	if assetName != preferred {
 		fmt.Println(warn(fmt.Sprintf("%s is not published for %s; installing %s (runs under x64 emulation)", preferred, release.TagName, assetName)))
 	}
+
+	ext := archiveExt(runtime.GOOS)
 
 	txStep(2, 4, fmt.Sprintf("Downloading %s asset (%s/%s)", release.TagName, runtime.GOOS, runtime.GOARCH))
 	archiveBytes, err := downloadAll(downloadURL)
@@ -235,6 +208,45 @@ func compareSemver(a, b string) int {
 	return 0
 }
 
+// archiveExt is the archive type GoReleaser publishes for a platform.
+func archiveExt(goos string) string {
+	if goos == "windows" {
+		return ".zip"
+	}
+	return ".tar.gz"
+}
+
+func archiveName(goos, goarch string) string {
+	return fmt.Sprintf("dotsync-%s-%s%s", goos, goarch, archiveExt(goos))
+}
+
+// selectAsset chooses the release archive for goos/goarch.
+//
+// A name only qualifies when the release advertises both the asset and its
+// checksum: publishing an archive without a digest must never cause an
+// unverified install. Windows/arm64 falls back to the amd64 build, which runs
+// under emulation, because older releases (and some future ones) do not ship a
+// native build — install.ps1 applies the same fallback.
+func selectAsset(goos, goarch string, assets []githubAsset, checksums map[string]string) (assetName, downloadURL, checksum string, err error) {
+	candidates := []string{archiveName(goos, goarch)}
+	if goos == "windows" && goarch == "arm64" {
+		candidates = append(candidates, "dotsync-windows-amd64.zip")
+	}
+
+	for _, name := range candidates {
+		sum, ok := checksums[name]
+		if !ok {
+			continue
+		}
+		for _, asset := range assets {
+			if asset.Name == name && asset.BrowserDownloadURL != "" {
+				return name, asset.BrowserDownloadURL, sum, nil
+			}
+		}
+	}
+	return "", "", "", fmt.Errorf("publishes no binary for %s/%s (%s)", goos, goarch, strings.Join(candidates, ", "))
+}
+
 // fetchChecksums downloads and parses checksums.txt from the release,
 // in the standard `sha256sum` output format: "<hex-digest>  <filename>".
 func fetchChecksums(release *githubRelease) (map[string]string, error) {
@@ -263,6 +275,13 @@ func fetchChecksums(release *githubRelease) (map[string]string, error) {
 		return nil, err
 	}
 
+	return parseChecksums(body)
+}
+
+// parseChecksums accepts sha256sum-style output ("<hex>  <name>", optionally
+// with a "*" binary-mode marker) exactly as GoReleaser writes checksums.txt.
+// Lines that do not match are skipped rather than trusted.
+func parseChecksums(body []byte) (map[string]string, error) {
 	result := make(map[string]string)
 	for _, line := range strings.Split(string(body), "\n") {
 		line = strings.TrimSpace(line)

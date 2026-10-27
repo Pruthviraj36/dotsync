@@ -24,6 +24,26 @@ jobs:
           go-version-file: go.mod
           cache: true
 
+      # A tag is cut by hand, so this is the only thing standing between a
+      # broken commit and a release that `dotsync update` will happily install.
+      - name: Verify go.mod/go.sum are tidy
+        run: |
+          go mod tidy
+          git diff --exit-code -- go.mod go.sum
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Test
+        run: go test ./...
+
+      - name: Validate GoReleaser config
+        uses: goreleaser/goreleaser-action@v6
+        with:
+          distribution: goreleaser
+          version: "~> v2"
+          args: check
+
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@v6
         with:

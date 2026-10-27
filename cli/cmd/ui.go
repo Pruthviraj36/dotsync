@@ -646,35 +646,6 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return result, nil
 			}))
 
-			mux.HandleFunc("/api/events", func(w http.ResponseWriter, r *http.Request) {
-				w.Header().Set("Content-Type", "text/event-stream")
-				w.Header().Set("Cache-Control", "no-cache")
-				w.Header().Set("Connection", "keep-alive")
-				w.Header().Set("X-Accel-Buffering", "no")
-
-				flusher, ok := w.(http.Flusher)
-				if !ok {
-					http.Error(w, "streaming not supported", http.StatusInternalServerError)
-					return
-				}
-
-				ticker := time.NewTicker(30 * time.Second)
-				defer ticker.Stop()
-
-				fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
-				flusher.Flush()
-
-				for {
-					select {
-					case <-r.Context().Done():
-						return
-					case <-ticker.C:
-						fmt.Fprintf(w, "event: ping\ndata: {}\n\n")
-						flusher.Flush()
-					}
-				}
-			})
-
 			url := fmt.Sprintf("http://localhost:%s", portFlag)
 			srv := &http.Server{
 				Handler:      uiSessionGuard(sessionToken, portFlag, mux),
