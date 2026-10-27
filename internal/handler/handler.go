@@ -579,10 +579,11 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verify the caller is an owner (or admin, if roles expand)
+	// Owners and admins can invite. Admins may only grant roles below their own,
+	// matching the rules for removing members and changing roles.
 	role, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
-	if err != nil || role != "owner" {
-		writeError(w, http.StatusForbidden, "only project owners can invite members")
+	if err != nil || (role != "owner" && role != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can invite members")
 		return
 	}
 
@@ -599,6 +600,10 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	}
 	if req.Role != "admin" && req.Role != "member" && req.Role != "viewer" {
 		writeError(w, http.StatusBadRequest, "role must be admin, member, or viewer")
+		return
+	}
+	if role == "admin" && req.Role == "admin" {
+		writeError(w, http.StatusForbidden, "admins can only invite members and viewers")
 		return
 	}
 
@@ -731,8 +736,8 @@ func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	}
 
 	callerRole, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
-	if err != nil || callerRole != "owner" {
-		writeError(w, http.StatusForbidden, "only the project owner can change roles")
+	if err != nil || (callerRole != "owner" && callerRole != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can change roles")
 		return
 	}
 
@@ -751,6 +756,24 @@ func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
+	}
+
+	// Admins manage members and viewers only — never the owner or other admins,
+	// and they cannot promote anyone into their own tier.
+	if callerRole == "admin" {
+		targetRole, targetErr := h.teamSvc.GetRole(r.Context(), proj.ID, targetUser.ID)
+		if targetErr != nil {
+			writeError(w, http.StatusNotFound, "member not found")
+			return
+		}
+		if targetRole == "owner" || targetRole == "admin" {
+			writeError(w, http.StatusForbidden, "admins cannot change the role of the owner or another admin")
+			return
+		}
+		if req.Role == "admin" {
+			writeError(w, http.StatusForbidden, "admins cannot promote someone to admin")
+			return
+		}
 	}
 
 	if err := h.teamSvc.UpdateRole(r.Context(), proj.ID, targetUser.ID, req.Role); err != nil {

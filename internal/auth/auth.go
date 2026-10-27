@@ -213,11 +213,15 @@ func (s *Service) ValidateAccessToken(tokenStr string) (*Claims, error) {
 	return claims, nil
 }
 
-// RevokeAllSessions revokes all refresh tokens for a user (logout all devices).
+// RevokeAllSessions ends every session for a user (logout across devices).
+//
+// Rows are deleted rather than marked revoked: the refresh path accepts a
+// revoked token for a short grace window to survive concurrent client
+// refreshes, and a logout must not be undoable by replaying an old token
+// inside that window. A deleted token simply does not exist.
 func (s *Service) RevokeAllSessions(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE refresh_tokens SET revoked = true, revoked_at = NOW()
-		 WHERE user_id = $1 AND revoked = false`, userID)
+		`DELETE FROM refresh_tokens WHERE user_id = $1`, userID)
 	return err
 }
 

@@ -92,22 +92,39 @@ func runUpdate(cmd *cobra.Command, args []string) error {
 	if runtime.GOOS == "windows" {
 		ext = ".zip"
 	}
-	assetName := fmt.Sprintf("dotsync-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
-
-	expectedChecksum, ok2 := checksums[assetName]
-	if !ok2 {
-		return fmt.Errorf("refusing to update: no checksum for %s in checksums.txt", assetName)
+	preferred := fmt.Sprintf("dotsync-%s-%s%s", runtime.GOOS, runtime.GOARCH, ext)
+	// Windows on ARM runs x64 binaries under emulation, so a release without a
+	// windows/arm64 asset is still installable — same fallback as install.ps1.
+	candidates := []string{preferred}
+	if runtime.GOOS == "windows" && runtime.GOARCH == "arm64" {
+		candidates = append(candidates, "dotsync-windows-amd64.zip")
 	}
 
-	var downloadURL string
-	for _, asset := range release.Assets {
-		if asset.Name == assetName {
-			downloadURL = asset.BrowserDownloadURL
-			break
+	var assetName, downloadURL, expectedChecksum string
+	for _, name := range candidates {
+		sum, found := checksums[name]
+		if !found {
+			continue
 		}
+		assetURL := ""
+		for _, asset := range release.Assets {
+			if asset.Name == name {
+				assetURL = asset.BrowserDownloadURL
+				break
+			}
+		}
+		if assetURL == "" {
+			continue
+		}
+		assetName, downloadURL, expectedChecksum = name, assetURL, sum
+		break
 	}
-	if downloadURL == "" {
-		return fmt.Errorf("no binary found for %s/%s in release %s", runtime.GOOS, runtime.GOARCH, release.TagName)
+	if assetName == "" {
+		return fmt.Errorf("refusing to update: release %s publishes no binary for %s/%s (%s)",
+			release.TagName, runtime.GOOS, runtime.GOARCH, strings.Join(candidates, ", "))
+	}
+	if assetName != preferred {
+		fmt.Println(warn(fmt.Sprintf("%s is not published for %s; installing %s (runs under x64 emulation)", preferred, release.TagName, assetName)))
 	}
 
 	txStep(2, 4, fmt.Sprintf("Downloading %s asset (%s/%s)", release.TagName, runtime.GOOS, runtime.GOARCH))

@@ -83,11 +83,22 @@ func validateProjectEnv(slug, env string) error {
 	return nil
 }
 
+// tokens returns the current credentials under the same lock that guards
+// refresh. The dashboard runs one Client across concurrent HTTP handlers, so
+// reading these fields unlocked would race with a refresh in another goroutine
+// (and a torn string read can crash or send a corrupt Authorization header).
+func (c *Client) tokens() (accessToken, refreshToken string) {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	return c.cfg.AccessToken, c.cfg.RefreshToken
+}
+
 // isServiceToken reports whether the current credential is a CI service token.
 // Those are read-only and cannot be refreshed — spending a round trip on
 // /api/auth/refresh just returns a confusing 401.
 func (c *Client) isServiceToken() bool {
-	return strings.HasPrefix(c.cfg.AccessToken, "dst_")
+	accessToken, _ := c.tokens()
+	return strings.HasPrefix(accessToken, "dst_")
 }
 
 func (c *Client) newRequest(method, path string, body []byte) (*http.Request, error) {
@@ -99,10 +110,11 @@ func (c *Client) newRequest(method, path string, body []byte) (*http.Request, er
 	if err != nil {
 		return nil, err
 	}
+	accessToken, _ := c.tokens()
 	req.Header.Set("Content-Type", "application/json")
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "dotsync-cli")
-	req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
+	req.Header.Set("Authorization", "Bearer "+accessToken)
 	return req, nil
 }
 
@@ -155,11 +167,12 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 		if c.isServiceToken() {
 			return nil, fmt.Errorf("service token is invalid or expired")
 		}
-		if strings.TrimSpace(c.cfg.RefreshToken) == "" {
+		_, refreshToken := c.tokens()
+		if strings.TrimSpace(refreshToken) == "" {
 			return nil, fmt.Errorf("session expired — run: dotsync login")
 		}
 
-		oldAccess := c.cfg.AccessToken
+		oldAccess, _ := c.tokens()
 		c.refreshMu.Lock()
 		// Another goroutine may have refreshed while we waited for the lock.
 		if c.cfg.AccessToken == oldAccess {
@@ -306,7 +319,10 @@ func (c *Client) GetMe() (map[string]any, error) {
 		return nil, err
 	}
 	var result map[string]any
-	return result, decodeResponse(resp, &result)
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 type PushRequest struct {
@@ -401,7 +417,10 @@ func (c *Client) History(slug, env string) ([]HistoryEntry, error) {
 		return nil, err
 	}
 	var result []HistoryEntry
-	return result, decodeResponse(resp, &result)
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *Client) CreateProject(name, slug, description string) (map[string]any, error) {
@@ -412,7 +431,10 @@ func (c *Client) CreateProject(name, slug, description string) (map[string]any, 
 		return nil, err
 	}
 	var result map[string]any
-	return result, decodeResponse(resp, &result)
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 func (c *Client) ListProjects() ([]map[string]any, error) {
@@ -421,7 +443,10 @@ func (c *Client) ListProjects() ([]map[string]any, error) {
 		return nil, err
 	}
 	var result []map[string]any
-	return result, decodeResponse(resp, &result)
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // SetProjectPassword stores/rotates the E2EE project password on the server.
@@ -678,7 +703,10 @@ func (c *Client) ListTeamMembers(slug string) ([]map[string]any, error) {
 		return nil, err
 	}
 	var result []map[string]any
-	return result, decodeResponse(resp, &result)
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // RemoveTeamMember removes a user from the project team.
@@ -726,7 +754,10 @@ func (c *Client) AuditLogs(slug string) ([]map[string]any, error) {
 		return nil, err
 	}
 	var result []map[string]any
-	return result, decodeResponse(resp, &result)
+	if err := decodeResponse(resp, &result); err != nil {
+		return nil, err
+	}
+	return result, nil
 }
 
 // GetLatestVersion fetches just the latest version number for sync-state comparison.

@@ -26,6 +26,7 @@ type serviceTokenKey struct{}
 // serviceTokenMeta holds the minimal fields downstream handlers need from a
 // service token request — avoids importing model here and keeps context values simple.
 type serviceTokenMeta struct {
+	ID        string // token row ID; used as the rate-limit key
 	ProjectID string
 	Env       string // "dev" | "staging" | "production" | "*" (all)
 }
@@ -88,6 +89,7 @@ func Authenticate(authSvc *auth.Service, tokenSvc *service.ServiceTokenService) 
 				}
 				ctx := context.WithValue(r.Context(), auth.UserClaimsKey, claims)
 				ctx = context.WithValue(ctx, serviceTokenKey{}, serviceTokenMeta{
+					ID:        st.ID,
 					ProjectID: st.ProjectID,
 					Env:       st.Env,
 				})
@@ -139,6 +141,16 @@ func ServiceTokenProjectID(ctx context.Context) string {
 	return ""
 }
 
+// ServiceTokenID returns the ID of the service token used for this request, or
+// "" for a normal user request. Rate limiting keys on it so that every CI token
+// gets its own bucket instead of sharing the creator's user bucket.
+func ServiceTokenID(ctx context.Context) string {
+	if meta, ok := ctx.Value(serviceTokenKey{}).(serviceTokenMeta); ok {
+		return meta.ID
+	}
+	return ""
+}
+
 // serviceTokenPath matches exactly the read-only endpoints a CI token may use.
 // Matching the whole path (not a suffix) prevents a token from reaching a new
 // endpoint that merely happens to end in "/history" or "/password".
@@ -157,8 +169,15 @@ func RateLimitByIP(limit int, window time.Duration) func(http.Handler) http.Hand
 }
 
 // RateLimitByUser rate-limits per authenticated user ID.
+//
+// Service tokens get their own bucket keyed by token ID: they otherwise share
+// the synthetic claims of the user who created them, which made every CI job
+// of one person (or two unrelated projects) compete for the same quota.
 func RateLimitByUser(limit int, window time.Duration) func(http.Handler) http.Handler {
 	return httprate.Limit(limit, window, httprate.WithKeyFuncs(func(r *http.Request) (string, error) {
+		if id := ServiceTokenID(r.Context()); id != "" {
+			return "token:" + id, nil
+		}
 		claims := auth.ClaimsFromCtx(r.Context())
 		if claims != nil {
 			return "user:" + claims.UserID, nil
