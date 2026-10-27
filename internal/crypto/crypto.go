@@ -35,6 +35,14 @@ func DeriveKey(secret, projectID string) []byte {
 // Encrypt encrypts plaintext with AES-256-GCM. Returns (ciphertext, nonce, error).
 // A fresh random nonce is generated per encryption — never reuse nonces.
 func Encrypt(key, plaintext []byte) (ciphertext, nonce []byte, err error) {
+	return EncryptWithAAD(key, plaintext, nil)
+}
+
+// EncryptWithAAD is Encrypt with additional authenticated data. The AAD is not
+// transmitted; the decryptor must know it. Binding a ciphertext to its logical
+// context (project, environment, version) stops a compromised or malicious
+// server from relocating a valid blob into a different context.
+func EncryptWithAAD(key, plaintext, aad []byte) (ciphertext, nonce []byte, err error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, nil, fmt.Errorf("create cipher: %w", err)
@@ -51,12 +59,18 @@ func Encrypt(key, plaintext []byte) (ciphertext, nonce []byte, err error) {
 	}
 
 	// Seal appends ciphertext + auth tag to dst (nil here)
-	ciphertext = gcm.Seal(nil, nonce, plaintext, nil)
+	ciphertext = gcm.Seal(nil, nonce, plaintext, aad)
 	return ciphertext, nonce, nil
 }
 
 // Decrypt decrypts AES-256-GCM ciphertext using key + nonce.
 func Decrypt(key, ciphertext, nonce []byte) ([]byte, error) {
+	return DecryptWithAAD(key, ciphertext, nonce, nil)
+}
+
+// DecryptWithAAD is Decrypt with additional authenticated data. A mismatched
+// AAD fails authentication exactly like a wrong key does.
+func DecryptWithAAD(key, ciphertext, nonce, aad []byte) ([]byte, error) {
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return nil, fmt.Errorf("create cipher: %w", err)
@@ -66,8 +80,11 @@ func Decrypt(key, ciphertext, nonce []byte) ([]byte, error) {
 	if err != nil {
 		return nil, fmt.Errorf("create GCM: %w", err)
 	}
+	if len(nonce) != gcm.NonceSize() {
+		return nil, errors.New("decryption failed: invalid nonce length")
+	}
 
-	plaintext, err := gcm.Open(nil, nonce, ciphertext, nil)
+	plaintext, err := gcm.Open(nil, nonce, ciphertext, aad)
 	if err != nil {
 		return nil, errors.New("decryption failed: invalid key or corrupted data")
 	}

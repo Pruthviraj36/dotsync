@@ -14,7 +14,9 @@ func TestWriteFileAtomicRefusesSymlink(t *testing.T) {
 		t.Fatal(err)
 	}
 	if err := os.Symlink(target, link); err != nil {
-		t.Fatal(err)
+		// Windows requires SeCreateSymbolicLinkPrivilege (admin or Developer
+		// Mode). The behaviour is still covered on Unix and on privileged CI.
+		t.Skipf("cannot create symlink in this environment: %v", err)
 	}
 	if err := writeFileAtomic(link, []byte("new"), 0600); err == nil {
 		t.Fatal("expected symlink write to be rejected")

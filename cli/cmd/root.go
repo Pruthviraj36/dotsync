@@ -71,6 +71,7 @@ func init() {
 		teamCmd(),
 		integrateCmd(),
 		tokensCmd(),
+		passwordCmd(),
 		uiCmd(),
 	)
 }

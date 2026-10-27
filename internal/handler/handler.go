@@ -5,10 +5,15 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
+	"net"
 	"net/http"
 	"os"
+	"regexp"
+	"strconv"
+	"strings"
 
 	"github.com/Pruthviraj36/dotsync/internal/auth"
 	"github.com/Pruthviraj36/dotsync/internal/db"
@@ -16,7 +21,36 @@ import (
 	"github.com/Pruthviraj36/dotsync/internal/model"
 	"github.com/Pruthviraj36/dotsync/internal/service"
 	"github.com/go-chi/chi/v5"
+	"github.com/lib/pq"
 )
+
+const (
+	maxProjectNameLen = 100
+	maxDescriptionLen = 500
+	maxCiphertextLen  = 3 << 20 // 3 MB of ciphertext per version
+
+	// Password policy is enforced server-side as well as in the CLI.
+	minProjectPasswordLen = 12
+	maxProjectPasswordLen = 4096
+)
+
+// slugPattern is enforced on the server, not just the CLI: the slug is used in
+// URL paths and audit logs, so it must stay in a strict, predictable alphabet.
+var slugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,37}[a-z0-9]$`)
+
+// reservedSlugs would collide with API routes or look like system resources.
+var reservedSlugs = map[string]bool{
+	"api": true, "auth": true, "admin": true, "health": true,
+	"install": true, "install.sh": true, "install.ps1": true,
+	"www": true, "assets": true, "static": true, "docs": true,
+}
+
+func validSlug(slug string) bool {
+	if !slugPattern.MatchString(slug) || strings.Contains(slug, "--") {
+		return false
+	}
+	return !reservedSlugs[slug]
+}
 
 func writeJSON(w http.ResponseWriter, status int, v any) {
 	w.Header().Set("Content-Type", "application/json")
@@ -28,8 +62,32 @@ func writeError(w http.ResponseWriter, status int, msg string) {
 	writeJSON(w, status, map[string]string{"error": msg})
 }
 
+// realIP returns the client address without its ephemeral port. RemoteAddr is
+// the socket address (spoofable headers are handled by mw.RealIP, which only
+// trusts them when a reverse proxy is explicitly configured).
 func realIP(r *http.Request) string {
-	return r.RemoteAddr
+	host, _, err := net.SplitHostPort(r.RemoteAddr)
+	if err != nil {
+		return r.RemoteAddr
+	}
+	return host
+}
+
+// queryInt reads a bounded positive integer query parameter.
+func queryInt(r *http.Request, name string, def, min, max int) int {
+	return parseQueryInt(r.URL.Query().Get(name), def, min, max)
+}
+
+func parseQueryInt(raw string, def, min, max int) int {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return def
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n < min || n > max {
+		return def
+	}
+	return n
 }
 
 func serviceTokenProjectAllowed(r *http.Request, projectID string) bool {
@@ -122,7 +180,7 @@ func (h *AuthHandler) RefreshToken(w http.ResponseWriter, r *http.Request) {
 
 	user, accessToken, newRefresh, err := h.authSvc.RotateRefreshToken(r.Context(), req.RefreshToken)
 	if err != nil {
-		writeError(w, http.StatusUnauthorized, err.Error())
+		writeError(w, http.StatusUnauthorized, "invalid or expired refresh token — run: dotsync login")
 		return
 	}
 
@@ -198,10 +256,33 @@ func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "name and slug required")
 		return
 	}
+	req.Name = strings.TrimSpace(req.Name)
+	req.Slug = strings.TrimSpace(strings.ToLower(req.Slug))
+	req.Description = strings.TrimSpace(req.Description)
+	if req.Name == "" || len(req.Name) > maxProjectNameLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("name must be 1-%d characters", maxProjectNameLen))
+		return
+	}
+	if !validSlug(req.Slug) {
+		writeError(w, http.StatusBadRequest, "slug must be 2-39 characters: lowercase letters, digits, and single hyphens, starting with a letter or digit")
+		return
+	}
+	if len(req.Description) > maxDescriptionLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("description must be at most %d characters", maxDescriptionLen))
+		return
+	}
 
 	proj, err := h.projectSvc.Create(r.Context(), claims.UserID, req.Name, req.Slug, req.Description)
 	if err != nil {
-		writeError(w, http.StatusInternalServerError, "create project failed: "+err.Error())
+		// Never echo raw SQL/driver errors back to the client — they leak schema
+		// details. A unique-violation is the one case worth surfacing clearly.
+		var pqErr *pq.Error
+		if errors.As(err, &pqErr) && pqErr.Code == "23505" {
+			writeError(w, http.StatusConflict, "that slug is already taken")
+			return
+		}
+		log.Printf("ERROR create project [user=%s slug=%s]: %v", claims.Username, req.Slug, err)
+		writeError(w, http.StatusInternalServerError, "could not create project")
 		return
 	}
 
@@ -250,15 +331,14 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
 
-	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	proj, role, err := h.projectSvc.GetBySlugWithRole(r.Context(), slug, claims.UserID)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "project not found")
 		return
 	}
 
 	// Only owner/admin/member can push
-	role, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
-	if err != nil || role == "viewer" {
+	if role == "viewer" {
 		writeError(w, http.StatusForbidden, "insufficient permissions to push")
 		return
 	}
@@ -283,9 +363,21 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "encrypted_data and nonce required")
 		return
 	}
+	if len(req.EncryptedData) > maxCiphertextLen {
+		writeError(w, http.StatusRequestEntityTooLarge, "encrypted payload exceeds the 3 MB limit")
+		return
+	}
+	if len(req.Nonce) != 12 {
+		writeError(w, http.StatusBadRequest, "nonce must be exactly 12 bytes (AES-GCM)")
+		return
+	}
 	if len(req.Signature) > 0 {
 		if req.SignerPubKey == "" {
 			writeError(w, http.StatusBadRequest, "signer_pubkey required when signature is provided")
+			return
+		}
+		if len(req.Signature) != ed25519.SignatureSize {
+			writeError(w, http.StatusBadRequest, "signature must be exactly 64 bytes")
 			return
 		}
 		pubKey, decodeErr := hex.DecodeString(req.SignerPubKey)
@@ -298,6 +390,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 			writeError(w, http.StatusBadRequest, "signature does not match encrypted_data")
 			return
 		}
+		req.SignerPubKey = strings.ToLower(req.SignerPubKey)
 	}
 
 	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce, req.Signature, req.SignerPubKey)
@@ -340,12 +433,6 @@ func (h *SecretsHandler) Pull(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isMember, _ := h.teamSvc.IsProjectMember(r.Context(), proj.ID, claims.UserID)
-	if !isMember {
-		writeError(w, http.StatusForbidden, "not a project member")
-		return
-	}
-
 	env, err := h.projectSvc.GetEnvironment(r.Context(), proj.ID, envName)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "environment not found")
@@ -354,7 +441,7 @@ func (h *SecretsHandler) Pull(w http.ResponseWriter, r *http.Request) {
 
 	secret, err := h.secretSvc.PullLatest(r.Context(), env.ID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, "no secrets found for this environment")
 		return
 	}
 
@@ -403,13 +490,62 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	history, err := h.secretSvc.GetHistory(r.Context(), env.ID, limits.HistoryDays)
+	limit := queryInt(r, "limit", 100, 1, 100)
+	offset := queryInt(r, "offset", 0, 0, 1_000_000)
+	history, err := h.secretSvc.GetHistory(r.Context(), env.ID, limits.HistoryDays, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "history fetch failed")
 		return
 	}
 
 	writeJSON(w, http.StatusOK, history)
+}
+
+// GET /api/projects/{slug}/envs/{env}/head — cheap "what is the latest version?"
+// endpoint. Pull clients use this instead of downloading the full history just
+// to read history[0], which turns an O(versions) query into an O(1) lookup.
+func (h *SecretsHandler) Head(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+	envName := chi.URLParam(r, "env")
+
+	if mw.IsServiceTokenRequest(r.Context()) {
+		scope := mw.ServiceTokenEnv(r.Context())
+		if scope != "*" && scope != envName {
+			writeError(w, http.StatusForbidden, fmt.Sprintf("service token is scoped to %q, cannot access %q", scope, envName))
+			return
+		}
+	}
+
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	if !serviceTokenProjectAllowed(r, proj.ID) {
+		writeError(w, http.StatusForbidden, "service token is not scoped to this project")
+		return
+	}
+	env, err := h.projectSvc.GetEnvironment(r.Context(), proj.ID, envName)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "environment not found")
+		return
+	}
+
+	head, err := h.secretSvc.GetHead(r.Context(), env.ID)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "head fetch failed")
+		return
+	}
+	if head == nil {
+		writeJSON(w, http.StatusOK, map[string]any{"version": 0, "pushed_by": ""})
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"version":    head.Version,
+		"pushed_by":  head.PushedBy,
+		"created_at": head.CreatedAt,
+	})
 }
 
 // ============================================================
@@ -686,6 +822,16 @@ func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "password required")
 		return
 	}
+	// The CLI enforces this too, but the API is a public surface: a weak shared
+	// password would undermine every environment in the project.
+	if len(req.Password) < minProjectPasswordLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("password must be at least %d characters", minProjectPasswordLen))
+		return
+	}
+	if len(req.Password) > maxProjectPasswordLen {
+		writeError(w, http.StatusBadRequest, fmt.Sprintf("password must be at most %d characters", maxProjectPasswordLen))
+		return
+	}
 
 	if err := h.passwordSvc.SetPassword(r.Context(), proj.ID, claims.UserID, req.Password); err != nil {
 		log.Printf("ERROR set password [project=%s user=%s]: %v", slug, claims.Username, err)
@@ -713,15 +859,14 @@ func (h *PasswordHandler) Get(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isMember, _ := h.teamSvc.IsProjectMember(r.Context(), proj.ID, claims.UserID)
-	if !isMember {
-		writeError(w, http.StatusForbidden, "not a project member")
-		return
-	}
-
 	password, err := h.passwordSvc.GetPassword(r.Context(), proj.ID)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		if service.IsNoPasswordError(err) {
+			writeError(w, http.StatusNotFound, "no password set for this project yet — run: dotsync password rotate")
+			return
+		}
+		log.Printf("ERROR fetch password [project=%s user=%s]: %v", slug, claims.Username, err)
+		writeError(w, http.StatusInternalServerError, "could not fetch project password")
 		return
 	}
 
@@ -749,8 +894,8 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "version query param required")
 		return
 	}
-	var version int
-	if _, err := fmt.Sscanf(versionStr, "%d", &version); err != nil || version < 1 {
+	version, parseErr := strconv.Atoi(versionStr)
+	if parseErr != nil || version < 1 {
 		writeError(w, http.StatusBadRequest, "version must be a positive integer")
 		return
 	}
@@ -765,12 +910,6 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	isMember, _ := h.teamSvc.IsProjectMember(r.Context(), proj.ID, claims.UserID)
-	if !isMember {
-		writeError(w, http.StatusForbidden, "not a project member")
-		return
-	}
-
 	env, err := h.projectSvc.GetEnvironment(r.Context(), proj.ID, envName)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "environment not found")
@@ -779,7 +918,7 @@ func (h *SecretsHandler) PullVersion(w http.ResponseWriter, r *http.Request) {
 
 	secret, err := h.secretSvc.PullVersion(r.Context(), env.ID, version)
 	if err != nil {
-		writeError(w, http.StatusNotFound, err.Error())
+		writeError(w, http.StatusNotFound, fmt.Sprintf("version %d not found", version))
 		return
 	}
 
@@ -814,7 +953,8 @@ func (h *SecretsHandler) AuditLogs(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	logs, err := h.auditSvc.GetLogs(r.Context(), proj.ID, 50)
+	logs, err := h.auditSvc.GetLogs(r.Context(), proj.ID,
+		queryInt(r, "limit", 50, 1, 200), queryInt(r, "offset", 0, 0, 1_000_000))
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to fetch audit logs")
 		return
@@ -842,6 +982,10 @@ func NewIdentityHandler(database *db.DB) *IdentityHandler {
 
 // PUT /api/me/pubkey — upload/update this account's ed25519 public key
 func (h *IdentityHandler) SetPubKey(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot change identity keys")
+		return
+	}
 	claims := auth.ClaimsFromCtx(r.Context())
 
 	var req struct {
@@ -857,6 +1001,7 @@ func (h *IdentityHandler) SetPubKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, fmt.Sprintf("pubkey must be %d bytes hex-encoded", ed25519.PublicKeySize))
 		return
 	}
+	req.PubKey = strings.ToLower(req.PubKey)
 
 	_, err = h.db.ExecContext(r.Context(),
 		`UPDATE users SET ed25519_pubkey = $1, updated_at = NOW() WHERE id = $2`,
@@ -938,8 +1083,17 @@ func (h *ServiceTokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 	if req.Env == "" {
 		req.Env = "*"
 	}
+	if req.Env != "*" && req.Env != "dev" && req.Env != "staging" && req.Env != "production" {
+		writeError(w, http.StatusBadRequest, "env must be dev, staging, production, or * for all")
+		return
+	}
+	req.Name = strings.TrimSpace(req.Name)
 	if req.Name == "" {
 		req.Name = "ci-" + req.Env
+	}
+	if len(req.Name) > 100 {
+		writeError(w, http.StatusBadRequest, "token name must be at most 100 characters")
+		return
 	}
 
 	rawToken, record, err := h.tokenSvc.Create(r.Context(), proj.ID, req.Env, req.Name, claims.UserID)

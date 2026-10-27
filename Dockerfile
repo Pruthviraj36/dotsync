@@ -31,6 +31,12 @@ COPY --from=builder /dotsync-server /dotsync-server
 # Migration files — loaded at startup from MIGRATIONS_PATH (default: ./migrations)
 COPY --from=builder /build/migrations /migrations
 
+# Run as an unprivileged user (nobody:nogroup = 65534) with no writable
+# filesystem. The server only needs outbound Postgres + HTTPS connections.
+USER 65534:65534
+
+ENV MIGRATIONS_PATH=/migrations
+
 EXPOSE 8080
 
 # Run as the binary directly — no shell needed in scratch image

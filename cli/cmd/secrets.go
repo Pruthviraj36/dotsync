@@ -11,6 +11,7 @@ import (
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
 	"github.com/Pruthviraj36/dotsync/cli/identity"
 	"github.com/spf13/cobra"
+	"golang.org/x/term"
 )
 
 func localPullDigest(data []byte) string {
@@ -65,7 +66,13 @@ and uploads the ciphertext. The server never sees plaintext.`,
 			}
 
 			client := api.New(cfg)
-			keys := cliCrypto.ParseEnvFile(string(data))
+			keys, err := cliCrypto.ParseEnvFileStrict(string(data))
+			if err != nil {
+				return fmt.Errorf("%s: %w", envFile, err)
+			}
+			if len(keys) == 0 {
+				return fmt.Errorf("%s contains no KEY=VALUE pairs", envFile)
+			}
 
 			password, err := resolvePassword(client, projCfg.ProjectSlug)
 			if err != nil {
@@ -77,8 +84,8 @@ and uploads the ciphertext. The server never sees plaintext.`,
 
 			txStep(1, 3, fmt.Sprintf("Encrypting %d secrets with AES-256-GCM", len(keys)))
 
-			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(
-				string(data), password, projCfg.ProjectSlug,
+			ciphertext, nonce, err := cliCrypto.EncryptEnvFileForEnv(
+				string(data), password, projCfg.ProjectSlug, env,
 			)
 			if err != nil {
 				return fmt.Errorf("encryption failed: %w", err)
@@ -207,12 +214,15 @@ never sees plaintext.`,
 
 			if !forceFlag {
 				if _, err := os.Stat(outputFile); err == nil {
+					if !term.IsTerminal(int(os.Stdin.Fd())) {
+						return fmt.Errorf("%s already exists and there is no interactive terminal — re-run with --force to overwrite", outputFile)
+					}
 					fmt.Printf("%s already exists. Overwrite? [y/N]: ", outputFile)
 					var confirm string
 					fmt.Scanln(&confirm)
 					if confirm != "y" && confirm != "Y" {
 						fmt.Println(dim("Operation aborted."))
-						return nil
+						return fmt.Errorf("pull cancelled — pass --force to overwrite %s", outputFile)
 					}
 				}
 			}
@@ -251,9 +261,9 @@ never sees plaintext.`,
 				return err
 			}
 
-			plaintext, err := cliCrypto.DecryptEnvFile(
+			plaintext, err := cliCrypto.DecryptEnvFileForEnv(
 				result.EncryptedData, result.Nonce,
-				password, projCfg.ProjectSlug,
+				password, projCfg.ProjectSlug, env,
 			)
 			if err != nil {
 				return err

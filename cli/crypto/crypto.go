@@ -12,17 +12,51 @@ import (
 // EncryptEnvFile encrypts the contents of a .env file for transmission.
 // The key is derived from the provided password (project password or access token)
 // + project slug (zero-knowledge).
+//
+// Deprecated: new code should use EncryptEnvFileForEnv, which additionally binds
+// the ciphertext to its environment via AES-GCM AAD.
 func EncryptEnvFile(envContent, password, projectSlug string) (ciphertext, nonce []byte, err error) {
 	key := crypto.DeriveKey(password, projectSlug)
 	return crypto.Encrypt(key, []byte(envContent))
 }
 
 // DecryptEnvFile decrypts the encrypted blob received from the server.
+//
+// Deprecated: new code should use DecryptEnvFileForEnv.
 func DecryptEnvFile(ciphertext, nonce []byte, password, projectSlug string) (string, error) {
 	key := crypto.DeriveKey(password, projectSlug)
 	plain, err := crypto.Decrypt(key, ciphertext, nonce)
 	if err != nil {
 		return "", fmt.Errorf("decryption failed — wrong password or corrupted data: %w", err)
+	}
+	return string(plain), nil
+}
+
+// envAAD binds an environment blob to its project + environment. The key is
+// already derived from the project slug, so this specifically prevents a
+// server from replaying the dev ciphertext into production (same project,
+// same password, same key) — a swap GCM itself cannot detect.
+func envAAD(projectSlug, env string) []byte {
+	return []byte("dotsync-env-v2:" + strings.ToLower(strings.TrimSpace(projectSlug)) + ":" + strings.ToLower(strings.TrimSpace(env)))
+}
+
+// EncryptEnvFileForEnv encrypts with AAD bound to project + environment.
+func EncryptEnvFileForEnv(envContent, password, projectSlug, env string) (ciphertext, nonce []byte, err error) {
+	key := crypto.DeriveKey(password, projectSlug)
+	return crypto.EncryptWithAAD(key, []byte(envContent), envAAD(projectSlug, env))
+}
+
+// DecryptEnvFileForEnv decrypts an AAD-bound blob. Blobs written before AAD
+// binding existed are retried without AAD so upgrades are seamless; the next
+// push re-encrypts them in the bound format.
+func DecryptEnvFileForEnv(ciphertext, nonce []byte, password, projectSlug, env string) (string, error) {
+	key := crypto.DeriveKey(password, projectSlug)
+	plain, err := crypto.DecryptWithAAD(key, ciphertext, nonce, envAAD(projectSlug, env))
+	if err != nil {
+		plain, err = crypto.Decrypt(key, ciphertext, nonce)
+		if err != nil {
+			return "", fmt.Errorf("decryption failed — wrong password or corrupted data: %w", err)
+		}
 	}
 	return string(plain), nil
 }

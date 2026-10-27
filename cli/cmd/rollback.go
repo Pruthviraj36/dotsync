@@ -85,8 +85,8 @@ To see available versions: dotsync history`,
 				txStep(2, 2, fmt.Sprintf("Verifying signature (@%s ed25519)", old.PushedBy))
 			}
 
-			plaintext, err := cliCrypto.DecryptEnvFile(
-				old.EncryptedData, old.Nonce, password, projCfg.ProjectSlug,
+			plaintext, err := cliCrypto.DecryptEnvFileForEnv(
+				old.EncryptedData, old.Nonce, password, projCfg.ProjectSlug, env,
 			)
 			if err != nil {
 				return fmt.Errorf("could not decrypt v%d: %w", version, err)
@@ -130,7 +130,7 @@ To see available versions: dotsync history`,
 			blank()
 			txRunning("rollback transaction")
 			txStep(1, 3, fmt.Sprintf("Re-encrypting %d secret(s) with fresh nonce", len(parsed)))
-			ciphertext, nonce, err := cliCrypto.EncryptEnvFile(plaintext, password, projCfg.ProjectSlug)
+			ciphertext, nonce, err := cliCrypto.EncryptEnvFileForEnv(plaintext, password, projCfg.ProjectSlug, env)
 			if err != nil {
 				return fmt.Errorf("re-encryption failed: %w", err)
 			}

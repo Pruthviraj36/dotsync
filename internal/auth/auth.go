@@ -3,8 +3,11 @@ package auth
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"io"
 	"net/http"
+	"regexp"
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
@@ -17,7 +20,25 @@ import (
 const (
 	AccessTokenTTL  = 15 * time.Minute
 	RefreshTokenTTL = 30 * 24 * time.Hour
+
+	// refreshReuseGrace is how long a just-rotated token is still accepted.
+	// Mobile/CLI clients can fire two requests at once; both see a 401 and both
+	// attempt a refresh. Without a grace window the loser of the race looks
+	// exactly like a stolen-token replay and every session gets nuked.
+	refreshReuseGrace = 20 * time.Second
+
+	maxGitHubResponseBytes = 1 << 20
 )
+
+// ErrInvalidRefreshToken is deliberately generic: refresh failures must not
+// tell an attacker whether a token exists, was rotated, or expired.
+var ErrInvalidRefreshToken = errors.New("invalid or expired refresh token")
+
+// githubHTTPClient is shared so OAuth calls reuse connections instead of doing
+// a fresh TCP + TLS handshake on every login.
+var githubHTTPClient = &http.Client{Timeout: 15 * time.Second}
+
+var refreshTokenFormat = regexp.MustCompile(`^[0-9a-f]{64}$`)
 
 type Claims struct {
 	UserID   string `json:"user_id"`
@@ -63,6 +84,11 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 	id := uuid.New().String()
 	expiresAt := time.Now().Add(RefreshTokenTTL)
 
+	// Opportunistically prune this user's expired tokens so the table does not
+	// grow without bound. Indexed by user_id, so this is cheap.
+	_, _ = s.db.ExecContext(ctx,
+		`DELETE FROM refresh_tokens WHERE user_id = $1 AND expires_at < NOW()`, userID)
+
 	_, err = s.db.ExecContext(ctx, `
 		INSERT INTO refresh_tokens (id, user_id, token_hash, expires_at, revoked, created_at)
 		VALUES ($1, $2, $3, $4, false, NOW())`,
@@ -78,10 +104,14 @@ func (s *Service) IssueRefreshToken(ctx context.Context, userID string) (string,
 // RotateRefreshToken validates the old token, revokes it, and issues a new pair.
 // This is refresh token rotation — compromised tokens are invalidated on first use.
 //
-// ⚠️  CRITICAL: Uses atomic transaction to prevent token replay attacks.
-// Without FOR UPDATE, two concurrent requests could both pass validation and
-// both get new tokens. The lock ensures only one request processes each token.
+// Uses an atomic transaction with FOR UPDATE so two concurrent requests cannot
+// both pass validation. A token presented again inside refreshReuseGrace is
+// treated as a client race and rotated again; a genuine replay after the grace
+// window revokes every session for that user.
 func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*model.User, string, string, error) {
+	if !refreshTokenFormat.MatchString(rawToken) {
+		return nil, "", "", ErrInvalidRefreshToken
+	}
 	tokenHash := crypto.HashToken(rawToken)
 
 	// Start atomic transaction with row-level lock
@@ -93,10 +123,11 @@ func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*mod
 
 	var rt model.RefreshToken
 	var user model.User
+	var revokedAt *time.Time
 
 	// FOR UPDATE locks this row until transaction ends, preventing concurrent updates
 	err = tx.QueryRowContext(ctx, `
-		SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked,
+		SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked, rt.revoked_at,
 		       u.id, u.username, u.email, u.plan, u.github_id, u.avatar_url,
 		       u.created_at, u.updated_at
 		FROM refresh_tokens rt
@@ -105,36 +136,40 @@ func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*mod
 		FOR UPDATE OF rt`,
 		tokenHash,
 	).Scan(
-		&rt.ID, &rt.UserID, &rt.ExpiresAt, &rt.Revoked,
+		&rt.ID, &rt.UserID, &rt.ExpiresAt, &rt.Revoked, &revokedAt,
 		&user.ID, &user.Username, &user.Email, &user.Plan, &user.GitHubID, &user.AvatarURL,
 		&user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
-		return nil, "", "", fmt.Errorf("refresh token not found")
-	}
-
-	// If token already used (revoked), this is a replay attack — revoke ALL tokens for user
-	if rt.Revoked {
-		// This write is also part of the transaction
-		_, _ = tx.ExecContext(ctx,
-			`UPDATE refresh_tokens SET revoked = true WHERE user_id = $1`, rt.UserID)
-		tx.Commit()
-		return nil, "", "", fmt.Errorf("token reuse detected: all sessions invalidated")
+		return nil, "", "", ErrInvalidRefreshToken
 	}
 
 	if time.Now().After(rt.ExpiresAt) {
-		return nil, "", "", fmt.Errorf("refresh token expired")
+		return nil, "", "", ErrInvalidRefreshToken
 	}
 
-	// Revoke the old token (within transaction, after lock acquired)
-	_, err = tx.ExecContext(ctx,
-		`UPDATE refresh_tokens SET revoked = true WHERE id = $1`, rt.ID)
-	if err != nil {
-		return nil, "", "", fmt.Errorf("revoke old token: %w", err)
+	if rt.Revoked {
+		withinGrace := revokedAt != nil && time.Since(*revokedAt) <= refreshReuseGrace
+		if !withinGrace {
+			// Genuine replay outside the grace window: invalidate the whole
+			// family. Keep the write in the same transaction as the lock.
+			_, _ = tx.ExecContext(ctx,
+				`UPDATE refresh_tokens SET revoked = true, revoked_at = COALESCE(revoked_at, NOW())
+				 WHERE user_id = $1`, rt.UserID)
+			_ = tx.Commit()
+			return nil, "", "", ErrInvalidRefreshToken
+		}
+		// Concurrent-refresh race: fall through and mint a fresh pair. The old
+		// row is already revoked, so this cannot extend the grace window.
+	} else {
+		// Revoke the old token (within transaction, after lock acquired)
+		if _, err = tx.ExecContext(ctx,
+			`UPDATE refresh_tokens SET revoked = true, revoked_at = NOW() WHERE id = $1`, rt.ID); err != nil {
+			return nil, "", "", fmt.Errorf("revoke old token: %w", err)
+		}
 	}
 
-	// Commit transaction to release lock before issuing new tokens
-	// This is safe: old token is now revoked in DB, any replay will be caught
+	// Commit transaction to release lock before issuing new tokens.
 	if err := tx.Commit(); err != nil {
 		return nil, "", "", fmt.Errorf("commit transaction: %w", err)
 	}
@@ -160,7 +195,12 @@ func (s *Service) ValidateAccessToken(tokenStr string) (*Claims, error) {
 			return nil, fmt.Errorf("unexpected signing method: %v", t.Header["alg"])
 		}
 		return s.jwtSecret, nil
-	})
+	},
+		// Pin the algorithm and issuer: never let a token signed with a
+		// different HMAC variant or issued for another service through.
+		jwt.WithValidMethods([]string{jwt.SigningMethodHS256.Alg()}),
+		jwt.WithIssuer("dotsync"),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -176,7 +216,8 @@ func (s *Service) ValidateAccessToken(tokenStr string) (*Claims, error) {
 // RevokeAllSessions revokes all refresh tokens for a user (logout all devices).
 func (s *Service) RevokeAllSessions(ctx context.Context, userID string) error {
 	_, err := s.db.ExecContext(ctx,
-		`UPDATE refresh_tokens SET revoked = true WHERE user_id = $1`, userID)
+		`UPDATE refresh_tokens SET revoked = true, revoked_at = NOW()
+		 WHERE user_id = $1 AND revoked = false`, userID)
 	return err
 }
 
@@ -191,12 +232,16 @@ type GitHubUser struct {
 
 // FetchGitHubUser calls the GitHub API with an OAuth access token.
 func FetchGitHubUser(accessToken string) (*GitHubUser, error) {
-	req, _ := http.NewRequest("GET", "https://api.github.com/user", nil)
+	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+	if err != nil {
+		return nil, fmt.Errorf("create github request: %w", err)
+	}
 	req.Header.Set("Authorization", "Bearer "+accessToken)
 	req.Header.Set("Accept", "application/vnd.github+json")
+	req.Header.Set("X-GitHub-Api-Version", "2022-11-28")
+	req.Header.Set("User-Agent", "dotsync-server")
 
-	client := &http.Client{Timeout: 15 * time.Second}
-	resp, err := client.Do(req)
+	resp, err := githubHTTPClient.Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("github api: %w", err)
 	}
@@ -206,9 +251,19 @@ func FetchGitHubUser(accessToken string) (*GitHubUser, error) {
 		return nil, fmt.Errorf("github api returned %d", resp.StatusCode)
 	}
 
+	// Bound the body: a hostile/broken upstream must not be able to make the
+	// server allocate arbitrarily large buffers.
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxGitHubResponseBytes))
+	if err != nil {
+		return nil, fmt.Errorf("read github response: %w", err)
+	}
+
 	var u GitHubUser
-	if err := json.NewDecoder(resp.Body).Decode(&u); err != nil {
-		return nil, err
+	if err := json.Unmarshal(body, &u); err != nil {
+		return nil, fmt.Errorf("decode github response: %w", err)
+	}
+	if u.ID == 0 || u.Login == "" {
+		return nil, errors.New("github returned an incomplete user profile")
 	}
 
 	return &u, nil

@@ -8,24 +8,63 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/cli/config"
 )
 
+const (
+	// maxResponseBytes caps how much a server (or a MITM DNS-rebound host) can
+	// make the CLI allocate for one response.
+	maxResponseBytes = 16 << 20
+	requestTimeout   = 30 * time.Second
+	maxAttempts      = 3
+)
+
+// sharedTransport is process-wide: one connection pool, HTTP/2, keep-alives.
+// Creating a fresh http.Client per call (as the device-flow helpers used to)
+// throws away connections and adds a TLS handshake to every request.
+var (
+	sharedTransportOnce sync.Once
+	sharedTransport     *http.Transport
+)
+
+func transport() *http.Transport {
+	sharedTransportOnce.Do(func() {
+		sharedTransport = &http.Transport{
+			Proxy:                 http.ProxyFromEnvironment,
+			MaxIdleConns:          100,
+			MaxIdleConnsPerHost:   10,
+			IdleConnTimeout:       90 * time.Second,
+			TLSHandshakeTimeout:   10 * time.Second,
+			ExpectContinueTimeout: 1 * time.Second,
+			ForceAttemptHTTP2:     true,
+		}
+	})
+	return sharedTransport
+}
+
+func newHTTPClient(timeout time.Duration) *http.Client {
+	return &http.Client{Timeout: timeout, Transport: transport()}
+}
+
 type Client struct {
 	baseURL    string
 	httpClient *http.Client
 	cfg        *config.GlobalConfig
+
+	// refreshMu serialises refresh attempts. Refresh tokens rotate on every
+	// use: two goroutines refreshing at once would race, and the loser would
+	// look like a replayed token to the server.
+	refreshMu sync.Mutex
 }
 
 func New(cfg *config.GlobalConfig) *Client {
 	return &Client{
-		baseURL: cfg.ServerURL,
-		httpClient: &http.Client{
-			Timeout: 30 * time.Second,
-		},
-		cfg: cfg,
+		baseURL:    cfg.ServerURL,
+		httpClient: newHTTPClient(requestTimeout),
+		cfg:        cfg,
 	}
 }
 
@@ -44,7 +83,30 @@ func validateProjectEnv(slug, env string) error {
 	return nil
 }
 
-// do executes an authenticated request with HMAC signing and auto-refresh.
+// isServiceToken reports whether the current credential is a CI service token.
+// Those are read-only and cannot be refreshed — spending a round trip on
+// /api/auth/refresh just returns a confusing 401.
+func (c *Client) isServiceToken() bool {
+	return strings.HasPrefix(c.cfg.AccessToken, "dst_")
+}
+
+func (c *Client) newRequest(method, path string, body []byte) (*http.Request, error) {
+	var r io.Reader
+	if body != nil {
+		r = bytes.NewReader(body)
+	}
+	req, err := http.NewRequest(method, c.baseURL+path, r)
+	if err != nil {
+		return nil, err
+	}
+	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", "dotsync-cli")
+	req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
+	return req, nil
+}
+
+// do executes an authenticated request with auto-refresh and bounded retries.
 func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	var bodyBytes []byte
 	var err error
@@ -56,42 +118,81 @@ func (c *Client) do(method, path string, body any) (*http.Response, error) {
 		}
 	}
 
-	req, err := http.NewRequest(method, c.baseURL+path, bytes.NewReader(bodyBytes))
-	if err != nil {
-		return nil, err
-	}
+	idempotent := method == http.MethodGet || method == http.MethodHead
 
-	req.Header.Set("Content-Type", "application/json")
-	req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
+	for attempt := 0; ; attempt++ {
+		req, reqErr := c.newRequest(method, path, bodyBytes)
+		if reqErr != nil {
+			return nil, reqErr
+		}
 
-	resp, err := c.httpClient.Do(req)
-	if err != nil {
-		return nil, fmt.Errorf("request failed: %w", err)
-	}
+		resp, doErr := c.httpClient.Do(req)
+		if doErr != nil {
+			// Only retry requests that are safe to repeat. Retrying a push on a
+			// timeout could create two secret versions.
+			if idempotent && attempt < maxAttempts-1 {
+				time.Sleep(time.Duration(150*(1<<attempt)) * time.Millisecond)
+				continue
+			}
+			return nil, fmt.Errorf("request failed: %w", doErr)
+		}
 
-	// If 401, try to refresh and retry once
-	if resp.StatusCode == http.StatusUnauthorized {
+		// 5xx from a proxy/load balancer is usually transient for reads.
+		if idempotent && resp.StatusCode >= 500 && attempt < maxAttempts-1 {
+			resp.Body.Close()
+			time.Sleep(time.Duration(150*(1<<attempt)) * time.Millisecond)
+			continue
+		}
+
+		if resp.StatusCode != http.StatusUnauthorized {
+			return resp, nil
+		}
+
 		resp.Body.Close()
-		if err := c.refreshTokens(); err != nil {
+
+		// Service tokens and env-provided access tokens (CI) have no refresh
+		// token. Retrying them would only mask the real problem.
+		if c.isServiceToken() {
+			return nil, fmt.Errorf("service token is invalid or expired")
+		}
+		if strings.TrimSpace(c.cfg.RefreshToken) == "" {
+			return nil, fmt.Errorf("session expired — run: dotsync login")
+		}
+
+		oldAccess := c.cfg.AccessToken
+		c.refreshMu.Lock()
+		// Another goroutine may have refreshed while we waited for the lock.
+		if c.cfg.AccessToken == oldAccess {
+			err = c.refreshTokensLocked()
+		}
+		c.refreshMu.Unlock()
+		if err != nil {
 			return nil, fmt.Errorf("session expired and refresh failed:\n  %w\n\nplease log in again: dotsync login", err)
 		}
 
-		// Retry with new token
-		req.Header.Set("Authorization", "Bearer "+c.cfg.AccessToken)
-		if len(bodyBytes) > 0 {
-			req.Body = io.NopCloser(bytes.NewReader(bodyBytes))
-		}
-		resp, err = c.httpClient.Do(req)
-		if err != nil {
-			return nil, fmt.Errorf("retry after refresh failed: %w", err)
+		// Retry once with the new token (POST bodies were never processed, so
+		// this cannot duplicate a write).
+		if attempt >= maxAttempts-1 {
+			return nil, fmt.Errorf("authentication failed after token refresh — run: dotsync login")
 		}
 	}
-
-	return resp, nil
 }
 
 func (c *Client) refreshTokens() error {
-	requestBody, err := json.Marshal(map[string]string{"refresh_token": c.cfg.RefreshToken})
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	return c.refreshTokensLocked()
+}
+
+// refreshTokensLocked must be called with refreshMu held.
+func (c *Client) refreshTokensLocked() error {
+	if strings.TrimSpace(c.cfg.RefreshToken) == "" {
+		return fmt.Errorf("no refresh token — run: dotsync login")
+	}
+	// Remember which token we are exchanging: another dotsync process may rotate
+	// the pair while this request is in flight.
+	usedRefreshToken := c.cfg.RefreshToken
+	requestBody, err := json.Marshal(map[string]string{"refresh_token": usedRefreshToken})
 	if err != nil {
 		return fmt.Errorf("marshal refresh request: %w", err)
 	}
@@ -105,25 +206,31 @@ func (c *Client) refreshTokens() error {
 	}
 	defer resp.Body.Close()
 
-	responseBody, err := io.ReadAll(resp.Body)
+	responseBody, err := io.ReadAll(io.LimitReader(resp.Body, 1<<20))
 	if err != nil {
 		return fmt.Errorf("read refresh response: %w", err)
 	}
 
-	// Check HTTP status first
 	if resp.StatusCode != http.StatusOK {
+		// Before treating this as a dead session, check whether a concurrent
+		// process (~dotsync ui~ plus a CLI command) already rotated the pair.
+		// Its credentials are valid, so adopt them instead of destroying them.
+		if fresh, loadErr := config.LoadGlobal(); loadErr == nil &&
+			fresh.RefreshToken != "" && fresh.RefreshToken != usedRefreshToken {
+			c.cfg.AccessToken = fresh.AccessToken
+			c.cfg.RefreshToken = fresh.RefreshToken
+			return nil
+		}
+
+		// Nothing newer on disk: the refresh token really is unusable. Clear it
+		// so the next `dotsync login` starts a fresh device flow. The guarded
+		// clear re-checks the file, so a save that lands during this call wins.
+		_ = config.ClearGlobalIfStale(usedRefreshToken)
 		var apiErr struct {
 			Error string `json:"error"`
 		}
 		_ = json.Unmarshal(responseBody, &apiErr)
 		if apiErr.Error != "" {
-			// A refresh-token reuse response invalidates every session. Clear the
-			// local keyring too, otherwise `dotsync login` keeps seeing the stale
-			// access token and cannot start a fresh device flow.
-			if strings.Contains(strings.ToLower(apiErr.Error), "token reuse") ||
-				strings.Contains(strings.ToLower(apiErr.Error), "all sessions invalidated") {
-				_ = config.ClearGlobal()
-			}
 			return fmt.Errorf("refresh failed: %s", apiErr.Error)
 		}
 		return fmt.Errorf("refresh failed with status %d", resp.StatusCode)
@@ -164,7 +271,7 @@ func (c *Client) refreshTokens() error {
 // decodeResponse reads JSON body and checks for error field.
 func decodeResponse(resp *http.Response, target any) error {
 	defer resp.Body.Close()
-	body, err := io.ReadAll(resp.Body)
+	body, err := io.ReadAll(io.LimitReader(resp.Body, maxResponseBytes))
 	if err != nil {
 		return fmt.Errorf("read response: %w", err)
 	}
@@ -181,6 +288,9 @@ func decodeResponse(resp *http.Response, target any) error {
 	}
 
 	if target != nil {
+		if len(bytes.TrimSpace(body)) == 0 {
+			return nil
+		}
 		if err := json.Unmarshal(body, target); err != nil {
 			return fmt.Errorf("unmarshal response: %w", err)
 		}
@@ -370,7 +480,7 @@ type AuthConfig struct {
 // No authentication required — this is intentionally a public endpoint
 // since GitHub client IDs are not secrets.
 func GetAuthConfig(serverURL string) (*AuthConfig, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newHTTPClient(15 * time.Second)
 	resp, err := client.Get(serverURL + "/api/auth/config")
 	if err != nil {
 		return nil, fmt.Errorf("connect to server: %w", err)
@@ -421,7 +531,7 @@ type DeviceCodeResponse struct {
 // The CLI shows the user code and verification URI to the user, who enters
 // the code at that URL on any device with a browser.
 func StartGitHubDeviceFlow(clientID string) (*DeviceCodeResponse, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newHTTPClient(15 * time.Second)
 	form := url.Values{
 		"client_id": {clientID},
 		"scope":     {"read:user user:email"},
@@ -480,7 +590,7 @@ var PollErrSlowDown = fmt.Errorf("slow_down")
 // yet (the normal case while waiting) — callers should sleep for `interval`
 // seconds and call this again.
 func PollGitHubDeviceToken(clientID, deviceCode string) (string, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newHTTPClient(15 * time.Second)
 	form := url.Values{
 		"client_id":   {clientID},
 		"device_code": {deviceCode},
@@ -531,7 +641,7 @@ func PollGitHubDeviceToken(clientID, deviceCode string) (string, error) {
 // DotSync server, which independently re-verifies it against GitHub's own
 // /user API and, if valid, issues DotSync access + refresh tokens.
 func ExchangeGitHubDeviceToken(serverURL, githubAccessToken string) (*LoginResponse, error) {
-	client := &http.Client{Timeout: 15 * time.Second}
+	client := newHTTPClient(15 * time.Second)
 	body, _ := json.Marshal(map[string]string{"github_access_token": githubAccessToken})
 
 	resp, err := client.Post(serverURL+"/api/auth/github/device", "application/json", bytes.NewReader(body))
@@ -625,7 +735,7 @@ func (c *Client) GetLatestVersion(slug, env string) (int, string, error) {
 		return 0, "", err
 	}
 	path := fmt.Sprintf(
-		"/api/projects/%s/envs/%s/history",
+		"/api/projects/%s/envs/%s/head",
 		url.PathEscape(slug),
 		url.PathEscape(env),
 	)
@@ -633,14 +743,14 @@ func (c *Client) GetLatestVersion(slug, env string) (int, string, error) {
 	if err != nil {
 		return 0, "", err
 	}
-	var history []HistoryEntry
-	if err := decodeResponse(resp, &history); err != nil {
+	var head struct {
+		Version  int    `json:"version"`
+		PushedBy string `json:"pushed_by"`
+	}
+	if err := decodeResponse(resp, &head); err != nil {
 		return 0, "", err
 	}
-	if len(history) == 0 {
-		return 0, "", nil
-	}
-	return history[0].Version, history[0].PushedBy, nil
+	return head.Version, head.PushedBy, nil
 }
 
 // ── Service Token API methods ────────────────────────────────────────────────

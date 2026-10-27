@@ -124,8 +124,8 @@ Key names are shown; values are never displayed.`,
 			if err != nil {
 				return err
 			}
-			remotePlain, err := cliCrypto.DecryptEnvFile(
-				remote.EncryptedData, remote.Nonce, password, projCfg.ProjectSlug,
+			remotePlain, err := cliCrypto.DecryptEnvFileForEnv(
+				remote.EncryptedData, remote.Nonce, password, projCfg.ProjectSlug, env,
 			)
 			if err != nil {
 				return fmt.Errorf("decrypt remote: %w", err)

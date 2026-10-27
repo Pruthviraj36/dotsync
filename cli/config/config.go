@@ -201,7 +201,43 @@ func SaveGlobal(cfg *GlobalConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(path, data, 0600)
+
+	// Write-then-rename: an interrupted or concurrent save must never leave a
+	// half-written config.json that forces the user to log in again.
+	tmp, err := os.CreateTemp(filepath.Dir(path), "config.json.tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close config: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0600); err != nil {
+		// Windows may not support chmod; CreateTemp already uses 0600.
+		_ = err
+	}
+	if err := os.Rename(tmpName, path); err != nil {
+		return fmt.Errorf("replace config: %w", err)
+	}
+	return nil
+}
+
+// ClearGlobalIfStale removes stored credentials only when the refresh token on
+// disk/keyring is still the one that was rejected. Concurrent dotsync processes
+// (e.g. `dotsync ui` plus a CLI command) can rotate tokens independently — one
+// of them failing must not delete the fresh credentials another just saved.
+func ClearGlobalIfStale(usedRefreshToken string) error {
+	current, err := LoadGlobal()
+	if err == nil && current.RefreshToken != "" && current.RefreshToken != usedRefreshToken {
+		return nil
+	}
+	return ClearGlobal()
 }
 
 func ClearGlobal() error {
@@ -244,7 +280,30 @@ func SaveProject(cfg *ProjectConfig) error {
 	if err != nil {
 		return err
 	}
-	return os.WriteFile(projectFile, data, 0644)
+	// Write-then-rename so a crash or full disk cannot leave a truncated
+	// .dotsync.json (which would force the user to re-link the folder).
+	tmp, err := os.CreateTemp(".", ".dotsync.json.tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp project config: %w", err)
+	}
+	tmpName := tmp.Name()
+	defer os.Remove(tmpName)
+
+	if _, err := tmp.Write(data); err != nil {
+		tmp.Close()
+		return fmt.Errorf("write project config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close project config: %w", err)
+	}
+	if err := os.Chmod(tmpName, 0644); err != nil {
+		// Windows may not support chmod; the temp file already has safe defaults.
+		_ = err
+	}
+	if err := os.Rename(tmpName, projectFile); err != nil {
+		return fmt.Errorf("replace project config: %w", err)
+	}
+	return nil
 }
 
 // ── Server URL resolution ─────────────────────────────────────────────────────

@@ -2,6 +2,7 @@
 .env
 .env.local
 .env.production
+.env.*.local
 
 # Build artifacts
 dist/
@@ -33,13 +34,5 @@ Thumbs.db
 dotsync.zip
 
 .dotsync.json
-render.yamlapp
 server
 app
-server
-app
-server
-app
-server
-app
-server

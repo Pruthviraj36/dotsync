@@ -4,6 +4,7 @@ import (
 	"bufio"
 	"fmt"
 	"os"
+	"regexp"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -12,8 +13,11 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	"github.com/Pruthviraj36/dotsync/cli/identity"
-	"github.com/Pruthviraj36/dotsync/internal/crypto"
 )
+
+var projectSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,37}[a-z0-9]$`)
+
+const minProjectPasswordLen = 12
 
 func initCmd() *cobra.Command {
 	var create bool
@@ -139,6 +143,10 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if name == "" || slug == "" {
 		return fmt.Errorf("name and slug are required")
 	}
+	slug = strings.ToLower(slug)
+	if !projectSlugPattern.MatchString(slug) || strings.Contains(slug, "--") {
+		return fmt.Errorf("slug must be 2-39 characters: lowercase letters, digits, and single hyphens, starting with a letter or digit")
+	}
 
 	password, err := readPassword(" Encryption password: ")
 	if err != nil {
@@ -151,6 +159,9 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if confirm != password {
 		return fmt.Errorf("passwords do not match")
 	}
+	if len(password) < minProjectPasswordLen {
+		return fmt.Errorf("password must be at least %d characters — it protects every secret in this project", minProjectPasswordLen)
+	}
 
 	txRunning("creation")
 
@@ -159,7 +170,10 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return err
 	}
 
-	actualSlug := proj["slug"].(string)
+	actualSlug, _ := proj["slug"].(string)
+	if actualSlug == "" {
+		return fmt.Errorf("server response did not include a project slug — please try again")
+	}
 
 	projCfg := &config.ProjectConfig{
 		ProjectSlug: actualSlug,
@@ -173,7 +187,6 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if err := setPassword(client, actualSlug, password); err != nil {
 		return err
 	}
-	_ = crypto.DeriveKey(password, actualSlug)
 	txStep(2, 3, "Encrypted and secured project password on server")
 
 	_, pub, _, err := identity.Ensure()
@@ -222,17 +235,28 @@ func readPassword(prompt string) (string, error) {
 	return pw, nil
 }
 
-// ensureGitignore adds .env to .gitignore if not already present.
+// ensureGitignore adds DotSync's secret files to .gitignore if not already
+// present. Matching is line-based (after trimming) instead of a substring
+// search: `strings.Contains(content, ".env")` silently treated an existing
+// entry like ".env.example" or "foo.env" as if ".env" itself were ignored.
 func ensureGitignore() {
 	data, _ := os.ReadFile(".gitignore")
 	content := string(data)
 
-	var toAdd []string
-	if !strings.Contains(content, ".env") {
-		toAdd = append(toAdd, ".env")
+	ignored := make(map[string]bool)
+	for _, line := range strings.Split(content, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		ignored[line] = true
 	}
-	if !strings.Contains(content, ".env.local") {
-		toAdd = append(toAdd, ".env.local")
+
+	var toAdd []string
+	for _, entry := range []string{".env", ".env.local"} {
+		if !ignored[entry] && !ignored["/"+entry] && !ignored["**/"+entry] {
+			toAdd = append(toAdd, entry)
+		}
 	}
 	if len(toAdd) == 0 {
 		return
@@ -240,6 +264,7 @@ func ensureGitignore() {
 
 	f, err := os.OpenFile(".gitignore", os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
 	if err != nil {
+		fmt.Println(warn("could not update .gitignore — make sure " + strings.Join(toAdd, ", ") + " is ignored"))
 		return
 	}
 	defer f.Close()

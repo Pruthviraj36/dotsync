@@ -39,12 +39,15 @@ That's it for most use cases.
 
 1. Your `.env` is encrypted with **AES-256-GCM** on your machine
 2. The key is derived from your project password using **Argon2id** (64MB, 3 iterations)
-3. Only the ciphertext travels to the server
-4. Every push is signed with an **Ed25519** machine key
-5. Each signed version stores the Ed25519 public-key snapshot used to create it
-6. JWTs are short-lived with **refresh token rotation** and replay detection
+3. Ciphertext is bound to its project and environment with GCM additional authenticated data (AAD), so a server cannot replay a `dev` blob into `production`
+4. Only the ciphertext travels to the server
+5. Every push is signed with an **Ed25519** machine key
+6. Each signed version stores the Ed25519 public-key snapshot used to create it
+7. JWTs are short-lived with **refresh token rotation** and replay detection
 
 The server does not receive plaintext `.env` contents, but an operator with the server master key can decrypt stored project passwords. Protect `SERVER_MASTER_KEY` as a production secret.
+
+Rotating the project password with `dotsync password rotate` does not re-encrypt existing versions automatically — re-push the environments you want re-encrypted (or keep using `DOTSYNC_PASSWORD` with the old password for old versions).
 
 ---
 
@@ -73,6 +76,7 @@ The server does not receive plaintext `.env` contents, but an operator with the 
 | `dotsync tokens create` | Create a CI/CD service token |
 | `dotsync tokens list` | List service tokens |
 | `dotsync tokens revoke <id>` | Revoke a token |
+| `dotsync password rotate` | Change the project encryption password |
 | `dotsync config set-server <url>` | Point CLI at a different server |
 | `dotsync ui` | Open the web dashboard at localhost:4040 |
 
@@ -170,14 +174,14 @@ Tokens are prefixed `dst_` and bound to a project and environment scope. They ar
 
 ## Audit logs
 
-Pushes, pulls, and project-password access are logged with user, timestamp, and IP. Team and token-management audit coverage is not yet complete.
+Pushes, pulls, project-password access, and team/token changes are logged with user, timestamp, and IP.
 
 ```bash
 dotsync audit
 dotsync audit --env production
 ```
 
-Available to all users at no cost.
+Available to project owners and admins, free of charge.
 
 ---
 
@@ -195,14 +199,33 @@ Self-hosting is also free and open source — see below.
 
 **Environment variables:**
 
+Required:
+
 ```bash
 DATABASE_URL=postgres://user:pass@host:5432/dbname
-DATABASE_URL_DIRECT=postgres://...   # unpooled, for migrations (skip if not using PgBouncer/Neon)
-JWT_SECRET=                          # openssl rand -hex 32
-SERVER_MASTER_KEY=                   # openssl rand -hex 32  (never change after first use)
+JWT_SECRET=                          # openssl rand -hex 32 (>= 32 bytes, != SERVER_MASTER_KEY)
+SERVER_MASTER_KEY=                   # openssl rand -hex 32 (never change after first use)
 GITHUB_CLIENT_ID=                    # from github.com/settings/developers
-PORT=8080                            # optional, default 8080
 ```
+
+Optional:
+
+```bash
+DATABASE_URL_DIRECT=postgres://...   # unpooled, for migrations (skip if not using PgBouncer/Neon)
+PORT=8080                            # default 8080
+TRUST_PROXY=false                    # true only behind a trusted reverse proxy (Render, Fly, nginx)
+FRONTEND_URL=                        # unset = CORS disabled; set to allow one credentialed origin
+MIGRATIONS_PATH=./migrations         # default ./migrations
+DB_MAX_OPEN_CONNS=25
+DB_MAX_IDLE_CONNS=10
+DB_CONN_MAX_LIFETIME_MIN=30
+RATE_LIMIT_PER_MIN=600               # global per-IP ceiling; auth routes are stricter
+```
+
+> **`TRUST_PROXY` matters for security.** When `false` (the default) the socket address is
+> authoritative and `X-Forwarded-For` is ignored. Set it to `true` only when a reverse proxy
+> you control always overwrites that header — otherwise clients can spoof their IP and bypass
+> per-IP rate limits.
 
 **GitHub OAuth App setup:**
 - Go to github.com/settings/developers → New OAuth App
@@ -212,7 +235,7 @@ PORT=8080                            # optional, default 8080
 **Run:**
 
 ```bash
-cp .env.example .env   # fill in values
+cp .env.example .env   # fill in the required values
 go run ./cmd/dotsync
 ```
 
@@ -220,19 +243,30 @@ Migrations run automatically on startup.
 
 **Docker / any container:**
 
+The repository ships a multi-stage `Dockerfile` that builds a static binary and runs it as
+`nobody` (UID/GID 65534) from a `scratch` image:
+
+```bash
+docker build -t dotsync-server .
+docker run --rm -p 8080:8080 --env-file .env dotsync-server
+```
+
+Using your own image? Keep the runtime non-root and copy the migrations directory:
+
 ```dockerfile
 FROM golang:1.25-alpine AS builder
 WORKDIR /app
 COPY go.mod go.sum ./
 RUN go mod download
 COPY . .
-RUN go build -tags netgo -ldflags '-s -w' -o server ./cmd/dotsync
+RUN CGO_ENABLED=0 go build -tags netgo -ldflags '-s -w' -o server ./cmd/dotsync
 
-FROM alpine:latest
-RUN apk --no-cache add ca-certificates
+FROM alpine:3.21
+RUN apk --no-cache add ca-certificates && adduser -D -u 10001 dotsync
 WORKDIR /app
 COPY --from=builder /app/server .
-COPY migrations ./migrations
+COPY --from=builder /app/migrations ./migrations
+USER 10001
 EXPOSE 8080
 CMD ["./server"]
 ```
@@ -251,11 +285,14 @@ export DOTSYNC_SERVER=https://your-server.example.com
 
 - Client-side AES-256-GCM encryption; the server stores an encrypted project password for team-assisted distribution
 - AES-256-GCM encryption + Argon2id key derivation
+- AES-GCM AAD binds every ciphertext to its project + environment (and stored passwords to their project), so blobs cannot be relocated server-side
 - Ed25519 push signatures with per-version signer-key snapshots
-- Short-lived JWTs + refresh token rotation with replay detection
-- Service tokens are project-bound, read-only, and environment-scoped for secret retrieval
+- Short-lived JWTs + refresh token rotation with replay detection (20s grace window for concurrent client refreshes)
+- Service tokens are project-bound, read-only (GET/HEAD on retrieval routes), and environment-scoped
+- Per-IP rate limits; `X-Forwarded-For` is only trusted when `TRUST_PROXY=true`
 - Audit logging for secret access, team changes, and service-token changes
 - Local dashboard requests require a per-launch session token and loopback host
+- Container image runs as an unprivileged user with no writable filesystem
 
 The project password is intentionally server-assisted for team convenience. A server operator with `SERVER_MASTER_KEY` can decrypt stored project passwords, so this implementation is encrypted-at-rest and client-encrypted, not zero-knowledge end-to-end encryption. Removing a team member does not revoke secrets they already downloaded; rotate affected upstream credentials separately.
 

@@ -88,9 +88,9 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				return err
 			}
 
-			plaintext, err := cliCrypto.DecryptEnvFile(
+			plaintext, err := cliCrypto.DecryptEnvFileForEnv(
 				result.EncryptedData, result.Nonce,
-				password, projCfg.ProjectSlug,
+				password, projCfg.ProjectSlug, env,
 			)
 			if err != nil {
 				return fmt.Errorf("decrypt secrets: %w", err)
@@ -148,6 +148,9 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 			bin, err := exec.LookPath(command)
 			if err != nil {
 				return fmt.Errorf("command not found: %s", command)
+			}
+			if fi, statErr := os.Stat(bin); statErr != nil || !fi.Mode().IsRegular() {
+				return fmt.Errorf("refusing to run %s: not a regular executable file", bin)
 			}
 
 			proc := exec.Command(bin, cmdArgs...)

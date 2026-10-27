@@ -8,42 +8,56 @@ LDFLAGS="-s -w -X github.com/Pruthviraj36/dotsync/cli/cmd.Version=${VERSION}"
 echo "🔨 Building DotSync ${VERSION}"
 echo ""
 
+mkdir -p dist/tmp
+
 # ── Server ────────────────────────────────────────────────────────────────────
 echo "→ Server binary (linux/amd64)..."
-GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/dotsync-server-linux-amd64 ./cmd/dotsync
+GOOS=linux GOARCH=amd64 CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o dist/dotsync-server-linux-amd64 ./cmd/dotsync
+
+echo "→ Server binary (linux/arm64)..."
+GOOS=linux GOARCH=arm64 CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o dist/dotsync-server-linux-arm64 ./cmd/dotsync
 
 echo "→ Server binary (current platform)..."
-go build -ldflags="${LDFLAGS}" -o dist/dotsync-server ./cmd/dotsync
+CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o dist/dotsync-server ./cmd/dotsync
 
 # ── CLI ───────────────────────────────────────────────────────────────────────
 echo ""
-mkdir -p dist/tmp
+build_unix() {
+  local goos="$1" goarch="$2"
+  echo "→ CLI (${goos}/${goarch})..."
+  GOOS="${goos}" GOARCH="${goarch}" CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
+  tar -czf "dist/dotsync-${goos}-${goarch}.tar.gz" -C dist/tmp dotsync
+  rm dist/tmp/dotsync
+}
 
-echo "→ CLI (linux/amd64)..."
-GOOS=linux GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
-tar -czf dist/dotsync-linux-amd64.tar.gz -C dist/tmp dotsync
-rm dist/tmp/dotsync
+build_windows() {
+  local goarch="$1"
+  echo "→ CLI (windows/${goarch})..."
+  GOOS=windows GOARCH="${goarch}" CGO_ENABLED=0 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync.exe .
+  # -j strips directory names, -q is quiet; store the exe at the archive root.
+  ( cd dist/tmp && zip -jq "../dotsync-windows-${goarch}.zip" dotsync.exe )
+  rm dist/tmp/dotsync.exe
+}
 
-echo "→ CLI (darwin/amd64)..."
-GOOS=darwin GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
-tar -czf dist/dotsync-darwin-amd64.tar.gz -C dist/tmp dotsync
-rm dist/tmp/dotsync
-
-echo "→ CLI (darwin/arm64 — Apple Silicon)..."
-GOOS=darwin GOARCH=arm64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync .
-tar -czf dist/dotsync-darwin-arm64.tar.gz -C dist/tmp dotsync
-rm dist/tmp/dotsync
-
-echo "→ CLI (windows/amd64)..."
-GOOS=windows GOARCH=amd64 go build -ldflags="${LDFLAGS}" -o dist/tmp/dotsync.exe .
-zip -jq dist/dotsync-windows-amd64.zip dist/tmp/dotsync.exe
-rm dist/tmp/dotsync.exe
+build_unix linux amd64
+build_unix linux arm64
+build_unix darwin amd64
+build_unix darwin arm64
+build_windows amd64
+build_windows arm64
 
 rmdir dist/tmp
 
 echo ""
 echo "→ Generating checksums.txt..."
-( cd dist && sha256sum dotsync-* > checksums.txt )
+if command -v sha256sum >/dev/null 2>&1; then
+  ( cd dist && sha256sum dotsync-* > checksums.txt )
+elif command -v shasum >/dev/null 2>&1; then
+  ( cd dist && shasum -a 256 dotsync-* > checksums.txt )
+else
+  echo "ERROR: neither sha256sum nor shasum is available" >&2
+  exit 1
+fi
 
 echo ""
 echo "✅ Build complete. Artifacts in ./dist/"

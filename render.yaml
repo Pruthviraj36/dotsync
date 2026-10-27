@@ -20,8 +20,16 @@ services:
       - key: PORT
         value: "10000"          # Render assigns this automatically; keep in sync
 
+      # Render terminates TLS in front of the service, so the app must read the
+      # client IP from X-Forwarded-For for rate limiting to work. Only enable
+      # this behind a trusted proxy: otherwise clients can spoof their IP.
+      - key: TRUST_PROXY
+        value: "true"
+
+      # Optional. Only set this if a browser frontend on another origin must
+      # call the API with credentials. Leave unset and CORS stays disabled.
       - key: FRONTEND_URL
-        sync: false             # set in Render dashboard
+        sync: false
 
       - key: MIGRATIONS_PATH
         value: ./migrations
@@ -35,17 +43,13 @@ services:
                                  # format: postgresql://user:pass@ep-xxx.region.aws.neon.tech/dbname?sslmode=require
 
       - key: JWT_SECRET
-        generateValue: true     # Render generates a secure random value
+        generateValue: true     # must be >= 32 bytes and different from SERVER_MASTER_KEY
 
       - key: SERVER_MASTER_KEY
         generateValue: true     # 32-byte hex key used to encrypt project passwords at rest
                                  # (server-side; see internal/service.PasswordService).
-                                 # If you ever need to set this manually: openssl rand -hex 32
-
-      - key: DOTSYNC_HOSTED
-        value: "true"            # This IS the official hosted instance — skips the
-                                 # on-premise license check (see internal/license).
-                                 # Do NOT set this on anyone else's deployment.
+                                 # Never change this after the first password is stored, or
+                                 # existing project passwords become undecryptable.
 
       - key: GITHUB_CLIENT_ID
         sync: false             # set in Render dashboard
@@ -53,34 +57,15 @@ services:
                                  # GitHub's Device Flow; the server never participates in
                                  # the token exchange and never needs the secret.
 
-      - key: PAYMENT_PROVIDER
-        value: lemonsqueezy     # lemonsqueezy (default) or paypal
-
-      # ── LemonSqueezy (default provider) ──────────────────────────────────
-      # Get these from app.lemonsqueezy.com → Settings → API / Stores / Products
-      - key: LEMONSQUEEZY_API_KEY
-        sync: false             # set in Render dashboard
-
-      - key: LEMONSQUEEZY_STORE_ID
-        sync: false             # numeric store ID from LS dashboard
-
-      - key: LEMONSQUEEZY_WEBHOOK_SECRET
-        sync: false             # from app.lemonsqueezy.com → Webhooks
-
-      - key: LS_VARIANT_ONPREMISE
-        sync: false             # variant ID for the one-time $500 on-premise license product
-
-      # ── PayPal (alternative provider — set PAYMENT_PROVIDER=paypal) ──────
-      # No plan/price ID needed — the on-premise license is a fixed $500
-      # one-time Orders v2 purchase, not a subscription plan.
-      # - key: PAYPAL_CLIENT_ID
-      #   sync: false
-      # - key: PAYPAL_CLIENT_SECRET
-      #   sync: false
-      # - key: PAYPAL_WEBHOOK_ID
-      #   sync: false
-      # - key: PAYPAL_ENV
-      #   value: sandbox        # or "live"
+      # ── Optional database pool tuning ─────────────────────────────────────
+      # Defaults are fine for most deployments. Lower DB_MAX_OPEN_CONNS when
+      # using a pooled Neon endpoint with a small connection limit.
+      # - key: DB_MAX_OPEN_CONNS
+      #   value: "25"
+      # - key: DB_MAX_IDLE_CONNS
+      #   value: "10"
+      # - key: DB_CONN_MAX_LIFETIME_MIN
+      #   value: "30"
 
 # Database is hosted on Neon (https://neon.tech), not Render —
 # create a project there and paste both connection strings above.

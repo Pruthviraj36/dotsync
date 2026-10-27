@@ -119,7 +119,14 @@ type HistoryEntry struct {
 }
 
 // GetHistory returns the version history within the plan's history window.
-func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays int) ([]HistoryEntry, error) {
+func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays, limit, offset int) ([]HistoryEntry, error) {
+	if limit <= 0 || limit > 200 {
+		limit = 100
+	}
+	if offset < 0 {
+		offset = 0
+	}
+
 	// historyDays <= 0 means "no limit" — don't filter by date at all.
 	// (Naively doing time.Now().AddDate(0, 0, -historyDays) with a negative
 	// historyDays used as a sentinel would compute a cutoff in the FUTURE,
@@ -136,7 +143,8 @@ func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDay
 		query += ` AND s.created_at >= $2`
 		args = append(args, since)
 	}
-	query += ` ORDER BY s.version DESC`
+	query += fmt.Sprintf(` ORDER BY s.version DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
+	args = append(args, limit, offset)
 
 	rows, err := s.db.QueryContext(ctx, query, args...)
 	if err != nil {
@@ -153,6 +161,27 @@ func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDay
 		history = append(history, entry)
 	}
 	return history, rows.Err()
+}
+
+// GetHead returns only the latest version metadata for an environment. This is
+// what pull clients poll, so it must never scan the whole history table.
+func (s *SecretService) GetHead(ctx context.Context, envID string) (*HistoryEntry, error) {
+	var entry HistoryEntry
+	err := s.db.QueryRowContext(ctx, `
+		SELECT s.version, u.username, s.created_at
+		FROM secrets s
+		JOIN users u ON u.id = s.pushed_by
+		WHERE s.environment_id = $1
+		ORDER BY s.version DESC
+		LIMIT 1`, envID,
+	).Scan(&entry.Version, &entry.PushedBy, &entry.CreatedAt)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, nil
+	}
+	if err != nil {
+		return nil, err
+	}
+	return &entry, nil
 }
 
 // --- Project Service ---
@@ -233,6 +262,23 @@ func (s *ProjectService) GetBySlug(ctx context.Context, slug, userID string) (*m
 	return &proj, err
 }
 
+// GetBySlugWithRole resolves the project and the caller's role in a single
+// round trip. Authorisation checks in handlers previously ran two queries
+// (GetBySlug + GetRole) for every protected request.
+func (s *ProjectService) GetBySlugWithRole(ctx context.Context, slug, userID string) (*model.Project, string, error) {
+	var proj model.Project
+	var role string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, p.updated_at, tm.role
+		FROM projects p
+		JOIN team_members tm ON tm.project_id = p.id
+		WHERE p.slug = $1 AND tm.user_id = $2`,
+		slug, userID,
+	).Scan(&proj.ID, &proj.OwnerID, &proj.Name, &proj.Slug, &proj.Description,
+		&proj.CreatedAt, &proj.UpdatedAt, &role)
+	return &proj, role, err
+}
+
 func (s *ProjectService) ListForUser(ctx context.Context, userID string) ([]model.Project, error) {
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT p.id, p.owner_id, p.name, p.slug, p.description, p.created_at, p.updated_at
@@ -299,7 +345,13 @@ func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action
 		envIDArg = envID
 	}
 
-	if _, err := s.db.ExecContext(ctx, `
+	// Audit rows must survive a client disconnect. The request context is
+	// cancelled when the client goes away, which would silently drop the record
+	// even though the action (push, password fetch, ...) already happened.
+	writeCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+	defer cancel()
+
+	if _, err := s.db.ExecContext(writeCtx, `
 		INSERT INTO audit_logs (id, user_id, project_id, environment_id, action, metadata, ip_address, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, $7, NOW())`,
 		uuid.New().String(), userID, projectID, envIDArg, action, string(metaJSON), ip,
@@ -323,6 +375,12 @@ func (s *AuditService) Log(ctx context.Context, userID, projectID, envID, action
 // 2. Old passwords remain with their original key_version
 // 3. Decryption tries the stored key_version first, then falls back to scanning
 // 4. Eventually, all old passwords can be re-encrypted and old keys dropped
+
+// ErrNoPassword is returned when a project has never had a password stored.
+var ErrNoPassword = errors.New("no password set for this project yet")
+
+// IsNoPasswordError reports whether err means "no password has been stored".
+func IsNoPasswordError(err error) bool { return errors.Is(err, ErrNoPassword) }
 
 type PasswordService struct {
 	db                *db.DB
@@ -369,7 +427,7 @@ func (s *PasswordService) SetPassword(ctx context.Context, projectID, updatedBy,
 	}
 
 	key := crypto.DeriveServerSubkey(masterKey, projectID)
-	ciphertext, nonce, err := crypto.Encrypt(key, []byte(password))
+	ciphertext, nonce, err := crypto.EncryptWithAAD(key, []byte(password), passwordAAD(projectID))
 	if err != nil {
 		return fmt.Errorf("encrypt password: %w", err)
 	}
@@ -403,7 +461,7 @@ func (s *PasswordService) GetPassword(ctx context.Context, projectID string) (st
 	).Scan(&ciphertext, &nonce, &keyVersion)
 
 	if errors.Is(err, sql.ErrNoRows) {
-		return "", fmt.Errorf("no password set for this project yet — run: dotsync init --rotate-password")
+		return "", ErrNoPassword
 	}
 	if err != nil {
 		return "", fmt.Errorf("fetch password: %w", err)
@@ -416,11 +474,24 @@ func (s *PasswordService) GetPassword(ctx context.Context, projectID string) (st
 	}
 
 	key := crypto.DeriveServerSubkey(masterKey, projectID)
-	plaintext, err := crypto.Decrypt(key, ciphertext, nonce)
+	plaintext, err := crypto.DecryptWithAAD(key, ciphertext, nonce, passwordAAD(projectID))
 	if err != nil {
-		return "", fmt.Errorf("decrypt password: %w", err)
+		// Rows written before AAD binding was introduced have no AAD. Retry
+		// once without it so upgrades do not lock anyone out; the next
+		// SetPassword re-encrypts with the bound form.
+		legacy, legacyErr := crypto.Decrypt(key, ciphertext, nonce)
+		if legacyErr != nil {
+			return "", fmt.Errorf("decrypt password: %w", err)
+		}
+		plaintext = legacy
 	}
 	return string(plaintext), nil
+}
+
+// passwordAAD binds a stored password ciphertext to its project. If a database
+// row were copied to another project, authentication would now fail.
+func passwordAAD(projectID string) []byte {
+	return []byte("dotsync-project-password-v2:" + projectID)
 }
 
 // --- Team Service ---
@@ -584,9 +655,12 @@ func (s *SecretService) PullVersion(ctx context.Context, envID string, version i
 // --- Audit read ---
 
 // GetAuditLogs returns audit log entries for a project.
-func (s *AuditService) GetLogs(ctx context.Context, projectID string, limit int) ([]map[string]any, error) {
-	if limit <= 0 || limit > 100 {
+func (s *AuditService) GetLogs(ctx context.Context, projectID string, limit, offset int) ([]map[string]any, error) {
+	if limit <= 0 || limit > 200 {
 		limit = 50
+	}
+	if offset < 0 {
+		offset = 0
 	}
 	rows, err := s.db.QueryContext(ctx, `
 		SELECT al.action, al.metadata, al.ip_address, al.created_at,
@@ -596,7 +670,7 @@ func (s *AuditService) GetLogs(ctx context.Context, projectID string, limit int)
 		LEFT JOIN environments e ON e.id = al.environment_id
 		WHERE al.project_id = $1
 		ORDER BY al.created_at DESC
-		LIMIT $2`, projectID, limit,
+		LIMIT $2 OFFSET $3`, projectID, limit, offset,
 	)
 	if err != nil {
 		return nil, err
@@ -640,7 +714,9 @@ func (s *ProjectService) GetEnvironments(ctx context.Context, projectID string) 
 		var id, name string
 		var createdAt time.Time
 		if err := rows.Scan(&id, &name, &createdAt); err != nil {
-			continue
+			// Swallowing this used to return a silently truncated list, which
+			// makes a schema/driver mismatch look like missing environments.
+			return nil, fmt.Errorf("scan environment: %w", err)
 		}
 		envs = append(envs, map[string]any{
 			"id": id, "name": name, "created_at": createdAt,
@@ -736,16 +812,25 @@ func (s *ServiceTokenService) Revoke(ctx context.Context, projectID, tokenID str
 	return nil
 }
 
-// LookupByRawToken validates a raw token string, updates last_used_at,
-// and returns the token record. Returns an error if the token is not found.
+// LookupByRawToken validates a raw token string and returns the token record.
+// last_used_at is refreshed at most once per minute: every protected request
+// hits this path, and an unconditional UPDATE turned each read into a write
+// (row lock + WAL churn) across the whole token table.
 func (s *ServiceTokenService) LookupByRawToken(ctx context.Context, rawToken string) (*model.ServiceToken, error) {
 	hash := crypto.HashToken(rawToken)
 
 	var t model.ServiceToken
-	err := s.db.QueryRowContext(ctx,
-		`UPDATE service_tokens SET last_used_at = NOW()
-		 WHERE token_hash = $1
-		 RETURNING id, project_id, env, name, created_by, created_at, last_used_at`,
+	err := s.db.QueryRowContext(ctx, `
+		WITH touched AS (
+			UPDATE service_tokens
+			SET last_used_at = NOW()
+			WHERE token_hash = $1
+			  AND (last_used_at IS NULL OR last_used_at < NOW() - INTERVAL '1 minute')
+			RETURNING id
+		)
+		SELECT id, project_id, env, name, created_by, created_at, last_used_at
+		FROM service_tokens
+		WHERE token_hash = $1`,
 		hash,
 	).Scan(&t.ID, &t.ProjectID, &t.Env, &t.Name, &t.CreatedBy, &t.CreatedAt, &t.LastUsedAt)
 	if err != nil {

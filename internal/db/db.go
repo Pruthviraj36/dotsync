@@ -4,6 +4,9 @@ import (
 	"database/sql"
 	"fmt"
 	"log"
+	"os"
+	"strconv"
+	"time"
 
 	"github.com/golang-migrate/migrate/v4"
 	_ "github.com/golang-migrate/migrate/v4/database/postgres"
@@ -21,8 +24,18 @@ func New(dsn string) (*DB, error) {
 		return nil, fmt.Errorf("open db: %w", err)
 	}
 
-	db.SetMaxOpenConns(25)
-	db.SetMaxIdleConns(10)
+	maxOpen := envInt("DB_MAX_OPEN_CONNS", 25)
+	maxIdle := envInt("DB_MAX_IDLE_CONNS", 10)
+	if maxIdle > maxOpen {
+		maxIdle = maxOpen
+	}
+	db.SetMaxOpenConns(maxOpen)
+	db.SetMaxIdleConns(maxIdle)
+	// Recycle connections. Without a lifetime, a connection can live forever
+	// and keep using a load-balancer endpoint that no longer exists (Neon,
+	// RDS failover), producing sporadic "connection reset" errors.
+	db.SetConnMaxLifetime(time.Duration(envInt("DB_CONN_MAX_LIFETIME_MIN", 30)) * time.Minute)
+	db.SetConnMaxIdleTime(5 * time.Minute)
 
 	if err := db.Ping(); err != nil {
 		return nil, fmt.Errorf("ping db: %w", err)
@@ -30,6 +43,18 @@ func New(dsn string) (*DB, error) {
 
 	log.Println("[OK] Database connected")
 	return &DB{db}, nil
+}
+
+func envInt(key string, fallback int) int {
+	raw := os.Getenv(key)
+	if raw == "" {
+		return fallback
+	}
+	n, err := strconv.Atoi(raw)
+	if err != nil || n <= 0 {
+		return fallback
+	}
+	return n
 }
 
 func RunMigrations(dsn, migrationsPath string) error {
