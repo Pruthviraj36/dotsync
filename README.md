@@ -298,6 +298,19 @@ export DOTSYNC_SERVER=https://your-server.example.com
 
 ---
 
+## Releasing
+
+Releases are cut from tags. `.github/workflows/release.yml` runs the test suite and publishes the artifacts with GoReleaser:
+
+```bash
+git tag v3.6.0
+git push origin v3.6.0
+```
+
+The workflow refuses to publish when `go.mod`/`go.sum` are untidy, `go vet` or `go test` fails, or the GoReleaser config is invalid. A release must contain six archives (`dotsync-{linux,darwin}-{amd64,arm64}.tar.gz`, `dotsync-windows-{amd64,arm64}.zip`) plus `checksums.txt`. `dotsync update` and both installers verify the SHA-256 and refuse any asset without a matching checksum entry, so do not upload release assets by hand — `scripts/build.sh` is for local builds only.
+
+---
+
 ## Security
 
 - Client-side AES-256-GCM encryption; the server stores an encrypted project password for team-assisted distribution
