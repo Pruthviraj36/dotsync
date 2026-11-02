@@ -220,6 +220,7 @@ verified. They are ordered by security and operational impact:
 1. **Complete team key lifecycle:** wrap the project key for newly added members,
    rotate the project key when a member is removed, revoke old envelopes, and
    define how historical versions are handled.
+   Pending envelopes can be retried with `dotsync team refresh-key <username>`.
 2. ~~**Define CI/CD key delivery**~~ — completed with `DOTSYNC_PROJECT_KEY`;
    service tokens retrieve ciphertext while the separately scoped project key is
    provided by the CI secret store.

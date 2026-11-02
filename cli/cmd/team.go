@@ -30,6 +30,7 @@ Roles:
 	cmd.AddCommand(
 		teamListCmd(),
 		teamAddCmd(),
+		teamRefreshKeyCmd(),
 		teamRemoveCmd(),
 		teamRoleCmd(),
 	)
@@ -101,8 +102,8 @@ func teamAddCmd() *cobra.Command {
 		Short: "Invite a GitHub user to your project",
 		Long: `Grants a GitHub user access to your project.
 
-They don't need to do anything to accept — just run dotsync init
-with your project slug. The password is fetched automatically.`,
+They must run dotsync init with your project slug so their device key
+is registered. Then the owner publishes their project-key envelope.`,
 		Args: cobra.ExactArgs(1),
 		Example: `  dotsync team add alice
   dotsync team add bob --role viewer`,
@@ -145,6 +146,31 @@ with your project slug. The password is fetched automatically.`,
 
 	cmd.Flags().StringVar(&roleFlag, "role", "member", "role: admin | member | viewer")
 	return cmd
+}
+
+func teamRefreshKeyCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:     "refresh-key <github-username>",
+		Aliases: []string{"publish-key"},
+		Short:   "Publish a pending project-key envelope for a member",
+		Args:    cobra.ExactArgs(1),
+		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := requireLogin()
+			if err != nil {
+				return err
+			}
+			projCfg, err := config.LoadProject()
+			if err != nil {
+				return err
+			}
+			username := strings.TrimPrefix(args[0], "@")
+			if err := publishMemberEnvelope(api.New(cfg), projCfg.ProjectSlug, username); err != nil {
+				return err
+			}
+			complete(fmt.Sprintf("Project-key envelope published for @%s.", username))
+			return nil
+		},
+	}
 }
 
 func publishMemberEnvelope(client *api.Client, slug, username string) error {
