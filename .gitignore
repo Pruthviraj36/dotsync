@@ -6,6 +6,7 @@
 
 # Build artifacts
 dist/
+graphify-out/
 /dotsync-server
 /dotsync
 /app
