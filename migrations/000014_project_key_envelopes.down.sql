@@ -1,0 +1,2 @@
+DROP TABLE IF EXISTS project_key_envelopes;
+ALTER TABLE users DROP COLUMN IF EXISTS x25519_pubkey;

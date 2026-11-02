@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+
+	dotsyncCrypto "github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 // Dir returns ~/.dotsync, creating it if necessary.
@@ -24,8 +26,40 @@ func Dir() (string, error) {
 	return filepath.Join(home, ".dotsync"), nil
 }
 
-func privPath(dir string) string { return filepath.Join(dir, "id_ed25519") }
-func pubPath(dir string) string  { return filepath.Join(dir, "id_ed25519.pub") }
+func privPath(dir string) string           { return filepath.Join(dir, "id_ed25519") }
+func pubPath(dir string) string            { return filepath.Join(dir, "id_ed25519.pub") }
+func encryptionPrivPath(dir string) string { return filepath.Join(dir, "id_x25519") }
+func encryptionPubPath(dir string) string  { return filepath.Join(dir, "id_x25519.pub") }
+
+// EnsureEncryption loads or creates the local X25519 key used to unwrap
+// project keys. It is separate from the signing identity by design.
+func EnsureEncryption() (privateKey, publicKey []byte, created bool, err error) {
+	dir, err := Dir()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if data, readErr := os.ReadFile(encryptionPrivPath(dir)); readErr == nil && len(data) == dotsyncCrypto.X25519KeySize {
+		pub, deriveErr := dotsyncCrypto.PublicKeyFromPrivate(data)
+		if deriveErr != nil {
+			return nil, nil, false, deriveErr
+		}
+		return data, pub, false, nil
+	}
+	if err := os.MkdirAll(dir, 0700); err != nil {
+		return nil, nil, false, fmt.Errorf("create %s: %w", dir, err)
+	}
+	privateKey, publicKey, err = dotsyncCrypto.GenerateX25519Keypair()
+	if err != nil {
+		return nil, nil, false, err
+	}
+	if err := os.WriteFile(encryptionPrivPath(dir), privateKey, 0600); err != nil {
+		return nil, nil, false, fmt.Errorf("write encryption private key: %w", err)
+	}
+	if err := os.WriteFile(encryptionPubPath(dir), []byte(hex.EncodeToString(publicKey)+"\n"), 0644); err != nil {
+		return nil, nil, false, fmt.Errorf("write encryption public key: %w", err)
+	}
+	return privateKey, publicKey, true, nil
+}
 
 // Ensure loads the existing identity from disk, or generates and persists a
 // new one if none exists yet. `created` is true only the first time this
