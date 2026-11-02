@@ -152,6 +152,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Header().Set("Referrer-Policy", "no-referrer")
 				sessionScript := fmt.Sprintf(`<meta name="dotsync-session" content="%s"><script nonce="%s">(function(){const token="%s";const nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};const headers=new Headers(init.headers||{});headers.set("X-DotSync-Session",token);return nativeFetch(input,Object.assign({},init,{headers:headers}))}})();</script>`, sessionToken, cspNonce, sessionToken)
+				sessionScript += fmt.Sprintf(`<script nonce="%s">(function(){const nativeFetch=window.fetch.bind(window);window.fetch=async function(input,init){const response=await nativeFetch(input,init);if(response.status!==401)return response;const body=await response.clone().json().catch(function(){return {}});if(!body.reauth_required)return response;const password=window.prompt("Enter your DotSync account password to continue:");if(!password)return response;init=init||{};const headers=new Headers(init.headers||{});headers.set("X-DotSync-Account-Password",password);return nativeFetch(input,Object.assign({},init,{headers:headers}))}})();</script>`, cspNonce)
 				dashboard := strings.ReplaceAll(dashboardHTML, "<script>", `<script nonce="`+cspNonce+`">`)
 				dashboard = strings.Replace(dashboard, "</head>", sessionScript+"</head>", 1)
 				w.Write([]byte(dashboard))
@@ -230,7 +231,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return result, nil
 			}))
 
-			mux.HandleFunc("/api/history", uiHandler(func(r *http.Request) (any, error) {
+			mux.HandleFunc("/api/history", uiHandlerWithReauth(client, func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
 				if !validUISlug(slug) && projCfg != nil {
@@ -251,7 +252,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 
 			// Diff is deliberately key-only, like `dotsync diff`: values never
 			// appear in this response even though both sides are decrypted locally.
-			mux.HandleFunc("/api/diff", uiHandler(func(r *http.Request) (any, error) {
+			mux.HandleFunc("/api/diff", uiHandlerWithReauth(client, func(r *http.Request) (any, error) {
 				slug, env := r.URL.Query().Get("slug"), r.URL.Query().Get("env")
 				if !validUISlug(slug) || strings.TrimSpace(env) == "" {
 					return nil, fmt.Errorf("slug and env are required")
@@ -279,7 +280,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"version": remote.Version, "added": added, "removed": removed, "changed": changed}, nil
 			}))
 
-			mux.HandleFunc("/api/version", uiHandler(func(r *http.Request) (any, error) {
+			mux.HandleFunc("/api/version", uiHandlerWithReauth(client, func(r *http.Request) (any, error) {
 				slug, env := r.URL.Query().Get("slug"), r.URL.Query().Get("env")
 				version, parseErr := strconv.Atoi(r.URL.Query().Get("version"))
 				if parseErr != nil || !validUISlug(slug) || env == "" || version < 1 {
@@ -305,7 +306,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 
 			// /api/latest is intentionally metadata-only. The browser uses it to
 			// decide whether a pull needs the encrypted payload at all.
-			mux.HandleFunc("/api/latest", uiHandler(func(r *http.Request) (any, error) {
+			mux.HandleFunc("/api/latest", uiHandlerWithReauth(client, func(r *http.Request) (any, error) {
 				slug, env := r.URL.Query().Get("slug"), r.URL.Query().Get("env")
 				if !validUISlug(slug) || strings.TrimSpace(env) == "" || env == "null" || env == "undefined" {
 					return nil, fmt.Errorf("slug and env are required")
@@ -317,7 +318,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"version": version, "by": by}, nil
 			}))
 
-			mux.HandleFunc("/api/pull", uiHandler(func(r *http.Request) (any, error) {
+			mux.HandleFunc("/api/pull", uiHandlerWithReauth(client, func(r *http.Request) (any, error) {
 				slug := r.URL.Query().Get("slug")
 				env := r.URL.Query().Get("env")
 				if !validUISlug(slug) {
@@ -354,7 +355,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				}, nil
 			}))
 
-			mux.HandleFunc("/api/push", uiPostHandler(func(body []byte) (any, error) {
+			mux.HandleFunc("/api/push", uiPostHandlerWithReauth(client, func(body []byte) (any, error) {
 				var req struct {
 					Slug    string `json:"slug"`
 					Env     string `json:"env"`
@@ -394,7 +395,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"version": result.Version, "keys": len(keys)}, nil
 			}))
 
-			mux.HandleFunc("/api/team/add", uiPostHandler(func(body []byte) (any, error) {
+			mux.HandleFunc("/api/team/add", uiPostHandlerWithReauth(client, func(body []byte) (any, error) {
 				var req struct {
 					Slug     string `json:"slug"`
 					Username string `json:"username"`
@@ -415,7 +416,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"ok": true}, nil
 			}))
 
-			mux.HandleFunc("/api/team/role", uiPostHandler(func(body []byte) (any, error) {
+			mux.HandleFunc("/api/team/role", uiPostHandlerWithReauth(client, func(body []byte) (any, error) {
 				var req struct {
 					Slug     string `json:"slug"`
 					Username string `json:"username"`
@@ -436,7 +437,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"ok": true, "role": req.Role}, nil
 			}))
 
-			mux.HandleFunc("/api/team/remove", uiPostHandler(func(body []byte) (any, error) {
+			mux.HandleFunc("/api/team/remove", uiPostHandlerWithReauth(client, func(body []byte) (any, error) {
 				var req struct {
 					Slug     string `json:"slug"`
 					Username string `json:"username"`
@@ -492,7 +493,7 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"ok": true}, nil
 			}))
 
-			mux.HandleFunc("/api/rollback", uiPostHandler(func(body []byte) (any, error) {
+			mux.HandleFunc("/api/rollback", uiPostHandlerWithReauth(client, func(body []byte) (any, error) {
 				var req struct {
 					Slug    string `json:"slug"`
 					Env     string `json:"env"`
@@ -658,12 +659,49 @@ func uiHandler(fn func(r *http.Request) (any, error)) http.HandlerFunc {
 
 		data, err := fn(r)
 		if err != nil {
+			if _, ok := err.(uiReauthRequiredError); ok {
+				w.WriteHeader(http.StatusUnauthorized)
+				json.NewEncoder(w).Encode(map[string]any{
+					"error":           err.Error(),
+					"reauth_required": true,
+				})
+				return
+			}
 			w.WriteHeader(http.StatusInternalServerError)
 			json.NewEncoder(w).Encode(map[string]string{"error": uiSafeError(err)})
 			return
 		}
 		json.NewEncoder(w).Encode(data)
 	}
+}
+
+type uiReauthRequiredError struct{}
+
+func (uiReauthRequiredError) Error() string {
+	return "account password confirmation required"
+}
+
+func uiRequireReauth(client *api.Client, r *http.Request) error {
+	if client.HasReauthToken() {
+		return nil
+	}
+	password := r.Header.Get("X-DotSync-Account-Password")
+	if password == "" {
+		return uiReauthRequiredError{}
+	}
+	if err := client.Reauthenticate(password, "sensitive"); err != nil {
+		return uiReauthRequiredError{}
+	}
+	return nil
+}
+
+func uiHandlerWithReauth(client *api.Client, fn func(r *http.Request) (any, error)) http.HandlerFunc {
+	return uiHandler(func(r *http.Request) (any, error) {
+		if err := uiRequireReauth(client, r); err != nil {
+			return nil, err
+		}
+		return fn(r)
+	})
 }
 
 func uiPostHandler(fn func(body []byte) (any, error)) http.HandlerFunc {
@@ -709,6 +747,22 @@ func uiPostHandler(fn func(body []byte) (any, error)) http.HandlerFunc {
 			return
 		}
 		json.NewEncoder(w).Encode(data)
+	}
+}
+
+func uiPostHandlerWithReauth(client *api.Client, fn func(body []byte) (any, error)) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := uiRequireReauth(client, r); err != nil {
+			w.Header().Set("Content-Type", "application/json")
+			w.Header().Set("Cache-Control", "no-store")
+			w.WriteHeader(http.StatusUnauthorized)
+			json.NewEncoder(w).Encode(map[string]any{
+				"error":           err.Error(),
+				"reauth_required": true,
+			})
+			return
+		}
+		uiPostHandler(fn).ServeHTTP(w, r)
 	}
 }
 

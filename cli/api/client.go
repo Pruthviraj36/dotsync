@@ -175,6 +175,12 @@ func (c *Client) Reauthenticate(password, scope string) error {
 	return nil
 }
 
+func (c *Client) HasReauthToken() bool {
+	c.refreshMu.Lock()
+	defer c.refreshMu.Unlock()
+	return c.reauthToken != ""
+}
+
 // do executes an authenticated request with auto-refresh and bounded retries.
 func (c *Client) do(method, path string, body any) (*http.Response, error) {
 	var bodyBytes []byte
