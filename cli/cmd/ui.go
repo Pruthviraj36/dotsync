@@ -577,75 +577,9 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				return map[string]any{"ok": true}, nil
 			}))
 
-			// This is the browser counterpart of `dotsync run -- <command>`.
-			// It never writes the decrypted environment to disk; it is passed only
-			// to the child process. A bounded context prevents a stale dashboard
-			// request from leaving a command running forever.
-			mux.HandleFunc("/api/run", uiPostHandler(func(body []byte) (any, error) {
-				var req struct {
-					Slug string   `json:"slug"`
-					Env  string   `json:"env"`
-					Args []string `json:"args"`
-				}
-				if err := json.Unmarshal(body, &req); err != nil {
-					return nil, fmt.Errorf("invalid request: %w", err)
-				}
-				if !validUISlug(req.Slug) || !validEnvName(req.Env) || len(req.Args) == 0 || strings.TrimSpace(req.Args[0]) == "" {
-					return nil, fmt.Errorf("project, environment, and command are required")
-				}
-				remote, err := client.Pull(req.Slug, req.Env)
-				if err != nil {
-					return nil, err
-				}
-				if _, err := verifySignature(remote.EncryptedData, remote.Signature, remote.PushedByPubKey); err != nil {
-					return nil, fmt.Errorf("signature verification failed: %w", err)
-				}
-				password, err := resolvePassword(client, req.Slug)
-				if err != nil {
-					return nil, err
-				}
-				plain, err := cliCrypto.DecryptEnvFileForEnv(remote.EncryptedData, remote.Nonce, password, req.Slug, req.Env)
-				if err != nil {
-					return nil, fmt.Errorf("decryption failed: %w", err)
-				}
-				secrets, err := cliCrypto.ParseEnvFileStrict(plain)
-				if err != nil {
-					return nil, fmt.Errorf("refusing to run with malformed secrets: %w", err)
-				}
-				injected := make(map[string]bool, len(secrets))
-				for k := range secrets {
-					injected[k] = true
-				}
-				var procEnv []string
-				for _, e := range os.Environ() {
-					key := e
-					if i := strings.IndexByte(e, '='); i > 0 {
-						key = e[:i]
-					}
-					if !injected[key] {
-						procEnv = append(procEnv, e)
-					}
-				}
-				for k, v := range secrets {
-					procEnv = append(procEnv, k+"="+v)
-				}
-				runCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				defer cancel()
-				command := exec.CommandContext(runCtx, req.Args[0], req.Args[1:]...)
-				command.Env = procEnv
-				output := &uiLimitedBuffer{limit: uiMaxRunOutput}
-				command.Stdout, command.Stderr = output, output
-				runErr := command.Run()
-				result := map[string]any{"output": output.String(), "exit_code": 0}
-				if runErr != nil {
-					result["exit_code"] = 1
-					result["run_error"] = runErr.Error()
-					if runCtx.Err() != nil {
-						result["run_error"] = "command timed out after 2 minutes"
-					}
-				}
-				return result, nil
-			}))
+			mux.HandleFunc("/api/run", func(w http.ResponseWriter, r *http.Request) {
+				http.Error(w, "dashboard command execution is disabled; use dotsync run from the terminal", http.StatusGone)
+			})
 
 			url := fmt.Sprintf("http://localhost:%s", portFlag)
 			srv := &http.Server{
