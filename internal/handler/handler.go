@@ -354,6 +354,7 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		Nonce         []byte `json:"nonce"`
 		Signature     []byte `json:"signature,omitempty"`
 		SignerPubKey  string `json:"signer_pubkey,omitempty"`
+		BaseVersion   int    `json:"base_version,omitempty"`
 	}
 	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
 		writeError(w, http.StatusBadRequest, "invalid request body")
@@ -393,8 +394,12 @@ func (h *SecretsHandler) Push(w http.ResponseWriter, r *http.Request) {
 		req.SignerPubKey = strings.ToLower(req.SignerPubKey)
 	}
 
-	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce, req.Signature, req.SignerPubKey)
+	secret, err := h.secretSvc.PushSecrets(r.Context(), env.ID, claims.UserID, req.EncryptedData, req.Nonce, req.Signature, req.SignerPubKey, req.BaseVersion)
 	if err != nil {
+		if errors.Is(err, service.ErrVersionConflict) {
+			writeError(w, http.StatusConflict, "remote secrets changed; pull before pushing again")
+			return
+		}
 		log.Printf("ERROR push [project=%s env=%s user=%s]: %v", slug, envName, claims.Username, err)
 		writeError(w, http.StatusInternalServerError, "push failed")
 		return

@@ -106,12 +106,16 @@ and uploads the ciphertext. The server never sees plaintext.`,
 			transferLabel := fmt.Sprintf("Uploading %s", humanSize(len(ciphertext)))
 			transferProgress(transferLabel, len(ciphertext), 0)
 
-			result, err := client.Push(projCfg.ProjectSlug, env, api.PushRequest{
+			pushRequest := api.PushRequest{
 				EncryptedData: ciphertext,
 				Nonce:         nonce,
 				Signature:     signature,
 				SignerPubKey:  identity.Hex(pub),
-			})
+			}
+			if state, ok := projCfg.LastPulledStates[localPullStateKey(env, envFile)]; ok {
+				pushRequest.BaseVersion = state.Version
+			}
+			result, err := client.Push(projCfg.ProjectSlug, env, pushRequest)
 			if err != nil {
 				if isTTY {
 					fmt.Println()

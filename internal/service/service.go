@@ -19,6 +19,8 @@ type SecretService struct {
 	db *db.DB
 }
 
+var ErrVersionConflict = errors.New("secret version conflict")
+
 func NewSecretService(database *db.DB) *SecretService {
 	return &SecretService{db: database}
 }
@@ -26,7 +28,7 @@ func NewSecretService(database *db.DB) *SecretService {
 // PushSecrets stores a new version of encrypted secrets for an environment.
 // The ciphertext, nonce, and signature are already produced client-side —
 // we store blobs only and never see plaintext or private key material.
-func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce, signature []byte, signerPubKey string) (*model.Secret, error) {
+func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string, encryptedData, nonce, signature []byte, signerPubKey string, baseVersion int) (*model.Secret, error) {
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, fmt.Errorf("begin secret push: %w", err)
@@ -47,6 +49,9 @@ func (s *SecretService) PushSecrets(ctx context.Context, envID, pushedBy string,
 	).Scan(&currentVersion)
 	if err != nil {
 		return nil, fmt.Errorf("get version: %w", err)
+	}
+	if baseVersion > 0 && currentVersion != baseVersion {
+		return nil, fmt.Errorf("%w: expected v%d, current is v%d", ErrVersionConflict, baseVersion, currentVersion)
 	}
 
 	secret := &model.Secret{

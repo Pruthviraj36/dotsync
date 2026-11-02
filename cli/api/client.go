@@ -330,6 +330,7 @@ type PushRequest struct {
 	Nonce         []byte `json:"nonce"`
 	Signature     []byte `json:"signature,omitempty"` // ed25519 sig over sha256(encrypted_data)
 	SignerPubKey  string `json:"signer_pubkey,omitempty"`
+	BaseVersion   int    `json:"base_version,omitempty"`
 }
 
 type PushResponse struct {
