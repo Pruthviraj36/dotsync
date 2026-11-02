@@ -1,5 +1,9 @@
 # DotSync Codebase Analysis
 
+> **Historical document:** this analysis predates the E2EE and open-source
+> transition. Its findings are retained as historical context; use `README.md`
+> and `SECURITY.md` for the maintained architecture and security model.
+
 **Analysis Date**: September 9, 2026  
 **Project**: github.com/Pruthviraj36/dotsync  
 **Language**: Go 1.25.0  
@@ -1071,4 +1075,3 @@ However, **three critical issues require immediate attention**:
 Additionally, **eight high-priority issues** related to error handling, credential storage, and authorization need fixes before production deployment.
 
 The path forward is clear: fix critical issues, add missing error handling, and implement proper key management for server-side encrypted data.
-

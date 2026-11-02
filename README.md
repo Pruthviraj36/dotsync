@@ -1,6 +1,9 @@
 # DotSync
 
-Client-encrypted `.env` sync for dev teams. Secrets are encrypted on your machine before they reach the server. The server stores ciphertext plus an encrypted project password used for team-assisted key distribution; this is not a zero-knowledge design.
+Client-encrypted `.env` sync for dev teams. New projects use true end-to-end
+encryption: secrets are encrypted on your machine before they reach the server,
+and project keys are delivered through per-device X25519 envelopes. Legacy
+password-encrypted projects remain supported during migration.
 
 ---
 

@@ -1,5 +1,8 @@
 # DotSync: Deep Review
 
+> **Historical document:** this audit describes the pre-E2EE and pre-open-source
+> transition state. Use `README.md` and `SECURITY.md` for current behavior.
+
 SWOT · Security (attacker's view) · Dead code · Redundant API calls · Correctness bugs · Terminal UI · Web UI · Remediation plan
 
 ---
