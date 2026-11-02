@@ -189,7 +189,7 @@ func main() {
 		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
 		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
 
-		// Audit logs (all users, no plan gate)
+		// Audit logs
 		r.Get("/projects/{slug}/audit", secretsHandler.AuditLogs)
 
 		// Service tokens (CI/CD integrations)
