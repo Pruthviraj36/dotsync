@@ -210,6 +210,43 @@ Self-hosting is also free and open source — see below.
 
 ---
 
+## Remaining work
+
+The following items are intentionally tracked here until they are implemented and
+verified. They are ordered by security and operational impact:
+
+1. **Complete team key lifecycle:** wrap the project key for newly added members,
+   rotate the project key when a member is removed, revoke old envelopes, and
+   define how historical versions are handled.
+2. **Define CI/CD key delivery:** service tokens can retrieve ciphertext, but they
+   need a separate machine identity and project-key envelope before they can
+   decrypt project-key-encrypted secrets.
+3. **Retire server-held project passwords:** new projects should not prompt for,
+   upload, or fetch a shared password. Keep the legacy endpoint only as an
+   explicit migration path until existing projects are upgraded.
+4. **Make project initialization atomic or resumable:** a failure during project,
+   identity, envelope, or local-key setup must not leave an unusable project.
+5. **Add device-key lifecycle management:** support replacing a lost or rotated
+   X25519 device key without silently stranding existing envelopes.
+6. **Align audit access documentation and behavior:** document that audit logs are
+   owner/admin-only and add pagination/export if broader audit operations are
+   required.
+7. **Finish error-path hardening:** audit all database row-scan and partial-failure
+   paths so errors are returned rather than skipped.
+8. **Improve release and deployment verification:** document migration rollout,
+   key recovery, backups, and release authenticity for self-hosted operators.
+9. **Refresh historical analysis documents:** mark old audit findings as
+   historical or update them so contributors do not mistake resolved issues for
+   active defects.
+10. **Expand integration coverage:** test owner bootstrap, member onboarding,
+    member removal, key rotation, service-token access, legacy migration, and
+    replay/conflict behavior on PostgreSQL.
+
+This list is part of the open-source roadmap and should be updated when an item
+is completed or its scope changes.
+
+---
+
 ## Self-hosting
 
 **Requirements:** Go 1.25+, PostgreSQL 14+, a GitHub OAuth App
