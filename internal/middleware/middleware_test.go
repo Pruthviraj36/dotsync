@@ -64,6 +64,7 @@ func TestServiceTokenAccessors(t *testing.T) {
 	if got := ServiceTokenID(r.Context()); got != "token-a" {
 		t.Fatalf("ServiceTokenID = %q, want token-a", got)
 	}
+
 	if got := ServiceTokenProjectID(r.Context()); got != "project-1" {
 		t.Fatalf("ServiceTokenProjectID = %q, want project-1", got)
 	}
@@ -77,5 +78,39 @@ func TestServiceTokenAccessors(t *testing.T) {
 	plain := userRequest("u1")
 	if ServiceTokenID(plain.Context()) != "" || IsServiceTokenRequest(plain.Context()) {
 		t.Fatal("a user request must not be treated as a service token")
+	}
+}
+
+func TestRequireReauth(t *testing.T) {
+	svc := auth.NewService(nil, "test-secret")
+	token, err := svc.IssueReauthToken("u1", "sensitive")
+	if err != nil {
+		t.Fatal(err)
+	}
+	next := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusNoContent)
+	})
+	protected := RequireReauth(svc, "sensitive")(next)
+
+	req := userRequest("u1")
+	rec := httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusUnauthorized {
+		t.Fatalf("missing reauth token: got %d, want 401", rec.Code)
+	}
+
+	req = userRequest("u1")
+	req.Header.Set("X-DotSync-Reauth", token)
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, req)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("valid reauth token: got %d, want 204", rec.Code)
+	}
+
+	serviceReq := serviceTokenRequest("token-a")
+	rec = httptest.NewRecorder()
+	protected.ServeHTTP(rec, serviceReq)
+	if rec.Code != http.StatusNoContent {
+		t.Fatalf("service token bypass: got %d, want 204", rec.Code)
 	}
 }
