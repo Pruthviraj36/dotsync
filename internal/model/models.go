@@ -8,7 +8,6 @@ type User struct {
 	Username  string    `db:"username"   json:"username"`
 	Email     string    `db:"email"      json:"email"`
 	AvatarURL string    `db:"avatar_url" json:"avatar_url"`
-	Plan      string    `db:"plan"       json:"plan"` // always "free" — no paid tiers
 	CreatedAt time.Time `db:"created_at" json:"created_at"`
 	UpdatedAt time.Time `db:"updated_at" json:"updated_at"`
 }
@@ -84,24 +83,4 @@ type ServiceToken struct {
 	CreatedAt  time.Time  `db:"created_at"   json:"created_at"`
 	ExpiresAt  time.Time  `db:"expires_at"   json:"expires_at"`
 	LastUsedAt *time.Time `db:"last_used_at" json:"last_used_at,omitempty"`
-}
-
-// PlanLimits defines feature access. DotSync has only one plan (free) —
-// everything is unlimited and unlocked for all users.
-type PlanLimits struct {
-	MaxProjects   int
-	MaxMembers    int
-	HistoryDays   int
-	HasAuditLogs  bool
-	HasLeakDetect bool
-}
-
-var Plans = map[string]PlanLimits{
-	"free": {
-		MaxProjects:   -1, // unlimited
-		MaxMembers:    -1,
-		HistoryDays:   -1,
-		HasAuditLogs:  true,
-		HasLeakDetect: true,
-	},
 }

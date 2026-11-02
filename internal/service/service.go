@@ -124,8 +124,8 @@ type HistoryEntry struct {
 	CreatedAt time.Time `json:"created_at"`
 }
 
-// GetHistory returns the version history within the plan's history window.
-func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDays, limit, offset int) ([]HistoryEntry, error) {
+// GetHistory returns paginated version history for an environment.
+func (s *SecretService) GetHistory(ctx context.Context, envID string, limit, offset int) ([]HistoryEntry, error) {
 	if limit <= 0 || limit > 200 {
 		limit = 100
 	}
@@ -133,10 +133,6 @@ func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDay
 		offset = 0
 	}
 
-	// historyDays <= 0 means "no limit" — don't filter by date at all.
-	// (Naively doing time.Now().AddDate(0, 0, -historyDays) with a negative
-	// historyDays used as a sentinel would compute a cutoff in the FUTURE,
-	// silently hiding everything instead of showing everything.)
 	query := `
 		SELECT s.version, u.username, s.created_at
 		FROM secrets s
@@ -144,11 +140,6 @@ func (s *SecretService) GetHistory(ctx context.Context, envID string, historyDay
 		WHERE s.environment_id = $1`
 	args := []any{envID}
 
-	if historyDays > 0 {
-		since := time.Now().AddDate(0, 0, -historyDays)
-		query += ` AND s.created_at >= $2`
-		args = append(args, since)
-	}
 	query += fmt.Sprintf(` ORDER BY s.version DESC LIMIT $%d OFFSET $%d`, len(args)+1, len(args)+2)
 	args = append(args, limit, offset)
 
@@ -307,14 +298,6 @@ func (s *ProjectService) ListForUser(ctx context.Context, userID string) ([]mode
 		projects = append(projects, p)
 	}
 	return projects, rows.Err()
-}
-
-func (s *ProjectService) CountForUser(ctx context.Context, userID string) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM team_members WHERE user_id = $1 AND role = 'owner'`, userID,
-	).Scan(&count)
-	return count, err
 }
 
 func (s *ProjectService) GetEnvironment(ctx context.Context, projectID, envName string) (*model.Environment, error) {
@@ -606,14 +589,6 @@ func (s *TeamService) GetRole(ctx context.Context, projectID, userID string) (st
 		projectID, userID,
 	).Scan(&role)
 	return role, err
-}
-
-func (s *TeamService) CountMembers(ctx context.Context, projectID string) (int, error) {
-	var count int
-	err := s.db.QueryRowContext(ctx,
-		`SELECT COUNT(*) FROM team_members WHERE project_id = $1`, projectID,
-	).Scan(&count)
-	return count, err
 }
 
 func (s *TeamService) InviteMember(ctx context.Context, projectID, userID, role, invitedBy string) error {

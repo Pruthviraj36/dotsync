@@ -85,7 +85,6 @@ func Authenticate(authSvc *auth.Service, tokenSvc *service.ServiceTokenService) 
 				claims := &auth.Claims{
 					UserID:   st.CreatedBy,
 					Username: "service-token:" + st.Name,
-					Plan:     "free",
 				}
 				ctx := context.WithValue(r.Context(), auth.UserClaimsKey, claims)
 				ctx = context.WithValue(ctx, serviceTokenKey{}, serviceTokenMeta{

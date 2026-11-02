@@ -19,7 +19,7 @@ func auditCmd() *cobra.Command {
 		Short: "View the audit log for this project",
 		Long: `Shows who pushed, pulled, and changed team membership.
 Each event is recorded with user, timestamp, IP, and metadata.
-Available to all users — no plan required.`,
+Available to every authenticated project member.`,
 		Example: `  dotsync audit
   dotsync audit --env production`,
 		RunE: func(cmd *cobra.Command, args []string) error {

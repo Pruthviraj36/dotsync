@@ -206,9 +206,9 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	var user model.User
 	err := h.db.QueryRowContext(r.Context(),
-		`SELECT id, github_id, username, email, avatar_url, plan, created_at, updated_at FROM users WHERE id = $1`,
+		`SELECT id, github_id, username, email, avatar_url, created_at, updated_at FROM users WHERE id = $1`,
 		claims.UserID,
-	).Scan(&user.ID, &user.GitHubID, &user.Username, &user.Email, &user.AvatarURL, &user.Plan, &user.CreatedAt, &user.UpdatedAt)
+	).Scan(&user.ID, &user.GitHubID, &user.Username, &user.Email, &user.AvatarURL, &user.CreatedAt, &user.UpdatedAt)
 	if err != nil {
 		writeError(w, http.StatusNotFound, "user not found")
 		return
@@ -232,16 +232,6 @@ func NewProjectHandler(ps *service.ProjectService, ts *service.TeamService) *Pro
 // POST /api/projects
 func (h *ProjectHandler) Create(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
-	limits := model.Plans[claims.Plan]
-
-	// Enforce plan project limit
-	if limits.MaxProjects != -1 {
-		count, _ := h.projectSvc.CountForUser(r.Context(), claims.UserID)
-		if count >= limits.MaxProjects {
-			writeError(w, http.StatusForbidden, "project limit reached for your plan")
-			return
-		}
-	}
 
 	var req struct {
 		Name        string `json:"name"`
@@ -469,8 +459,6 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 	envName := chi.URLParam(r, "env")
-	limits := model.Plans[claims.Plan]
-
 	if mw.IsServiceTokenRequest(r.Context()) {
 		scope := mw.ServiceTokenEnv(r.Context())
 		if scope != "*" && scope != envName {
@@ -497,7 +485,7 @@ func (h *SecretsHandler) History(w http.ResponseWriter, r *http.Request) {
 
 	limit := queryInt(r, "limit", 100, 1, 100)
 	offset := queryInt(r, "offset", 0, 0, 1_000_000)
-	history, err := h.secretSvc.GetHistory(r.Context(), env.ID, limits.HistoryDays, limit, offset)
+	history, err := h.secretSvc.GetHistory(r.Context(), env.ID, limit, offset)
 	if err != nil {
 		writeError(w, http.StatusInternalServerError, "history fetch failed")
 		return
@@ -702,21 +690,6 @@ func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if err != nil {
 		writeError(w, http.StatusNotFound, "user not found in dotsync (they must log in at least once)")
 		return
-	}
-
-	// Enforce plan member limit on the project owner
-	var ownerPlan string
-	_ = h.db.QueryRowContext(r.Context(),
-		`SELECT plan FROM users WHERE id = $1`, proj.OwnerID,
-	).Scan(&ownerPlan)
-	limits := model.Plans[ownerPlan]
-	if limits.MaxMembers != -1 {
-		count, _ := h.teamSvc.CountMembers(r.Context(), proj.ID)
-		if count >= limits.MaxMembers {
-			writeError(w, http.StatusForbidden,
-				fmt.Sprintf("member limit (%d) reached for the %s plan", limits.MaxMembers, ownerPlan))
-			return
-		}
 	}
 
 	err = h.teamSvc.InviteMember(r.Context(), proj.ID, targetUser.ID, req.Role, claims.UserID)

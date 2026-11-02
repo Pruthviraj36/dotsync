@@ -43,7 +43,6 @@ var refreshTokenFormat = regexp.MustCompile(`^[0-9a-f]{64}$`)
 type Claims struct {
 	UserID   string `json:"user_id"`
 	Username string `json:"username"`
-	Plan     string `json:"plan"`
 	jwt.RegisteredClaims
 }
 
@@ -61,7 +60,6 @@ func (s *Service) IssueAccessToken(user *model.User) (string, error) {
 	claims := Claims{
 		UserID:   user.ID,
 		Username: user.Username,
-		Plan:     user.Plan,
 		RegisteredClaims: jwt.RegisteredClaims{
 			ExpiresAt: jwt.NewNumericDate(time.Now().Add(AccessTokenTTL)),
 			IssuedAt:  jwt.NewNumericDate(time.Now()),
@@ -128,7 +126,7 @@ func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*mod
 	// FOR UPDATE locks this row until transaction ends, preventing concurrent updates
 	err = tx.QueryRowContext(ctx, `
 		SELECT rt.id, rt.user_id, rt.expires_at, rt.revoked, rt.revoked_at,
-		       u.id, u.username, u.email, u.plan, u.github_id, u.avatar_url,
+		       u.id, u.username, u.email, u.github_id, u.avatar_url,
 		       u.created_at, u.updated_at
 		FROM refresh_tokens rt
 		JOIN users u ON u.id = rt.user_id
@@ -137,7 +135,7 @@ func (s *Service) RotateRefreshToken(ctx context.Context, rawToken string) (*mod
 		tokenHash,
 	).Scan(
 		&rt.ID, &rt.UserID, &rt.ExpiresAt, &rt.Revoked, &revokedAt,
-		&user.ID, &user.Username, &user.Email, &user.Plan, &user.GitHubID, &user.AvatarURL,
+		&user.ID, &user.Username, &user.Email, &user.GitHubID, &user.AvatarURL,
 		&user.CreatedAt, &user.UpdatedAt,
 	)
 	if err != nil {
@@ -277,18 +275,18 @@ func FetchGitHubUser(ctx context.Context, accessToken string) (*GitHubUser, erro
 func UpsertUser(ctx context.Context, database *db.DB, ghUser *GitHubUser) (*model.User, error) {
 	var user model.User
 	err := database.QueryRowContext(ctx, `
-		INSERT INTO users (id, github_id, username, email, avatar_url, plan, created_at, updated_at)
-		VALUES ($1, $2, $3, $4, $5, 'free', NOW(), NOW())
+		INSERT INTO users (id, github_id, username, email, avatar_url, created_at, updated_at)
+		VALUES ($1, $2, $3, $4, $5, NOW(), NOW())
 		ON CONFLICT (github_id) DO UPDATE
 		SET username = EXCLUDED.username,
 		    email = EXCLUDED.email,
 		    avatar_url = EXCLUDED.avatar_url,
 		    updated_at = NOW()
-		RETURNING id, github_id, username, email, avatar_url, plan, created_at, updated_at`,
+		RETURNING id, github_id, username, email, avatar_url, created_at, updated_at`,
 		uuid.New().String(), ghUser.ID, ghUser.Login, ghUser.Email, ghUser.AvatarURL,
 	).Scan(
 		&user.ID, &user.GitHubID, &user.Username, &user.Email,
-		&user.AvatarURL, &user.Plan, &user.CreatedAt, &user.UpdatedAt,
+		&user.AvatarURL, &user.CreatedAt, &user.UpdatedAt,
 	)
 	return &user, err
 }
