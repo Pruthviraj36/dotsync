@@ -489,6 +489,41 @@ func (c *Client) AddTeamMember(slug, username, role string) error {
 	return decodeResponse(resp, nil)
 }
 
+type KeyEnvelope struct {
+	RecipientPubKey string `json:"recipient_pubkey"`
+	EphemeralPubKey string `json:"ephemeral_pubkey"`
+	Nonce           []byte `json:"nonce"`
+	Ciphertext      []byte `json:"ciphertext"`
+}
+
+func (c *Client) SetEncryptionPublicKey(publicKey string) error {
+	resp, err := c.do("PUT", "/api/me/encryption-key", map[string]string{"public_key": publicKey})
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
+func (c *Client) GetProjectKeyEnvelope(slug string) (*KeyEnvelope, error) {
+	resp, err := c.do("GET", fmt.Sprintf("/api/projects/%s/key-envelope", url.PathEscape(slug)), nil)
+	if err != nil {
+		return nil, err
+	}
+	var envelope KeyEnvelope
+	if err := decodeResponse(resp, &envelope); err != nil {
+		return nil, err
+	}
+	return &envelope, nil
+}
+
+func (c *Client) PutProjectKeyEnvelope(slug, username string, envelope KeyEnvelope) error {
+	resp, err := c.do("PUT", fmt.Sprintf("/api/projects/%s/key-envelopes/%s", url.PathEscape(slug), url.PathEscape(username)), envelope)
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
 func (c *Client) Logout() error {
 	resp, err := c.do("POST", "/api/auth/logout", map[string]string{})
 	if err != nil {

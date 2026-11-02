@@ -621,7 +621,7 @@ func (s *TeamService) InviteMember(ctx context.Context, projectID, userID, role,
 // ListMembers returns all team members for a project with their usernames and roles.
 func (s *TeamService) ListMembers(ctx context.Context, projectID string) ([]map[string]any, error) {
 	rows, err := s.db.QueryContext(ctx, `
-		SELECT u.username, u.avatar_url, tm.role, tm.created_at
+		SELECT u.username, u.avatar_url, u.x25519_pubkey, tm.role, tm.created_at
 		FROM team_members tm
 		JOIN users u ON u.id = tm.user_id
 		WHERE tm.project_id = $1
@@ -640,14 +640,15 @@ func (s *TeamService) ListMembers(ctx context.Context, projectID string) ([]map[
 
 	var members []map[string]any
 	for rows.Next() {
-		var username, avatarURL, role string
+		var username, avatarURL, publicKey, role string
 		var createdAt time.Time
-		if err := rows.Scan(&username, &avatarURL, &role, &createdAt); err != nil {
+		if err := rows.Scan(&username, &avatarURL, &publicKey, &role, &createdAt); err != nil {
 			return nil, err
 		}
 		members = append(members, map[string]any{
 			"username":   username,
 			"avatar_url": avatarURL,
+			"public_key": publicKey,
 			"role":       role,
 			"joined_at":  createdAt,
 		})
