@@ -10,10 +10,11 @@ import (
 var rootCmd = &cobra.Command{
 	Use:   "dotsync",
 	Short: "Sync .env secrets securely across your team",
-	Long: `DotSync — end-to-end encrypted secret sync for dev teams.
+	Long: `DotSync — client-encrypted secret sync for dev teams.
 
-Secrets are encrypted on your machine before they ever reach the server.
-The server only stores encrypted blobs — it never sees your raw values.
+Secrets are encrypted on your machine before they reach the server.
+The server stores encrypted blobs and an encrypted project password used for
+team-assisted key distribution. This is not a zero-knowledge design.
 
 Get started:
   dotsync login       Authenticate with GitHub
