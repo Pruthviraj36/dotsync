@@ -1137,6 +1137,7 @@ func (h *ServiceTokenHandler) Create(w http.ResponseWriter, r *http.Request) {
 		"env":        record.Env,
 		"name":       record.Name,
 		"created_at": record.CreatedAt,
+		"expires_at": record.ExpiresAt,
 	})
 }
 

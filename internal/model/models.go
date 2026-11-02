@@ -82,6 +82,7 @@ type ServiceToken struct {
 	TokenHash  string     `db:"token_hash"   json:"-"`
 	CreatedBy  string     `db:"created_by"   json:"created_by"`
 	CreatedAt  time.Time  `db:"created_at"   json:"created_at"`
+	ExpiresAt  time.Time  `db:"expires_at"   json:"expires_at"`
 	LastUsedAt *time.Time `db:"last_used_at" json:"last_used_at,omitempty"`
 }
 

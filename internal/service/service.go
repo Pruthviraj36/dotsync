@@ -795,6 +795,7 @@ func (s *ServiceTokenService) Create(ctx context.Context, projectID, env, name, 
 		TokenHash: hash,
 		CreatedBy: createdBy,
 		CreatedAt: time.Now(),
+		ExpiresAt: time.Now().Add(90 * 24 * time.Hour),
 	}
 	return rawToken, record, nil
 }
@@ -802,7 +803,7 @@ func (s *ServiceTokenService) Create(ctx context.Context, projectID, env, name, 
 // List returns all service tokens for a project (without hashes).
 func (s *ServiceTokenService) List(ctx context.Context, projectID string) ([]model.ServiceToken, error) {
 	rows, err := s.db.QueryContext(ctx,
-		`SELECT id, project_id, env, name, created_by, created_at, last_used_at
+		`SELECT id, project_id, env, name, created_by, created_at, expires_at, last_used_at
 		 FROM service_tokens WHERE project_id = $1 ORDER BY created_at DESC`,
 		projectID,
 	)
@@ -814,7 +815,7 @@ func (s *ServiceTokenService) List(ctx context.Context, projectID string) ([]mod
 	var tokens []model.ServiceToken
 	for rows.Next() {
 		var t model.ServiceToken
-		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Env, &t.Name, &t.CreatedBy, &t.CreatedAt, &t.LastUsedAt); err != nil {
+		if err := rows.Scan(&t.ID, &t.ProjectID, &t.Env, &t.Name, &t.CreatedBy, &t.CreatedAt, &t.ExpiresAt, &t.LastUsedAt); err != nil {
 			return nil, err
 		}
 		tokens = append(tokens, t)
@@ -856,7 +857,7 @@ func (s *ServiceTokenService) LookupByRawToken(ctx context.Context, rawToken str
 		)
 		SELECT id, project_id, env, name, created_by, created_at, last_used_at
 		FROM service_tokens
-		WHERE token_hash = $1`,
+		WHERE token_hash = $1 AND expires_at > NOW()`,
 		hash,
 	).Scan(&t.ID, &t.ProjectID, &t.Env, &t.Name, &t.CreatedBy, &t.CreatedAt, &t.LastUsedAt)
 	if err != nil {
