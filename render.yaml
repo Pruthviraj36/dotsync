@@ -48,8 +48,11 @@ services:
       - key: SERVER_MASTER_KEY
         generateValue: true     # 32-byte hex key used to encrypt project passwords at rest
                                  # (server-side; see internal/service.PasswordService).
-                                 # Never change this after the first password is stored, or
-                                 # existing project passwords become undecryptable.
+                                 # Use SERVER_MASTER_KEYS for staged rotation.
+      - key: SERVER_MASTER_KEYS
+        sync: false              # version:hex entries for staged master-key rotation
+      - key: SERVER_MASTER_KEY_VERSION
+        value: "1"              # active key version for new password writes
 
       - key: GITHUB_CLIENT_ID
         sync: false             # set in Render dashboard

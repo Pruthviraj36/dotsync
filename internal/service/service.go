@@ -401,6 +401,27 @@ func NewPasswordService(database *db.DB, masterKey []byte) *PasswordService {
 	}
 }
 
+// NewPasswordServiceWithKeys creates a password service with an explicit key
+// ring. currentVersion is used for all newly stored passwords.
+func NewPasswordServiceWithKeys(database *db.DB, keys map[int][]byte, currentVersion int) (*PasswordService, error) {
+	if currentVersion <= 0 {
+		return nil, fmt.Errorf("current key version must be positive")
+	}
+	if len(keys) == 0 || len(keys[currentVersion]) == 0 {
+		return nil, fmt.Errorf("current key version %d is missing", currentVersion)
+	}
+	for version, key := range keys {
+		if version <= 0 || len(key) != 32 {
+			return nil, fmt.Errorf("key version %d must contain a 32-byte key", version)
+		}
+	}
+	return &PasswordService{
+		db:                database,
+		keyVersions:       keys,
+		currentKeyVersion: currentVersion,
+	}, nil
+}
+
 // AddKeyVersion adds a new master key version. This is called during key rotation.
 // All subsequent SetPassword calls will use this new version.
 // Old passwords remain with their original version_key and can still be decrypted.

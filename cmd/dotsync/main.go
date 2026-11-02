@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/hex"
+	"fmt"
 	"log"
 	"net/http"
 	"os"
@@ -77,12 +78,17 @@ func main() {
 	serviceTokenSvc := service.NewServiceTokenService(database)
 
 	// SERVER_MASTER_KEY must be exactly 64 hex chars (32 bytes / AES-256).
-	// Generate: openssl rand -hex 32
-	masterKey, err := hex.DecodeString(mustEnv("SERVER_MASTER_KEY"))
-	if err != nil || len(masterKey) != 32 {
-		log.Fatal("SERVER_MASTER_KEY must be a 64-character hex string — generate with: openssl rand -hex 32")
+	// Generate: openssl rand -hex 32. For rotation, set
+	// SERVER_MASTER_KEYS to comma-separated version:hex entries, for example
+	// "1:old-key,2:new-key", and set SERVER_MASTER_KEY_VERSION=2.
+	keys, currentVersion, err := loadMasterKeys()
+	if err != nil {
+		log.Fatalf("invalid server master key configuration: %v", err)
 	}
-	passwordSvc := service.NewPasswordService(database, masterKey)
+	passwordSvc, err := service.NewPasswordServiceWithKeys(database, keys, currentVersion)
+	if err != nil {
+		log.Fatalf("invalid server master key configuration: %v", err)
+	}
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
 	authHandler := handler.NewAuthHandler(authSvc, database)
@@ -246,6 +252,50 @@ func mustEnv(key string) string {
 		log.Fatalf("required env var %s is not set — see .env.example", key)
 	}
 	return v
+}
+
+func loadMasterKeys() (map[int][]byte, int, error) {
+	raw := strings.TrimSpace(os.Getenv("SERVER_MASTER_KEYS"))
+	if raw == "" {
+		key, err := hex.DecodeString(mustEnv("SERVER_MASTER_KEY"))
+		if err != nil || len(key) != 32 {
+			return nil, 0, fmt.Errorf("SERVER_MASTER_KEY must be a 64-character hex string")
+		}
+		return map[int][]byte{1: key}, 1, nil
+	}
+
+	keys := make(map[int][]byte)
+	for _, entry := range strings.Split(raw, ",") {
+		parts := strings.SplitN(strings.TrimSpace(entry), ":", 2)
+		if len(parts) != 2 {
+			return nil, 0, fmt.Errorf("SERVER_MASTER_KEYS entries must use version:hex format")
+		}
+		version, err := strconv.Atoi(strings.TrimSpace(parts[0]))
+		if err != nil || version <= 0 {
+			return nil, 0, fmt.Errorf("invalid master key version %q", parts[0])
+		}
+		key, err := hex.DecodeString(strings.TrimSpace(parts[1]))
+		if err != nil || len(key) != 32 {
+			return nil, 0, fmt.Errorf("master key version %d must be 64 hex characters", version)
+		}
+		if _, exists := keys[version]; exists {
+			return nil, 0, fmt.Errorf("duplicate master key version %d", version)
+		}
+		keys[version] = key
+	}
+
+	currentVersion := 1
+	if configured := strings.TrimSpace(os.Getenv("SERVER_MASTER_KEY_VERSION")); configured != "" {
+		var err error
+		currentVersion, err = strconv.Atoi(configured)
+		if err != nil || currentVersion <= 0 {
+			return nil, 0, fmt.Errorf("invalid SERVER_MASTER_KEY_VERSION %q", configured)
+		}
+	}
+	if _, ok := keys[currentVersion]; !ok {
+		return nil, 0, fmt.Errorf("current master key version %d is not configured", currentVersion)
+	}
+	return keys, currentVersion, nil
 }
 
 // requireEnv checks all vars at startup and prints every missing one at once.
