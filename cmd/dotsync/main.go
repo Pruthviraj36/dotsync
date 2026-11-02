@@ -85,9 +85,12 @@ func main() {
 	if err != nil {
 		log.Fatalf("invalid server master key configuration: %v", err)
 	}
-	passwordSvc, err := service.NewPasswordServiceWithKeys(database, keys, currentVersion)
-	if err != nil {
-		log.Fatalf("invalid server master key configuration: %v", err)
+	var passwordSvc *service.PasswordService
+	if keys != nil {
+		passwordSvc, err = service.NewPasswordServiceWithKeys(database, keys, currentVersion)
+		if err != nil {
+			log.Fatalf("invalid server master key configuration: %v", err)
+		}
 	}
 
 	// ── Handlers ─────────────────────────────────────────────────────────────
@@ -261,7 +264,11 @@ func mustEnv(key string) string {
 func loadMasterKeys() (map[int][]byte, int, error) {
 	raw := strings.TrimSpace(os.Getenv("SERVER_MASTER_KEYS"))
 	if raw == "" {
-		key, err := hex.DecodeString(mustEnv("SERVER_MASTER_KEY"))
+		configured := strings.TrimSpace(os.Getenv("SERVER_MASTER_KEY"))
+		if configured == "" {
+			return nil, 0, nil
+		}
+		key, err := hex.DecodeString(configured)
 		if err != nil || len(key) != 32 {
 			return nil, 0, fmt.Errorf("SERVER_MASTER_KEY must be a 64-character hex string")
 		}

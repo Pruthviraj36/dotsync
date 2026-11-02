@@ -55,16 +55,15 @@ That's it for most use cases.
 ## How encryption works
 
 1. Your `.env` is encrypted with **AES-256-GCM** on your machine
-2. The key is derived from your project password using **Argon2id** (64MB, 3 iterations)
-3. Ciphertext is bound to its project and environment with GCM additional authenticated data (AAD), so a server cannot replay a `dev` blob into `production`
-4. Only the ciphertext travels to the server
+2. New projects use a random 32-byte project key stored encrypted in your local device key store
+3. Each member receives the project key in an X25519-wrapped envelope; the server stores only public keys, envelopes, and ciphertext
+4. Ciphertext is bound to its project and environment with GCM additional authenticated data (AAD)
 5. Every push is signed with an **Ed25519** machine key
 6. Each signed version stores the Ed25519 public-key snapshot used to create it
 7. JWTs are short-lived with **refresh token rotation** and replay detection
 
-The server does not receive plaintext `.env` contents, but an operator with the server master key can decrypt stored project passwords. Protect `SERVER_MASTER_KEY` as a production secret.
-
-Rotating the project password with `dotsync password rotate` does not re-encrypt existing versions automatically — re-push the environments you want re-encrypted (or keep using `DOTSYNC_PASSWORD` with the old password for old versions).
+Legacy password-encrypted projects remain supported for migration. They use the optional
+`SERVER_MASTER_KEY`; new projects do not require it.
 
 ---
 
@@ -149,7 +148,9 @@ dotsync integrate docker      # works with podman too
 dotsync integrate shell       # bash, zsh, fish
 ```
 
-Each command creates a scoped service token and shows exactly two steps to complete the integration. No README-length output.
+Each command creates a scoped service token and displays `DOTSYNC_TOKEN` plus the
+separate `DOTSYNC_PROJECT_KEY` needed to decrypt E2EE secrets in CI. Store them as
+independent CI secrets; never combine or commit them.
 
 ---
 
@@ -161,7 +162,8 @@ dotsync team add alice
 dotsync team add bob --role viewer
 ```
 
-They run `dotsync init` with your project slug — password is fetched automatically, no manual sharing needed.
+They run `dotsync init` with your project slug. Their device public key is registered,
+then the owner publishes the project-key envelope for that device.
 
 Roles: `owner` > `admin` > `member` > `viewer`
 
@@ -218,12 +220,12 @@ verified. They are ordered by security and operational impact:
 1. **Complete team key lifecycle:** wrap the project key for newly added members,
    rotate the project key when a member is removed, revoke old envelopes, and
    define how historical versions are handled.
-2. **Define CI/CD key delivery:** service tokens can retrieve ciphertext, but they
-   need a separate machine identity and project-key envelope before they can
-   decrypt project-key-encrypted secrets.
-3. **Retire server-held project passwords:** new projects should not prompt for,
-   upload, or fetch a shared password. Keep the legacy endpoint only as an
-   explicit migration path until existing projects are upgraded.
+2. ~~**Define CI/CD key delivery**~~ — completed with `DOTSYNC_PROJECT_KEY`;
+   service tokens retrieve ciphertext while the separately scoped project key is
+   provided by the CI secret store.
+3. ~~**Retire server-held project passwords for new projects**~~ — completed;
+   new projects use random project keys and the password route is legacy-only.
+   Remaining work is migrating existing projects.
 4. **Make project initialization atomic or resumable:** a failure during project,
    identity, envelope, or local-key setup must not leave an unusable project.
 5. **Add device-key lifecycle management:** support replacing a lost or rotated
@@ -257,7 +259,8 @@ Required:
 
 ```bash
 DATABASE_URL=postgres://user:pass@host:5432/dbname
-JWT_SECRET=                          # openssl rand -hex 32 (>= 32 bytes, != SERVER_MASTER_KEY)
+JWT_SECRET=                          # openssl rand -hex 32 (>= 32 bytes)
+# Optional: only required while legacy password-encrypted projects are in use.
 SERVER_MASTER_KEY=                   # openssl rand -hex 32
 # Optional rotation ring: SERVER_MASTER_KEYS=1:old-key,2:new-key
 # and SERVER_MASTER_KEY_VERSION=2
@@ -352,8 +355,8 @@ The workflow refuses to publish when `go.mod`/`go.sum` are untidy, `go vet` or `
 
 ## Security
 
-- Client-side AES-256-GCM encryption; the server stores an encrypted project password for team-assisted distribution
-- AES-256-GCM encryption + Argon2id key derivation
+- Client-side AES-256-GCM encryption with per-project random keys and X25519 member envelopes
+- Legacy password encryption + Argon2id key derivation remains available only for migration
 - AES-GCM AAD binds every ciphertext to its project + environment (and stored passwords to their project), so blobs cannot be relocated server-side
 - Ed25519 push signatures with per-version signer-key snapshots
 - Short-lived JWTs + refresh token rotation with replay detection (20s grace window for concurrent client refreshes)
@@ -363,7 +366,10 @@ The workflow refuses to publish when `go.mod`/`go.sum` are untidy, `go vet` or `
 - Local dashboard requests require a per-launch session token and loopback host
 - Container image runs as an unprivileged user with no writable filesystem
 
-The project password is intentionally server-assisted for team convenience. A server operator with `SERVER_MASTER_KEY` can decrypt stored project passwords, so this implementation is encrypted-at-rest and client-encrypted, not zero-knowledge end-to-end encryption. Removing a team member does not revoke secrets they already downloaded; rotate affected upstream credentials separately.
+New projects are true end-to-end encrypted: the server cannot decrypt project keys or
+secret ciphertext. Legacy password projects remain server-assisted until migrated.
+Removing a team member rotates current environment heads; previously downloaded or
+historical versions may still be accessible and upstream credentials should be rotated.
 
 Found a security issue? Email the maintainer directly. Do not open a public GitHub issue.
 

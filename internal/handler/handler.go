@@ -943,6 +943,10 @@ func NewPasswordHandler(
 
 // PUT /api/projects/{slug}/password — legacy password migration endpoint
 func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
+	if h.passwordSvc == nil {
+		http.Error(w, "legacy password support is disabled", http.StatusGone)
+		return
+	}
 	if mw.IsServiceTokenRequest(r.Context()) {
 		writeError(w, http.StatusForbidden, "service tokens cannot modify passwords")
 		return
@@ -995,6 +999,10 @@ func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
 
 // GET /api/projects/{slug}/password — legacy password migration endpoint
 func (h *PasswordHandler) Get(w http.ResponseWriter, r *http.Request) {
+	if h.passwordSvc == nil {
+		http.Error(w, "legacy password support is disabled", http.StatusGone)
+		return
+	}
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
 

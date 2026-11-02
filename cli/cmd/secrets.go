@@ -25,6 +25,13 @@ func localPullStateKey(env, outputFile string) string {
 }
 
 func resolveProjectKey(client *api.Client, slug string) ([]byte, error) {
+	if encoded := os.Getenv("DOTSYNC_PROJECT_KEY"); encoded != "" {
+		projectKey, err := hex.DecodeString(encoded)
+		if err != nil || len(projectKey) != dotsyncCrypto.ProjectKeySize {
+			return nil, fmt.Errorf("DOTSYNC_PROJECT_KEY must be 64 hexadecimal characters")
+		}
+		return projectKey, nil
+	}
 	if key, err := identity.LoadProjectKey(slug); err == nil {
 		return key, nil
 	}

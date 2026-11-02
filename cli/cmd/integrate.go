@@ -10,6 +10,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/identity"
 )
 
 func integrateCmd() *cobra.Command {
@@ -52,6 +53,12 @@ func showToken(token, platform, env string) {
 	fmt.Printf(" TOKEN: %s\n", bold(token))
 	blank()
 	fmt.Println(warn("Add this token to your secret store as DOTSYNC_TOKEN. It is displayed only once."))
+	if cfg, err := config.LoadProject(); err == nil {
+		if key, keyErr := identity.LoadProjectKey(cfg.ProjectSlug); keyErr == nil {
+			fmt.Printf(" PROJECT KEY: %s\n", bold(fmt.Sprintf("%x", key)))
+			fmt.Println(warn("Add this separately as DOTSYNC_PROJECT_KEY. Never commit or combine it with DOTSYNC_TOKEN."))
+		}
+	}
 	blank()
 }
 
