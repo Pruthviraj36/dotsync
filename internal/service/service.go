@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"strings"
 	"time"
 
 	"github.com/Pruthviraj36/dotsync/internal/crypto"
@@ -550,6 +551,13 @@ func (s *TeamService) GetMemberEncryptionKey(ctx context.Context, projectID, use
 
 // StoreKeyEnvelope replaces the caller's opaque envelope for one project member.
 func (s *TeamService) StoreKeyEnvelope(ctx context.Context, projectID, userID, recipientPublicKey, ephemeralPublicKey string, nonce, ciphertext []byte) error {
+	var registeredPublicKey string
+	if err := s.db.QueryRowContext(ctx, `SELECT x25519_pubkey FROM users WHERE id = $1`, userID).Scan(&registeredPublicKey); err != nil {
+		return fmt.Errorf("load recipient encryption key: %w", err)
+	}
+	if registeredPublicKey == "" || !strings.EqualFold(registeredPublicKey, recipientPublicKey) {
+		return errors.New("envelope recipient key does not match registered member key")
+	}
 	_, err := s.db.ExecContext(ctx, `
 		INSERT INTO project_key_envelopes
 			(id, project_id, user_id, recipient_pubkey, ephemeral_pubkey, nonce, encrypted_key)
