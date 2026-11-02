@@ -134,6 +134,10 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 			if err != nil {
 				return fmt.Errorf("create dashboard session: %w", err)
 			}
+			cspNonce, err := serverCrypto.GenerateRandomToken(16)
+			if err != nil {
+				return fmt.Errorf("create dashboard CSP nonce: %w", err)
+			}
 			mux := http.NewServeMux()
 
 			mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
@@ -143,12 +147,13 @@ on your machine, same as the CLI. The server never sees plaintext.`,
 				}
 				w.Header().Set("Content-Type", "text/html; charset=utf-8")
 				w.Header().Set("Content-Security-Policy",
-					"default-src 'self'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
+					"default-src 'self'; script-src 'nonce-"+cspNonce+"'; style-src 'unsafe-inline'; img-src 'self' data: https://avatars.githubusercontent.com; connect-src 'self'; font-src 'self' data:; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'none'")
 				w.Header().Set("X-Frame-Options", "DENY")
 				w.Header().Set("X-Content-Type-Options", "nosniff")
 				w.Header().Set("Referrer-Policy", "no-referrer")
-				sessionScript := fmt.Sprintf(`<meta name="dotsync-session" content="%s"><script>(function(){const token="%s";const nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};const headers=new Headers(init.headers||{});headers.set("X-DotSync-Session",token);return nativeFetch(input,Object.assign({},init,{headers:headers}))}})();</script>`, sessionToken, sessionToken)
-				dashboard := strings.Replace(dashboardHTML, "</head>", sessionScript+"</head>", 1)
+				sessionScript := fmt.Sprintf(`<meta name="dotsync-session" content="%s"><script nonce="%s">(function(){const token="%s";const nativeFetch=window.fetch.bind(window);window.fetch=function(input,init){init=init||{};const headers=new Headers(init.headers||{});headers.set("X-DotSync-Session",token);return nativeFetch(input,Object.assign({},init,{headers:headers}))}})();</script>`, sessionToken, cspNonce, sessionToken)
+				dashboard := strings.ReplaceAll(dashboardHTML, "<script>", `<script nonce="`+cspNonce+`">`)
+				dashboard = strings.Replace(dashboard, "</head>", sessionScript+"</head>", 1)
 				w.Write([]byte(dashboard))
 			})
 
