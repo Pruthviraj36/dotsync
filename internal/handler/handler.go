@@ -568,6 +568,82 @@ func NewTeamHandler(ps *service.ProjectService, ts *service.TeamService, databas
 	return &TeamHandler{projectSvc: ps, teamSvc: ts, db: database, auditSvc: auditSvc}
 }
 
+// PUT /api/me/encryption-key
+func (h *TeamHandler) SetEncryptionKey(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	var req struct {
+		PublicKey string `json:"public_key"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil || req.PublicKey == "" {
+		writeError(w, http.StatusBadRequest, "public_key required")
+		return
+	}
+	if err := h.teamSvc.SetEncryptionPublicKey(r.Context(), claims.UserID, req.PublicKey); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save encryption key")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "encryption key saved"})
+}
+
+// GET /api/projects/{slug}/key-envelope
+func (h *TeamHandler) GetKeyEnvelope(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	proj, err := h.projectSvc.GetBySlug(r.Context(), chi.URLParam(r, "slug"), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	envelope, err := h.teamSvc.GetKeyEnvelope(r.Context(), proj.ID, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project key envelope not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, envelope)
+}
+
+// PUT /api/projects/{slug}/key-envelopes/{username}
+func (h *TeamHandler) PutKeyEnvelope(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage key envelopes")
+		return
+	}
+	claims := auth.ClaimsFromCtx(r.Context())
+	proj, err := h.projectSvc.GetBySlug(r.Context(), chi.URLParam(r, "slug"), claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	role, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (role != "owner" && role != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can manage key envelopes")
+		return
+	}
+	var targetID string
+	err = h.db.QueryRowContext(r.Context(), `
+		SELECT u.id FROM users u JOIN team_members tm ON tm.user_id = u.id
+		WHERE tm.project_id = $1 AND u.username = $2`, proj.ID, chi.URLParam(r, "username")).Scan(&targetID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project member not found")
+		return
+	}
+	var req struct {
+		RecipientPubKey string `json:"recipient_pubkey"`
+		EphemeralPubKey string `json:"ephemeral_pubkey"`
+		Nonce           []byte `json:"nonce"`
+		Ciphertext      []byte `json:"ciphertext"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 16*1024)).Decode(&req); err != nil ||
+		req.RecipientPubKey == "" || req.EphemeralPubKey == "" || len(req.Nonce) == 0 || len(req.Ciphertext) == 0 {
+		writeError(w, http.StatusBadRequest, "invalid key envelope")
+		return
+	}
+	if err := h.teamSvc.StoreKeyEnvelope(r.Context(), proj.ID, targetID, req.RecipientPubKey, req.EphemeralPubKey, req.Nonce, req.Ciphertext); err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to save key envelope")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "key envelope saved"})
+}
+
 // POST /api/projects/{slug}/team
 func (h *TeamHandler) AddMember(w http.ResponseWriter, r *http.Request) {
 	if mw.IsServiceTokenRequest(r.Context()) {

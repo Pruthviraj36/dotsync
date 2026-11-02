@@ -526,6 +526,58 @@ type TeamService struct {
 	db *db.DB
 }
 
+// SetEncryptionPublicKey registers the caller's X25519 public key.
+func (s *TeamService) SetEncryptionPublicKey(ctx context.Context, userID, publicKey string) error {
+	_, err := s.db.ExecContext(ctx, `UPDATE users SET x25519_pubkey = $1, updated_at = NOW() WHERE id = $2`, publicKey, userID)
+	return err
+}
+
+// GetMemberEncryptionKey returns a member's public key when they belong to the project.
+func (s *TeamService) GetMemberEncryptionKey(ctx context.Context, projectID, userID string) (string, error) {
+	var publicKey string
+	err := s.db.QueryRowContext(ctx, `
+		SELECT u.x25519_pubkey
+		FROM users u JOIN team_members tm ON tm.user_id = u.id
+		WHERE tm.project_id = $1 AND tm.user_id = $2`, projectID, userID).Scan(&publicKey)
+	if err != nil {
+		return "", err
+	}
+	if publicKey == "" {
+		return "", errors.New("member has not registered an encryption key")
+	}
+	return publicKey, nil
+}
+
+// StoreKeyEnvelope replaces the caller's opaque envelope for one project member.
+func (s *TeamService) StoreKeyEnvelope(ctx context.Context, projectID, userID, recipientPublicKey, ephemeralPublicKey string, nonce, ciphertext []byte) error {
+	_, err := s.db.ExecContext(ctx, `
+		INSERT INTO project_key_envelopes
+			(id, project_id, user_id, recipient_pubkey, ephemeral_pubkey, nonce, encrypted_key)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
+		ON CONFLICT (project_id, user_id) DO UPDATE SET
+			recipient_pubkey = EXCLUDED.recipient_pubkey,
+			ephemeral_pubkey = EXCLUDED.ephemeral_pubkey,
+			nonce = EXCLUDED.nonce,
+			encrypted_key = EXCLUDED.encrypted_key,
+			created_at = NOW()`,
+		uuid.New().String(), projectID, userID, recipientPublicKey, ephemeralPublicKey, nonce, ciphertext)
+	return err
+}
+
+// GetKeyEnvelope retrieves the caller's opaque project-key envelope.
+func (s *TeamService) GetKeyEnvelope(ctx context.Context, projectID, userID string) (*crypto.KeyEnvelope, error) {
+	var envelope crypto.KeyEnvelope
+	err := s.db.QueryRowContext(ctx, `
+		SELECT recipient_pubkey, ephemeral_pubkey, nonce, encrypted_key
+		FROM project_key_envelopes
+		WHERE project_id = $1 AND user_id = $2`, projectID, userID).
+		Scan(&envelope.RecipientPubKey, &envelope.EphemeralPubKey, &envelope.Nonce, &envelope.Ciphertext)
+	if err != nil {
+		return nil, err
+	}
+	return &envelope, nil
+}
+
 func NewTeamService(database *db.DB) *TeamService {
 	return &TeamService{db: database}
 }

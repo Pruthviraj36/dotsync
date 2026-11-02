@@ -183,6 +183,9 @@ func main() {
 		// Team management
 		r.Post("/projects/{slug}/team", teamHandler.AddMember)
 		r.Get("/projects/{slug}/team", teamHandler.ListMembers)
+		r.Put("/me/encryption-key", teamHandler.SetEncryptionKey)
+		r.Get("/projects/{slug}/key-envelope", teamHandler.GetKeyEnvelope)
+		r.Put("/projects/{slug}/key-envelopes/{username}", teamHandler.PutKeyEnvelope)
 		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
 		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
 
