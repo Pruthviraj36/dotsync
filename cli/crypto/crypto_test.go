@@ -42,6 +42,11 @@ func TestLegacyCiphertextStillDecrypts(t *testing.T) {
 		t.Fatalf("legacy encrypt: %v", err)
 	}
 
+	got, err := DecryptEnvFileForEnv(legacyCT, legacyNonce, "a-strong-password", "my-project", "dev")
+	if err != nil {
+		t.Fatalf("legacy blob no longer decrypts: %v", err)
+	}
+
 	func TestProjectKeyEncryptionBindsEnvironment(t *testing.T) {
 		key := bytes.Repeat([]byte{7}, 32)
 		ct, nonce, err := EncryptEnvFileWithProjectKey("TOKEN=value", key, "demo", "production")
@@ -55,10 +60,6 @@ func TestLegacyCiphertextStillDecrypts(t *testing.T) {
 		if _, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "staging"); err == nil {
 			t.Fatal("ciphertext decrypted in wrong environment")
 		}
-	}
-	got, err := DecryptEnvFileForEnv(legacyCT, legacyNonce, "a-strong-password", "my-project", "dev")
-	if err != nil {
-		t.Fatalf("legacy blob no longer decrypts: %v", err)
 	}
 	if got != "OLD=1" {
 		t.Fatalf("got %q, want OLD=1", got)
