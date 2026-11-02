@@ -127,7 +127,7 @@ func (h *AuthHandler) GitHubDeviceLogin(w http.ResponseWriter, r *http.Request) 
 		return
 	}
 
-	ghUser, err := auth.FetchGitHubUser(req.GitHubAccessToken)
+	ghUser, err := auth.FetchGitHubUser(r.Context(), req.GitHubAccessToken)
 	if err != nil {
 		writeError(w, http.StatusUnauthorized, "could not verify github token")
 		return

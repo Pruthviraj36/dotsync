@@ -1,6 +1,7 @@
 package cmd
 
 import (
+	"bytes"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -42,5 +43,23 @@ func TestUISessionGuard(t *testing.T) {
 				t.Fatalf("status = %d, want %d", res.Code, test.status)
 			}
 		})
+	}
+}
+
+func TestUIPostHandlerRejectsOversizedBody(t *testing.T) {
+	handler := uiPostHandler(func(body []byte) (any, error) {
+		t.Fatal("request handler should not receive an oversized body")
+		return nil, nil
+	})
+
+	body := bytes.Repeat([]byte("x"), uiMaxBodyBytes+1)
+	req := httptest.NewRequest(http.MethodPost, "/api/test", bytes.NewReader(body))
+	req.Header.Set("Content-Type", "application/json")
+	res := httptest.NewRecorder()
+
+	handler.ServeHTTP(res, req)
+
+	if res.Code != http.StatusRequestEntityTooLarge {
+		t.Fatalf("status = %d, want %d", res.Code, http.StatusRequestEntityTooLarge)
 	}
 }

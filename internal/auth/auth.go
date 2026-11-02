@@ -235,8 +235,8 @@ type GitHubUser struct {
 }
 
 // FetchGitHubUser calls the GitHub API with an OAuth access token.
-func FetchGitHubUser(accessToken string) (*GitHubUser, error) {
-	req, err := http.NewRequest("GET", "https://api.github.com/user", nil)
+func FetchGitHubUser(ctx context.Context, accessToken string) (*GitHubUser, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, "https://api.github.com/user", nil)
 	if err != nil {
 		return nil, fmt.Errorf("create github request: %w", err)
 	}

@@ -163,12 +163,22 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 			// reach the actual process and it can clean up properly.
 			sigCh := make(chan os.Signal, 1)
 			signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM, syscall.SIGHUP)
+			done := make(chan struct{})
 			go func() {
-				for sig := range sigCh {
-					if proc.Process != nil {
-						proc.Process.Signal(sig)
+				for {
+					select {
+					case sig := <-sigCh:
+						if proc.Process != nil {
+							_ = proc.Process.Signal(sig)
+						}
+					case <-done:
+						return
 					}
 				}
+			}()
+			defer func() {
+				signal.Stop(sigCh)
+				close(done)
 			}()
 
 			fmt.Fprintln(os.Stderr, info(fmt.Sprintf("Injected %d secret(s) from %s/%s v%d into %s",
@@ -182,8 +192,6 @@ command's flags (e.g. dotsync run -- node --inspect server.js).`,
 				return err
 			}
 
-			signal.Stop(sigCh)
-			close(sigCh)
 			return nil
 		},
 	}
