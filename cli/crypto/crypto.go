@@ -61,6 +61,24 @@ func DecryptEnvFileForEnv(ciphertext, nonce []byte, password, projectSlug, env s
 	return string(plain), nil
 }
 
+// EncryptEnvFileWithProjectKey encrypts an environment using a random project key.
+func EncryptEnvFileWithProjectKey(envContent string, projectKey []byte, projectSlug, env string) (ciphertext, nonce []byte, err error) {
+	return crypto.EncryptWithAAD(projectKey, []byte(envContent), projectKeyAAD(projectSlug, env))
+}
+
+// DecryptEnvFileWithProjectKey decrypts an environment using its random project key.
+func DecryptEnvFileWithProjectKey(ciphertext, nonce, projectKey []byte, projectSlug, env string) (string, error) {
+	plain, err := crypto.DecryptWithAAD(projectKey, ciphertext, nonce, projectKeyAAD(projectSlug, env))
+	if err != nil {
+		return "", fmt.Errorf("project-key decryption failed: %w", err)
+	}
+	return string(plain), nil
+}
+
+func projectKeyAAD(projectSlug, env string) []byte {
+	return []byte("dotsync-project-key-v1:" + strings.ToLower(strings.TrimSpace(projectSlug)) + ":" + strings.ToLower(strings.TrimSpace(env)))
+}
+
 var envKeyPattern = regexp.MustCompile(`^[A-Za-z_][A-Za-z0-9_]*$`)
 
 // ParseEnvFileStrict parses a .env file and rejects any line that is not:

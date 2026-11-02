@@ -1,6 +1,9 @@
 package cliCrypto
 
-import "testing"
+import (
+	"bytes"
+	"testing"
+)
 
 func TestEnvEncryptionRoundTrip(t *testing.T) {
 	content := "DATABASE_URL=postgres://localhost\nAPI_KEY=abc123\n"
@@ -37,6 +40,21 @@ func TestLegacyCiphertextStillDecrypts(t *testing.T) {
 	legacyCT, legacyNonce, err := EncryptEnvFile("OLD=1", "a-strong-password", "my-project")
 	if err != nil {
 		t.Fatalf("legacy encrypt: %v", err)
+	}
+
+	func TestProjectKeyEncryptionBindsEnvironment(t *testing.T) {
+		key := bytes.Repeat([]byte{7}, 32)
+		ct, nonce, err := EncryptEnvFileWithProjectKey("TOKEN=value", key, "demo", "production")
+		if err != nil {
+			t.Fatal(err)
+		}
+		got, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "production")
+		if err != nil || got != "TOKEN=value" {
+			t.Fatalf("round trip failed: %q, %v", got, err)
+		}
+		if _, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "staging"); err == nil {
+			t.Fatal("ciphertext decrypted in wrong environment")
+		}
 	}
 	got, err := DecryptEnvFileForEnv(legacyCT, legacyNonce, "a-strong-password", "my-project", "dev")
 	if err != nil {
