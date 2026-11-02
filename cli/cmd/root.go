@@ -13,8 +13,8 @@ var rootCmd = &cobra.Command{
 	Long: `DotSync — client-encrypted secret sync for dev teams.
 
 Secrets are encrypted on your machine before they reach the server.
-The server stores encrypted blobs and an encrypted project password used for
-team-assisted key distribution. This is not a zero-knowledge design.
+Project keys are wrapped for individual member devices; the server stores
+ciphertext, public keys, and opaque key envelopes.
 
 Get started:
   dotsync login       Authenticate with GitHub

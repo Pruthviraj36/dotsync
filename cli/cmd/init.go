@@ -19,8 +19,6 @@ import (
 
 var projectSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,37}[a-z0-9]$`)
 
-const minProjectPasswordLen = 12
-
 func initCmd() *cobra.Command {
 	var create bool
 	cmd := &cobra.Command{
@@ -150,21 +148,6 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		return fmt.Errorf("slug must be 2-39 characters: lowercase letters, digits, and single hyphens, starting with a letter or digit")
 	}
 
-	password, err := readPassword(" Encryption password: ")
-	if err != nil {
-		return err
-	}
-	confirm, err := readPassword(" Confirm password: ")
-	if err != nil {
-		return err
-	}
-	if confirm != password {
-		return fmt.Errorf("passwords do not match")
-	}
-	if len(password) < minProjectPasswordLen {
-		return fmt.Errorf("password must be at least %d characters — it protects every secret in this project", minProjectPasswordLen)
-	}
-
 	txRunning("creation")
 
 	proj, err := client.CreateProject(name, slug, desc)
@@ -184,12 +167,7 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if err := config.SaveProject(projCfg); err != nil {
 		return fmt.Errorf("save config: %w", err)
 	}
-	txStep(1, 3, fmt.Sprintf("Created project record '%s' on server", actualSlug))
-
-	if err := setPassword(client, actualSlug, password); err != nil {
-		return err
-	}
-	txStep(2, 3, "Encrypted and secured project password on server")
+	txStep(1, 2, fmt.Sprintf("Created project record '%s' on server", actualSlug))
 
 	_, pub, _, err := identity.Ensure()
 	if err != nil {
@@ -232,7 +210,7 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if err := identity.SaveProjectKey(actualSlug, projectKey); err != nil {
 		return fmt.Errorf("save project key: %w", err)
 	}
-	txStep(3, 3, "Initialized signing and encryption identities")
+	txStep(2, 2, "Initialized signing and encryption identities")
 
 	ensureGitignore()
 
@@ -240,7 +218,7 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 		{"Project Name", name},
 		{"Project Slug", actualSlug},
 		{"Environments", "dev, staging, production"},
-		{"Encryption", "AES-256-GCM + Argon2id"},
+		{"Encryption", "AES-256-GCM + per-device X25519 key envelopes"},
 		{"Signing", "ed25519"},
 	})
 

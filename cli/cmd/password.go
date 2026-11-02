@@ -10,7 +10,8 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/config"
 )
 
-// resolvePassword returns the E2EE encryption password for a project.
+// resolvePassword is retained only for legacy projects created before project
+// key envelopes were introduced.
 //
 // Resolution order:
 //  1. DOTSYNC_PASSWORD env var — always wins, designed for CI/CD pipelines
@@ -41,11 +42,11 @@ func resolvePassword(client *api.Client, projectSlug string) (string, error) {
 	return password, nil
 }
 
-// passwordCmd groups password lifecycle commands.
+// passwordCmd groups legacy password lifecycle commands.
 func passwordCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "password",
-		Short: "Manage the project encryption password",
+		Short: "Manage a legacy project password",
 	}
 	cmd.AddCommand(passwordRotateCmd())
 	return cmd
@@ -54,8 +55,8 @@ func passwordCmd() *cobra.Command {
 func passwordRotateCmd() *cobra.Command {
 	return &cobra.Command{
 		Use:   "rotate",
-		Short: "Change the project encryption password",
-		Long: `Sets a new encryption password for the linked project.
+		Short: "Change a legacy project password",
+		Long: `		Sets a new password for a legacy project.
 
 By default the password is stored server-side encrypted with the server's
 master key, so teammates can fetch it automatically. Existing secret
@@ -83,10 +84,6 @@ re-push after rotating if you need every environment re-encrypted.`,
 			if confirm != password {
 				return fmt.Errorf("passwords do not match")
 			}
-			if len(password) < minProjectPasswordLen {
-				return fmt.Errorf("password must be at least %d characters", minProjectPasswordLen)
-			}
-
 			client := api.New(cfg)
 			if err := setPassword(client, projCfg.ProjectSlug, password); err != nil {
 				return fmt.Errorf("rotate password: %w", err)

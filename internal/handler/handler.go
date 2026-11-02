@@ -875,7 +875,7 @@ func NewPasswordHandler(
 	return &PasswordHandler{passwordSvc: pwSvc, projectSvc: ps, teamSvc: ts, auditSvc: as}
 }
 
-// PUT /api/projects/{slug}/password — set or rotate the project password
+// PUT /api/projects/{slug}/password — legacy password migration endpoint
 func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
 	if mw.IsServiceTokenRequest(r.Context()) {
 		writeError(w, http.StatusForbidden, "service tokens cannot modify passwords")
@@ -927,7 +927,7 @@ func (h *PasswordHandler) Set(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, map[string]string{"message": "password saved"})
 }
 
-// GET /api/projects/{slug}/password — fetch the project password
+// GET /api/projects/{slug}/password — legacy password migration endpoint
 func (h *PasswordHandler) Get(w http.ResponseWriter, r *http.Request) {
 	claims := auth.ClaimsFromCtx(r.Context())
 	slug := chi.URLParam(r, "slug")
