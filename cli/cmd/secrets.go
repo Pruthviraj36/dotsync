@@ -162,6 +162,7 @@ func pullCmd() *cobra.Command {
 	var envFlag string
 	var outputFlag string
 	var forceFlag bool
+	var allowUnsignedFlag bool
 
 	cmd := &cobra.Command{
 		Use:   "pull",
@@ -245,7 +246,8 @@ never sees plaintext.`,
 			}
 			transferProgress(transferLabel, len(result.EncryptedData), len(result.EncryptedData))
 
-			// Always verify signatures if present; warn if unsigned
+			// Reject unsigned data by default. Legacy data can still be recovered
+			// explicitly, but an attacker cannot silently strip a signature.
 			verified, verifyErr := verifySignature(
 				result.EncryptedData, result.Signature, result.PushedByPubKey,
 			)
@@ -255,6 +257,9 @@ never sees plaintext.`,
 			if verified {
 				fmt.Println("  " + info(fmt.Sprintf("signature verified (@%s, ed25519)", result.PushedBy)))
 			} else if len(result.Signature) == 0 {
+				if !allowUnsignedFlag {
+					return fmt.Errorf("secret version is not signed (legacy secret pushed before signature verification was enabled)\nUse --allow-unsigned to proceed: dotsync pull --allow-unsigned")
+				}
 				fmt.Println("  " + warn("secret version is not signed (pushed before signature verification was enabled)"))
 			}
 
@@ -311,5 +316,6 @@ never sees plaintext.`,
 	cmd.Flags().StringVarP(&envFlag, "env", "e", "", "environment (dev|staging|production)")
 	cmd.Flags().StringVarP(&outputFlag, "output", "o", "", "output file path (default: .env)")
 	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "overwrite without confirmation")
+	cmd.Flags().BoolVar(&allowUnsignedFlag, "allow-unsigned", false, "allow pulling unsigned legacy secrets")
 	return cmd
 }
