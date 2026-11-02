@@ -778,6 +778,72 @@ func (h *TeamHandler) RemoveMember(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
+// PUT /api/projects/{slug}/team/{username}/key-rotation
+func (h *TeamHandler) RotateAndRemoveMember(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot manage team members")
+		return
+	}
+	claims := auth.ClaimsFromCtx(r.Context())
+	slug := chi.URLParam(r, "slug")
+	username := chi.URLParam(r, "username")
+	proj, err := h.projectSvc.GetBySlug(r.Context(), slug, claims.UserID)
+	if err != nil {
+		writeError(w, http.StatusNotFound, "project not found")
+		return
+	}
+	role, err := h.teamSvc.GetRole(r.Context(), proj.ID, claims.UserID)
+	if err != nil || (role != "owner" && role != "admin") {
+		writeError(w, http.StatusForbidden, "only owners and admins can rotate project keys")
+		return
+	}
+	var targetID string
+	if err := h.db.QueryRowContext(r.Context(), `
+		SELECT u.id FROM users u JOIN team_members tm ON tm.user_id = u.id
+		WHERE tm.project_id = $1 AND u.username = $2`, proj.ID, username).Scan(&targetID); err != nil {
+		writeError(w, http.StatusNotFound, "project member not found")
+		return
+	}
+	if role == "admin" {
+		targetRole, roleErr := h.teamSvc.GetRole(r.Context(), proj.ID, targetID)
+		if roleErr != nil || targetRole == "owner" || targetRole == "admin" {
+			writeError(w, http.StatusForbidden, "admins can only remove members and viewers")
+			return
+		}
+	}
+	var req struct {
+		Envelopes []struct {
+			Username        string `json:"username"`
+			RecipientPubKey string `json:"recipient_pubkey"`
+			EphemeralPubKey string `json:"ephemeral_pubkey"`
+			Nonce           []byte `json:"nonce"`
+			Ciphertext      []byte `json:"ciphertext"`
+		} `json:"envelopes"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 256*1024)).Decode(&req); err != nil || len(req.Envelopes) == 0 {
+		writeError(w, http.StatusBadRequest, "remaining member envelopes required")
+		return
+	}
+	envelopes := make([]service.KeyEnvelopeInput, 0, len(req.Envelopes))
+	for _, envelope := range req.Envelopes {
+		if envelope.Username == "" || envelope.RecipientPubKey == "" || envelope.EphemeralPubKey == "" ||
+			len(envelope.Nonce) == 0 || len(envelope.Ciphertext) == 0 {
+			writeError(w, http.StatusBadRequest, "invalid key envelope")
+			return
+		}
+		envelopes = append(envelopes, service.KeyEnvelopeInput{
+			Username: envelope.Username, RecipientPubKey: envelope.RecipientPubKey,
+			EphemeralPubKey: envelope.EphemeralPubKey, Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
+		})
+	}
+	if err := h.teamSvc.RotateProjectKeyAndRemoveMember(r.Context(), proj.ID, targetID, envelopes); err != nil {
+		writeError(w, http.StatusBadRequest, "key rotation failed")
+		return
+	}
+	h.auditSvc.Log(r.Context(), claims.UserID, proj.ID, "", "team_remove_key_rotation", realIP(r), map[string]any{"username": username})
+	writeJSON(w, http.StatusOK, map[string]string{"message": "member removed and project key rotated"})
+}
+
 // PATCH /api/projects/{slug}/team/{username} — update a member's role
 func (h *TeamHandler) UpdateRole(w http.ResponseWriter, r *http.Request) {
 	if mw.IsServiceTokenRequest(r.Context()) {

@@ -524,6 +524,27 @@ func (c *Client) PutProjectKeyEnvelope(slug, username string, envelope KeyEnvelo
 	return decodeResponse(resp, nil)
 }
 
+func (c *Client) RotateAndRemoveTeamMember(slug, username string, envelopes map[string]KeyEnvelope) error {
+	type namedEnvelope struct {
+		Username string `json:"username"`
+		KeyEnvelope
+	}
+	payload := struct {
+		Envelopes []namedEnvelope `json:"envelopes"`
+	}{Envelopes: make([]namedEnvelope, 0, len(envelopes))}
+	for member, envelope := range envelopes {
+		payload.Envelopes = append(payload.Envelopes, namedEnvelope{
+			Username: member, KeyEnvelope: envelope,
+		})
+	}
+	resp, err := c.do("PUT", fmt.Sprintf("/api/projects/%s/team/%s/key-rotation",
+		url.PathEscape(slug), url.PathEscape(username)), payload)
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
 func (c *Client) Logout() error {
 	resp, err := c.do("POST", "/api/auth/logout", map[string]string{})
 	if err != nil {

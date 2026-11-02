@@ -510,6 +510,14 @@ type TeamService struct {
 	db *db.DB
 }
 
+type KeyEnvelopeInput struct {
+	Username        string
+	RecipientPubKey string
+	EphemeralPubKey string
+	Nonce           []byte
+	Ciphertext      []byte
+}
+
 // SetEncryptionPublicKey registers the caller's X25519 public key.
 func (s *TeamService) SetEncryptionPublicKey(ctx context.Context, userID, publicKey string) error {
 	_, err := s.db.ExecContext(ctx, `UPDATE users SET x25519_pubkey = $1, updated_at = NOW() WHERE id = $2`, publicKey, userID)
@@ -538,6 +546,7 @@ func (s *TeamService) StoreKeyEnvelope(ctx context.Context, projectID, userID, r
 	if err := s.db.QueryRowContext(ctx, `SELECT x25519_pubkey FROM users WHERE id = $1`, userID).Scan(&registeredPublicKey); err != nil {
 		return fmt.Errorf("load recipient encryption key: %w", err)
 	}
+
 	if registeredPublicKey == "" || !strings.EqualFold(registeredPublicKey, recipientPublicKey) {
 		return errors.New("envelope recipient key does not match registered member key")
 	}
@@ -553,6 +562,53 @@ func (s *TeamService) StoreKeyEnvelope(ctx context.Context, projectID, userID, r
 			created_at = NOW()`,
 		uuid.New().String(), projectID, userID, recipientPublicKey, ephemeralPublicKey, nonce, ciphertext)
 	return err
+}
+
+// RotateProjectKeyAndRemoveMember atomically replaces remaining member
+// envelopes and revokes the target member's membership and envelope.
+func (s *TeamService) RotateProjectKeyAndRemoveMember(ctx context.Context, projectID, targetUserID string, envelopes []KeyEnvelopeInput) error {
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("begin key rotation: %w", err)
+	}
+	defer tx.Rollback()
+	if _, err := tx.ExecContext(ctx, `DELETE FROM project_key_envelopes WHERE project_id = $1 AND user_id = $2`, projectID, targetUserID); err != nil {
+		return fmt.Errorf("revoke removed member envelope: %w", err)
+	}
+	if _, err := tx.ExecContext(ctx, `DELETE FROM team_members WHERE project_id = $1 AND user_id = $2`, projectID, targetUserID); err != nil {
+		return fmt.Errorf("remove member: %w", err)
+	}
+	for _, envelope := range envelopes {
+		var userID, registeredKey string
+		if err := tx.QueryRowContext(ctx, `
+			SELECT u.id, u.x25519_pubkey
+			FROM users u JOIN team_members tm ON tm.user_id = u.id
+			WHERE tm.project_id = $1 AND u.username = $2`, projectID, envelope.Username).
+			Scan(&userID, &registeredKey); err != nil {
+			return fmt.Errorf("find remaining member %q: %w", envelope.Username, err)
+		}
+		if registeredKey == "" || !strings.EqualFold(registeredKey, envelope.RecipientPubKey) {
+			return fmt.Errorf("envelope recipient key does not match member %q", envelope.Username)
+		}
+		if _, err := tx.ExecContext(ctx, `
+			INSERT INTO project_key_envelopes
+				(id, project_id, user_id, recipient_pubkey, ephemeral_pubkey, nonce, encrypted_key)
+			VALUES ($1, $2, $3, $4, $5, $6, $7)
+			ON CONFLICT (project_id, user_id) DO UPDATE SET
+				recipient_pubkey = EXCLUDED.recipient_pubkey,
+				ephemeral_pubkey = EXCLUDED.ephemeral_pubkey,
+				nonce = EXCLUDED.nonce,
+				encrypted_key = EXCLUDED.encrypted_key,
+				created_at = NOW()`,
+			uuid.New().String(), projectID, userID, envelope.RecipientPubKey,
+			envelope.EphemeralPubKey, envelope.Nonce, envelope.Ciphertext); err != nil {
+			return fmt.Errorf("store envelope for %q: %w", envelope.Username, err)
+		}
+	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("commit key rotation: %w", err)
+	}
+	return nil
 }
 
 // GetKeyEnvelope retrieves the caller's opaque project-key envelope.

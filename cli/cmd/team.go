@@ -1,6 +1,8 @@
 package cmd
 
 import (
+	"crypto/rand"
+	"encoding/hex"
 	"fmt"
 	"strings"
 
@@ -8,6 +10,9 @@ import (
 
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
+	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
+	"github.com/Pruthviraj36/dotsync/cli/identity"
+	dotsyncCrypto "github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 func teamCmd() *cobra.Command {
@@ -121,6 +126,9 @@ with your project slug. The password is fetched automatically.`,
 			if err := client.AddTeamMember(projCfg.ProjectSlug, username, roleFlag); err != nil {
 				return err
 			}
+			if err := publishMemberEnvelope(client, projCfg.ProjectSlug, username); err != nil {
+				fmt.Println("  " + warn(fmt.Sprintf("member added, but key envelope is pending: %v", err)))
+			}
 			txStep(2, 2, fmt.Sprintf("Assigned role '%s'", roleFlag))
 
 			transactionSummary("Membership Update", [][2]string{
@@ -137,6 +145,41 @@ with your project slug. The password is fetched automatically.`,
 
 	cmd.Flags().StringVar(&roleFlag, "role", "member", "role: admin | member | viewer")
 	return cmd
+}
+
+func publishMemberEnvelope(client *api.Client, slug, username string) error {
+	projectKey, err := identity.LoadProjectKey(slug)
+	if err != nil {
+		return fmt.Errorf("load local project key: %w", err)
+	}
+	members, err := client.ListTeamMembers(slug)
+	if err != nil {
+		return fmt.Errorf("list project members: %w", err)
+	}
+	var publicKeyHex string
+	for _, member := range members {
+		if memberUsername, _ := member["username"].(string); strings.EqualFold(memberUsername, username) {
+			publicKeyHex, _ = member["public_key"].(string)
+			break
+		}
+	}
+	if publicKeyHex == "" {
+		return fmt.Errorf("member has not published an encryption key; ask them to log in and run dotsync init")
+	}
+	publicKey, err := hex.DecodeString(publicKeyHex)
+	if err != nil || len(publicKey) != dotsyncCrypto.X25519KeySize {
+		return fmt.Errorf("member encryption key is invalid")
+	}
+	envelope, err := dotsyncCrypto.WrapProjectKey(slug, projectKey, publicKey)
+	if err != nil {
+		return err
+	}
+	return client.PutProjectKeyEnvelope(slug, username, api.KeyEnvelope{
+		RecipientPubKey: envelope.RecipientPubKey,
+		EphemeralPubKey: envelope.EphemeralPubKey,
+		Nonce:           envelope.Nonce,
+		Ciphertext:      envelope.Ciphertext,
+	})
 }
 
 func teamRemoveCmd() *cobra.Command {
@@ -172,20 +215,17 @@ func teamRemoveCmd() *cobra.Command {
 			client := api.New(cfg)
 			banner("Team · Remove Member")
 			txRunning("membership revocation")
-			txStep(1, 1, fmt.Sprintf("Revoking access for @%s from %s", username, projCfg.ProjectSlug))
-
-			if err := client.RemoveTeamMember(projCfg.ProjectSlug, username); err != nil {
+			if err := rotateProjectKeyAndRemove(client, projCfg.ProjectSlug, username); err != nil {
 				return err
 			}
 
 			transactionSummary("Membership Revocation", [][2]string{
 				{"Project", projCfg.ProjectSlug},
 				{"Member", "@" + username},
-				{"Status", "Revoked"},
+				{"Status", "Revoked and key rotated"},
 			})
 
-			hint("Member may still possess locally cached secrets from prior pulls.")
-			hint("To ensure security, consider rotating secrets: dotsync push")
+			hint("Previously downloaded or historical ciphertext cannot be revoked remotely.")
 			complete(fmt.Sprintf("@%s removed from project.", username))
 			return nil
 		},
@@ -193,6 +233,77 @@ func teamRemoveCmd() *cobra.Command {
 
 	cmd.Flags().BoolVarP(&forceFlag, "force", "f", false, "skip confirmation")
 	return cmd
+}
+
+func rotateProjectKeyAndRemove(client *api.Client, slug, removedUsername string) error {
+	oldKey, err := identity.LoadProjectKey(slug)
+	if err != nil {
+		return fmt.Errorf("load local project key: %w", err)
+	}
+	newKey := make([]byte, dotsyncCrypto.ProjectKeySize)
+	if _, err := rand.Read(newKey); err != nil {
+		return fmt.Errorf("generate rotated project key: %w", err)
+	}
+	environments, err := client.ListEnvironments(slug)
+	if err != nil {
+		return fmt.Errorf("list environments: %w", err)
+	}
+	for _, environment := range environments {
+		envName := environment
+		remote, pullErr := client.Pull(slug, envName)
+		if pullErr != nil {
+			continue
+		}
+		plaintext, decryptErr := cliCrypto.DecryptEnvFileWithProjectKey(remote.EncryptedData, remote.Nonce, oldKey, slug, envName)
+		if decryptErr != nil {
+			return fmt.Errorf("decrypt %s before key rotation: %w", envName, decryptErr)
+		}
+		ciphertext, nonce, encryptErr := cliCrypto.EncryptEnvFileWithProjectKey(plaintext, newKey, slug, envName)
+		if encryptErr != nil {
+			return fmt.Errorf("encrypt %s with rotated key: %w", envName, encryptErr)
+		}
+		signature, _, publicKey, signErr := ensureIdentityAndSign(ciphertext)
+		if signErr != nil {
+			return fmt.Errorf("sign rotated %s: %w", envName, signErr)
+		}
+		if _, pushErr := client.Push(slug, envName, api.PushRequest{
+			EncryptedData: ciphertext, Nonce: nonce, Signature: signature,
+			SignerPubKey: identity.Hex(publicKey), BaseVersion: remote.Version,
+		}); pushErr != nil {
+			return fmt.Errorf("push rotated %s: %w", envName, pushErr)
+		}
+	}
+	members, err := client.ListTeamMembers(slug)
+	if err != nil {
+		return fmt.Errorf("list remaining members: %w", err)
+	}
+	envelopes := make(map[string]api.KeyEnvelope)
+	for _, member := range members {
+		memberUsername, _ := member["username"].(string)
+		if memberUsername == "" || strings.EqualFold(memberUsername, removedUsername) {
+			continue
+		}
+		publicKeyHex, _ := member["public_key"].(string)
+		publicKey, decodeErr := hex.DecodeString(publicKeyHex)
+		if decodeErr != nil || len(publicKey) != dotsyncCrypto.X25519KeySize {
+			return fmt.Errorf("remaining member @%s has no valid encryption key", memberUsername)
+		}
+		envelope, wrapErr := dotsyncCrypto.WrapProjectKey(slug, newKey, publicKey)
+		if wrapErr != nil {
+			return fmt.Errorf("wrap rotated key for @%s: %w", memberUsername, wrapErr)
+		}
+		envelopes[memberUsername] = api.KeyEnvelope{
+			RecipientPubKey: envelope.RecipientPubKey, EphemeralPubKey: envelope.EphemeralPubKey,
+			Nonce: envelope.Nonce, Ciphertext: envelope.Ciphertext,
+		}
+	}
+	if err := client.RotateAndRemoveTeamMember(slug, removedUsername, envelopes); err != nil {
+		return err
+	}
+	if err := identity.SaveProjectKey(slug, newKey); err != nil {
+		return fmt.Errorf("save rotated project key: %w", err)
+	}
+	return nil
 }
 
 func teamRoleCmd() *cobra.Command {

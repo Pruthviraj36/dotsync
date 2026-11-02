@@ -187,6 +187,7 @@ func main() {
 		r.Get("/projects/{slug}/key-envelope", teamHandler.GetKeyEnvelope)
 		r.Put("/projects/{slug}/key-envelopes/{username}", teamHandler.PutKeyEnvelope)
 		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
+		r.Put("/projects/{slug}/team/{username}/key-rotation", teamHandler.RotateAndRemoveMember)
 		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
 
 		// Audit logs
