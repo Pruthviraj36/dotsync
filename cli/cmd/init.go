@@ -152,7 +152,24 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
-		return err
+		// A prior run may have created the server record before local identity
+		// or envelope setup failed. Reuse that record so init is resumable.
+		projects, listErr := client.ListProjects()
+		if listErr != nil {
+			return err
+		}
+		var existing map[string]any
+		for _, candidate := range projects {
+			if candidateSlug, _ := candidate["slug"].(string); candidateSlug == slug {
+				existing = candidate
+				break
+			}
+		}
+		if existing == nil {
+			return err
+		}
+		fmt.Println("  " + warn(fmt.Sprintf("project %q already exists; resuming initialization", slug)))
+		proj = existing
 	}
 
 	actualSlug, _ := proj["slug"].(string)

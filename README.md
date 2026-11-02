@@ -230,8 +230,8 @@ verified. They are ordered by security and operational impact:
 3. ~~**Retire server-held project passwords for new projects**~~ — completed;
    new projects use random project keys and the password route is legacy-only.
    Remaining work is migrating existing projects.
-4. **Make project initialization atomic or resumable:** a failure during project,
-   identity, envelope, or local-key setup must not leave an unusable project.
+4. ~~**Make project initialization atomic or resumable**~~ — completed with
+   resumable initialization when the server project exists but local setup failed.
 5. **Add device-key lifecycle management:** support replacing a lost or rotated
    X25519 device key without silently stranding existing envelopes.
 6. **Align audit access documentation and behavior:** document that audit logs are
