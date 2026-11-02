@@ -10,6 +10,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	cliCrypto "github.com/Pruthviraj36/dotsync/cli/crypto"
 	"github.com/Pruthviraj36/dotsync/cli/identity"
+	dotsyncCrypto "github.com/Pruthviraj36/dotsync/internal/crypto"
 	"github.com/spf13/cobra"
 	"golang.org/x/term"
 )
@@ -21,6 +22,37 @@ func localPullDigest(data []byte) string {
 
 func localPullStateKey(env, outputFile string) string {
 	return env + "\x00" + outputFile
+}
+
+func resolveProjectKey(client *api.Client, slug string) ([]byte, error) {
+	if key, err := identity.LoadProjectKey(slug); err == nil {
+		return key, nil
+	}
+	privateKey, publicKey, _, err := identity.EnsureEncryption()
+	if err != nil {
+		return nil, err
+	}
+	if err := client.SetEncryptionPublicKey(fmt.Sprintf("%x", publicKey)); err != nil {
+		return nil, err
+	}
+	envelope, err := client.GetProjectKeyEnvelope(slug)
+	if err != nil {
+		return nil, err
+	}
+	keyEnvelope := &dotsyncCrypto.KeyEnvelope{
+		RecipientPubKey: envelope.RecipientPubKey,
+		EphemeralPubKey: envelope.EphemeralPubKey,
+		Nonce:           envelope.Nonce,
+		Ciphertext:      envelope.Ciphertext,
+	}
+	projectKey, err := dotsyncCrypto.UnwrapProjectKey(slug, keyEnvelope, privateKey)
+	if err != nil {
+		return nil, err
+	}
+	if err := identity.SaveProjectKey(slug, projectKey); err != nil {
+		return nil, err
+	}
+	return projectKey, nil
 }
 
 func pushCmd() *cobra.Command {
@@ -74,19 +106,23 @@ and uploads the ciphertext. The server never sees plaintext.`,
 				return fmt.Errorf("%s contains no KEY=VALUE pairs", envFile)
 			}
 
-			password, err := resolvePassword(client, projCfg.ProjectSlug)
-			if err != nil {
-				return err
-			}
+			projectKey, _ := resolveProjectKey(client, projCfg.ProjectSlug)
 
 			banner(fmt.Sprintf("Push Secrets — %s/%s", projCfg.ProjectSlug, env))
 			txRunning("transaction")
 
 			txStep(1, 3, fmt.Sprintf("Encrypting %d secrets with AES-256-GCM", len(keys)))
 
-			ciphertext, nonce, err := cliCrypto.EncryptEnvFileForEnv(
-				string(data), password, projCfg.ProjectSlug, env,
-			)
+			var ciphertext, nonce []byte
+			if projectKey != nil {
+				ciphertext, nonce, err = cliCrypto.EncryptEnvFileWithProjectKey(string(data), projectKey, projCfg.ProjectSlug, env)
+			} else {
+				password, passwordErr := resolvePassword(client, projCfg.ProjectSlug)
+				if passwordErr != nil {
+					return passwordErr
+				}
+				ciphertext, nonce, err = cliCrypto.EncryptEnvFileForEnv(string(data), password, projCfg.ProjectSlug, env)
+			}
 			if err != nil {
 				return fmt.Errorf("encryption failed: %w", err)
 			}
@@ -265,15 +301,17 @@ never sees plaintext.`,
 
 			txStep(2, 3, "Verifying ed25519 push signature")
 
-			password, err := resolvePassword(client, projCfg.ProjectSlug)
-			if err != nil {
-				return err
+			projectKey, keyErr := resolveProjectKey(client, projCfg.ProjectSlug)
+			var plaintext string
+			if keyErr == nil {
+				plaintext, err = cliCrypto.DecryptEnvFileWithProjectKey(result.EncryptedData, result.Nonce, projectKey, projCfg.ProjectSlug, env)
+			} else {
+				password, passwordErr := resolvePassword(client, projCfg.ProjectSlug)
+				if passwordErr != nil {
+					return keyErr
+				}
+				plaintext, err = cliCrypto.DecryptEnvFileForEnv(result.EncryptedData, result.Nonce, password, projCfg.ProjectSlug, env)
 			}
-
-			plaintext, err := cliCrypto.DecryptEnvFileForEnv(
-				result.EncryptedData, result.Nonce,
-				password, projCfg.ProjectSlug, env,
-			)
 			if err != nil {
 				return err
 			}
