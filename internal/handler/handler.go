@@ -578,6 +578,12 @@ func (h *TeamHandler) SetEncryptionKey(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, "public_key required")
 		return
 	}
+	publicKey, err := hex.DecodeString(req.PublicKey)
+	if err != nil || len(publicKey) != 32 {
+		writeError(w, http.StatusBadRequest, "public_key must be a 32-byte hex-encoded X25519 key")
+		return
+	}
+	req.PublicKey = hex.EncodeToString(publicKey)
 	if err := h.teamSvc.SetEncryptionPublicKey(r.Context(), claims.UserID, req.PublicKey); err != nil {
 		writeError(w, http.StatusInternalServerError, "failed to save encryption key")
 		return
