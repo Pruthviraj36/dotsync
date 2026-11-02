@@ -2,6 +2,7 @@ package cmd
 
 import (
 	"bufio"
+	"crypto/rand"
 	"fmt"
 	"os"
 	"regexp"
@@ -13,6 +14,7 @@ import (
 	"github.com/Pruthviraj36/dotsync/cli/api"
 	"github.com/Pruthviraj36/dotsync/cli/config"
 	"github.com/Pruthviraj36/dotsync/cli/identity"
+	dotsyncCrypto "github.com/Pruthviraj36/dotsync/internal/crypto"
 )
 
 var projectSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9-]{0,37}[a-z0-9]$`)
@@ -196,7 +198,41 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if err := client.SetPubKey(identity.Hex(pub)); err != nil {
 		fmt.Println("  " + warn("public key sync will retry on next push"))
 	}
-	txStep(3, 3, "Initialized ed25519 signing identity")
+	_, encryptionPublic, _, err := identity.EnsureEncryption()
+	if err != nil {
+		return fmt.Errorf("x25519 identity: %w", err)
+	}
+	if err := client.SetEncryptionPublicKey(fmt.Sprintf("%x", encryptionPublic)); err != nil {
+		return fmt.Errorf("publish encryption identity: %w", err)
+	}
+	projectKey := make([]byte, dotsyncCrypto.ProjectKeySize)
+	if _, err := rand.Read(projectKey); err != nil {
+		return fmt.Errorf("generate project key: %w", err)
+	}
+	envelope, err := dotsyncCrypto.WrapProjectKey(actualSlug, projectKey, encryptionPublic)
+	if err != nil {
+		return fmt.Errorf("wrap project key: %w", err)
+	}
+	me, err := client.GetMe()
+	if err != nil {
+		return fmt.Errorf("get current user: %w", err)
+	}
+	username, _ := me["username"].(string)
+	if username == "" {
+		return fmt.Errorf("current user response did not include username")
+	}
+	if err := client.PutProjectKeyEnvelope(actualSlug, username, api.KeyEnvelope{
+		RecipientPubKey: envelope.RecipientPubKey,
+		EphemeralPubKey: envelope.EphemeralPubKey,
+		Nonce:           envelope.Nonce,
+		Ciphertext:      envelope.Ciphertext,
+	}); err != nil {
+		return fmt.Errorf("upload project key envelope: %w", err)
+	}
+	if err := identity.SaveProjectKey(actualSlug, projectKey); err != nil {
+		return fmt.Errorf("save project key: %w", err)
+	}
+	txStep(3, 3, "Initialized signing and encryption identities")
 
 	ensureGitignore()
 

@@ -9,6 +9,7 @@ package identity
 import (
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"encoding/hex"
 	"fmt"
 	"os"
@@ -30,6 +31,59 @@ func privPath(dir string) string           { return filepath.Join(dir, "id_ed255
 func pubPath(dir string) string            { return filepath.Join(dir, "id_ed25519.pub") }
 func encryptionPrivPath(dir string) string { return filepath.Join(dir, "id_x25519") }
 func encryptionPubPath(dir string) string  { return filepath.Join(dir, "id_x25519.pub") }
+
+func projectKeyPath(dir, slug string) string {
+	return filepath.Join(dir, "project-key-"+hex.EncodeToString([]byte(slug)))
+}
+
+// SaveProjectKey stores a project key encrypted with this device's X25519 identity.
+func SaveProjectKey(slug string, projectKey []byte) error {
+	if len(projectKey) != dotsyncCrypto.ProjectKeySize {
+		return fmt.Errorf("project key must be %d bytes", dotsyncCrypto.ProjectKeySize)
+	}
+	privateKey, _, _, err := EnsureEncryption()
+	if err != nil {
+		return err
+	}
+	dir, err := Dir()
+	if err != nil {
+		return err
+	}
+	storageKey := sha256.Sum256(append([]byte("dotsync-local-project-key-v1:"), privateKey...))
+	ciphertext, nonce, err := dotsyncCrypto.Encrypt(storageKey[:], projectKey)
+	if err != nil {
+		return fmt.Errorf("encrypt project key: %w", err)
+	}
+	if err := os.WriteFile(projectKeyPath(dir, slug), append(nonce, ciphertext...), 0600); err != nil {
+		return fmt.Errorf("write project key: %w", err)
+	}
+	return nil
+}
+
+// LoadProjectKey loads a project key previously saved on this device.
+func LoadProjectKey(slug string) ([]byte, error) {
+	privateKey, _, _, err := EnsureEncryption()
+	if err != nil {
+		return nil, err
+	}
+	dir, err := Dir()
+	if err != nil {
+		return nil, err
+	}
+	data, err := os.ReadFile(projectKeyPath(dir, slug))
+	if err != nil {
+		return nil, fmt.Errorf("read project key: %w", err)
+	}
+	if len(data) < 12 {
+		return nil, fmt.Errorf("project key file is malformed")
+	}
+	storageKey := sha256.Sum256(append([]byte("dotsync-local-project-key-v1:"), privateKey...))
+	projectKey, err := dotsyncCrypto.Decrypt(storageKey[:], data[12:], data[:12])
+	if err != nil || len(projectKey) != dotsyncCrypto.ProjectKeySize {
+		return nil, fmt.Errorf("decrypt project key: authentication failed")
+	}
+	return projectKey, nil
+}
 
 // EnsureEncryption loads or creates the local X25519 key used to unwrap
 // project keys. It is separate from the signing identity by design.
