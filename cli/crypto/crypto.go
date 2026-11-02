@@ -11,7 +11,7 @@ import (
 
 // EncryptEnvFile encrypts the contents of a .env file for transmission.
 // The key is derived from the provided password (project password or access token)
-// + project slug (zero-knowledge).
+// + project slug. The server-assisted project password is not zero-knowledge.
 //
 // Deprecated: new code should use EncryptEnvFileForEnv, which additionally binds
 // the ciphertext to its environment via AES-GCM AAD.

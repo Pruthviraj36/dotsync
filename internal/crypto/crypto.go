@@ -21,7 +21,8 @@ const (
 )
 
 // DeriveKey derives a 256-bit AES key from a secret + project salt using Argon2id.
-// This is the client-side key derivation — the server never sees the raw key.
+// This is the client-side key derivation; the server stores the project
+// password separately for team-assisted key distribution.
 // Argon2id provides military-grade memory-hard protection against brute force.
 func DeriveKey(secret, projectID string) []byte {
 	salt := sha256.Sum256([]byte("dotsync-salt-v1:" + projectID))

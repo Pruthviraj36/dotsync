@@ -3,7 +3,7 @@ theme: jekyll-theme-minimal
 
 # Project Identity
 title: dotsync
-description: A zero-knowledge CLI to sync dotfiles and secrets natively in Go.
+description: A client-encrypted CLI to sync dotfiles and secrets natively in Go.
 
 # Build Settings
 markdown: kramdown

@@ -221,7 +221,9 @@ Required:
 ```bash
 DATABASE_URL=postgres://user:pass@host:5432/dbname
 JWT_SECRET=                          # openssl rand -hex 32 (>= 32 bytes, != SERVER_MASTER_KEY)
-SERVER_MASTER_KEY=                   # openssl rand -hex 32 (never change after first use)
+SERVER_MASTER_KEY=                   # openssl rand -hex 32
+# Optional rotation ring: SERVER_MASTER_KEYS=1:old-key,2:new-key
+# and SERVER_MASTER_KEY_VERSION=2
 GITHUB_CLIENT_ID=                    # from github.com/settings/developers
 ```
 
