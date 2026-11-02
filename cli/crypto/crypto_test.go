@@ -47,22 +47,23 @@ func TestLegacyCiphertextStillDecrypts(t *testing.T) {
 		t.Fatalf("legacy blob no longer decrypts: %v", err)
 	}
 
-	func TestProjectKeyEncryptionBindsEnvironment(t *testing.T) {
-		key := bytes.Repeat([]byte{7}, 32)
-		ct, nonce, err := EncryptEnvFileWithProjectKey("TOKEN=value", key, "demo", "production")
-		if err != nil {
-			t.Fatal(err)
-		}
-		got, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "production")
-		if err != nil || got != "TOKEN=value" {
-			t.Fatalf("round trip failed: %q, %v", got, err)
-		}
-		if _, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "staging"); err == nil {
-			t.Fatal("ciphertext decrypted in wrong environment")
-		}
-	}
 	if got != "OLD=1" {
 		t.Fatalf("got %q, want OLD=1", got)
+	}
+}
+
+func TestProjectKeyEncryptionBindsEnvironment(t *testing.T) {
+	key := bytes.Repeat([]byte{7}, 32)
+	ct, nonce, err := EncryptEnvFileWithProjectKey("TOKEN=value", key, "demo", "production")
+	if err != nil {
+		t.Fatal(err)
+	}
+	got, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "production")
+	if err != nil || got != "TOKEN=value" {
+		t.Fatalf("round trip failed: %q, %v", got, err)
+	}
+	if _, err := DecryptEnvFileWithProjectKey(ct, nonce, key, "demo", "staging"); err == nil {
+		t.Fatal("ciphertext decrypted in wrong environment")
 	}
 }
 
