@@ -193,6 +193,9 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 	if err := client.SetPubKey(identity.Hex(pub)); err != nil {
 		fmt.Println("  " + warn("public key sync will retry on next push"))
 	}
+	if err := requireReauth(client, "sensitive"); err != nil {
+		return err
+	}
 	_, encryptionPublic, _, err := identity.EnsureEncryption()
 	if err != nil {
 		return fmt.Errorf("x25519 identity: %w", err)

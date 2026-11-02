@@ -216,6 +216,60 @@ func (h *AuthHandler) Me(w http.ResponseWriter, r *http.Request) {
 	writeJSON(w, http.StatusOK, user)
 }
 
+// PUT /api/auth/password
+func (h *AuthHandler) SetAccountPassword(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	var req struct {
+		Current string `json:"current_password"`
+		Next    string `json:"password"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil {
+		writeError(w, http.StatusBadRequest, "invalid request body")
+		return
+	}
+	if err := h.authSvc.SetAccountPassword(r.Context(), claims.UserID, req.Current, req.Next); err != nil {
+		if errors.Is(err, auth.ErrInvalidPassword) {
+			writeError(w, http.StatusUnauthorized, "current account password is invalid")
+			return
+		}
+		writeError(w, http.StatusBadRequest, err.Error())
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]string{"message": "account password saved"})
+}
+
+// POST /api/auth/reauth
+func (h *AuthHandler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
+	if mw.IsServiceTokenRequest(r.Context()) {
+		writeError(w, http.StatusForbidden, "service tokens cannot reauthenticate")
+		return
+	}
+	claims := auth.ClaimsFromCtx(r.Context())
+	var req struct {
+		Password string `json:"password"`
+		Scope    string `json:"scope"`
+	}
+	if err := json.NewDecoder(http.MaxBytesReader(w, r.Body, 4096)).Decode(&req); err != nil ||
+		req.Password == "" || req.Scope != "sensitive" {
+		writeError(w, http.StatusBadRequest, "password and scope are required")
+		return
+	}
+	if err := h.authSvc.VerifyAccountPassword(r.Context(), claims.UserID, req.Password); err != nil {
+		writeError(w, http.StatusUnauthorized, "account password is invalid")
+		return
+	}
+	token, err := h.authSvc.IssueReauthToken(claims.UserID, req.Scope)
+	if err != nil {
+		writeError(w, http.StatusInternalServerError, "failed to issue reauthentication token")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]any{
+		"reauth_token": token,
+		"expires_in":   int(auth.ReauthTokenTTL.Seconds()),
+		"scope":        req.Scope,
+	})
+}
+
 // ============================================================
 // Project Handlers
 // ============================================================

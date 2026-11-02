@@ -168,6 +168,8 @@ func main() {
 			r.Use(mw.Authenticate(authSvc, serviceTokenSvc))
 			r.Post("/logout", authHandler.Logout)
 			r.Get("/me", authHandler.Me)
+			r.Put("/password", authHandler.SetAccountPassword)
+			r.Post("/reauth", authHandler.Reauthenticate)
 		})
 	})
 
@@ -184,14 +186,23 @@ func main() {
 		r.Get("/projects", projectHandler.List)
 
 		// Team management
-		r.Post("/projects/{slug}/team", teamHandler.AddMember)
+		r.Group(func(r chi.Router) {
+			r.Use(mw.RequireReauth(authSvc, "sensitive"))
+			r.Post("/projects/{slug}/team", teamHandler.AddMember)
+			r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
+			r.Put("/projects/{slug}/team/{username}/key-rotation", teamHandler.RotateAndRemoveMember)
+			r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
+		})
 		r.Get("/projects/{slug}/team", teamHandler.ListMembers)
-		r.Put("/me/encryption-key", teamHandler.SetEncryptionKey)
-		r.Get("/projects/{slug}/key-envelope", teamHandler.GetKeyEnvelope)
-		r.Put("/projects/{slug}/key-envelopes/{username}", teamHandler.PutKeyEnvelope)
-		r.Delete("/projects/{slug}/team/{username}", teamHandler.RemoveMember)
-		r.Put("/projects/{slug}/team/{username}/key-rotation", teamHandler.RotateAndRemoveMember)
-		r.Patch("/projects/{slug}/team/{username}", teamHandler.UpdateRole)
+		r.Group(func(r chi.Router) {
+			r.Use(mw.RequireReauth(authSvc, "sensitive"))
+			r.Put("/me/encryption-key", teamHandler.SetEncryptionKey)
+			r.Put("/projects/{slug}/key-envelopes/{username}", teamHandler.PutKeyEnvelope)
+		})
+		r.Group(func(r chi.Router) {
+			r.Use(mw.RequireReauth(authSvc, "sensitive"))
+			r.Get("/projects/{slug}/key-envelope", teamHandler.GetKeyEnvelope)
+		})
 
 		// Audit logs
 		r.Get("/projects/{slug}/audit", secretsHandler.AuditLogs)
@@ -202,13 +213,17 @@ func main() {
 		r.Delete("/projects/{slug}/tokens/{tokenID}", serviceTokenHandler.Revoke)
 
 		// Project password (server-side AES-256-GCM encrypted)
-		r.Put("/projects/{slug}/password", passwordHandler.Set)
-		r.Get("/projects/{slug}/password", passwordHandler.Get)
+		r.Group(func(r chi.Router) {
+			r.Use(mw.RequireReauth(authSvc, "sensitive"))
+			r.Put("/projects/{slug}/password", passwordHandler.Set)
+			r.Get("/projects/{slug}/password", passwordHandler.Get)
+		})
 
 		// Secrets — stricter rate limit
 		r.Get("/projects/{slug}/envs", projectHandler.ListEnvironments)
 		r.Route("/projects/{slug}/envs/{env}", func(r chi.Router) {
 			r.Use(mw.RateLimitByUser(100, time.Minute))
+			r.Use(mw.RequireReauth(authSvc, "sensitive"))
 			r.Post("/push", secretsHandler.Push)
 			r.Get("/pull", secretsHandler.Pull)
 			r.Get("/pull/version", secretsHandler.PullVersion)

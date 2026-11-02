@@ -22,6 +22,11 @@ For rotation, configure `SERVER_MASTER_KEYS` as comma-separated
 used for new writes. Keep the old key available while existing rows are
 re-encrypted, verify recovery from a backup, then remove the retired key.
 
+Sensitive user operations also require a separate DotSync account password.
+Only its Argon2id hash is stored. Reauthentication tokens are short-lived,
+scope-limited, and kept in CLI process memory; service-token CI requests remain
+non-interactive. There is no automatic password-reset flow.
+
 Removing a team member cannot revoke secrets they already downloaded. Rotate
 the affected upstream credentials separately.
 

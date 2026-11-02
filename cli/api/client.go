@@ -50,9 +50,10 @@ func newHTTPClient(timeout time.Duration) *http.Client {
 }
 
 type Client struct {
-	baseURL    string
-	httpClient *http.Client
-	cfg        *config.GlobalConfig
+	baseURL     string
+	httpClient  *http.Client
+	cfg         *config.GlobalConfig
+	reauthToken string
 
 	// refreshMu serialises refresh attempts. Refresh tokens rotate on every
 	// use: two goroutines refreshing at once would race, and the loser would
@@ -115,7 +116,48 @@ func (c *Client) newRequest(method, path string, body []byte) (*http.Request, er
 	req.Header.Set("Accept", "application/json")
 	req.Header.Set("User-Agent", "dotsync-cli")
 	req.Header.Set("Authorization", "Bearer "+accessToken)
+	c.refreshMu.Lock()
+	reauthToken := c.reauthToken
+	c.refreshMu.Unlock()
+	if reauthToken != "" {
+		req.Header.Set("X-DotSync-Reauth", reauthToken)
+	}
 	return req, nil
+}
+
+func (c *Client) SetAccountPassword(current, password string) error {
+	resp, err := c.do(http.MethodPut, "/api/auth/password", map[string]string{
+		"current_password": current,
+		"password":         password,
+	})
+	if err != nil {
+		return err
+	}
+	return decodeResponse(resp, nil)
+}
+
+func (c *Client) Reauthenticate(password, scope string) error {
+	resp, err := c.do(http.MethodPost, "/api/auth/reauth", map[string]string{
+		"password": password,
+		"scope":    scope,
+	})
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		ReauthToken string `json:"reauth_token"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return fmt.Errorf("decode reauthentication response: %w", err)
+	}
+	if result.ReauthToken == "" {
+		return fmt.Errorf("reauthentication response missing token")
+	}
+	c.refreshMu.Lock()
+	c.reauthToken = result.ReauthToken
+	c.refreshMu.Unlock()
+	return nil
 }
 
 // do executes an authenticated request with auto-refresh and bounded retries.

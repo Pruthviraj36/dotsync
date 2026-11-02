@@ -119,6 +119,9 @@ is registered. Then the owner publishes their project-key envelope.`,
 
 			username := strings.TrimPrefix(args[0], "@")
 			client := api.New(cfg)
+			if err := requireReauth(client, "sensitive"); err != nil {
+				return err
+			}
 
 			banner("Team · Add Member")
 			txRunning("membership transaction")
@@ -164,7 +167,11 @@ func teamRefreshKeyCmd() *cobra.Command {
 				return err
 			}
 			username := strings.TrimPrefix(args[0], "@")
-			if err := publishMemberEnvelope(api.New(cfg), projCfg.ProjectSlug, username); err != nil {
+			client := api.New(cfg)
+			if err := requireReauth(client, "sensitive"); err != nil {
+				return err
+			}
+			if err := publishMemberEnvelope(client, projCfg.ProjectSlug, username); err != nil {
 				return err
 			}
 			complete(fmt.Sprintf("Project-key envelope published for @%s.", username))
@@ -239,6 +246,9 @@ func teamRemoveCmd() *cobra.Command {
 			}
 
 			client := api.New(cfg)
+			if err := requireReauth(client, "sensitive"); err != nil {
+				return err
+			}
 			banner("Team · Remove Member")
 			txRunning("membership revocation")
 			if err := rotateProjectKeyAndRemove(client, projCfg.ProjectSlug, username); err != nil {
@@ -363,6 +373,9 @@ func teamRoleCmd() *cobra.Command {
 			}
 
 			client := api.New(cfg)
+			if err := requireReauth(client, "sensitive"); err != nil {
+				return err
+			}
 			banner("Team · Update Role")
 			txRunning("role update")
 			txStep(1, 1, fmt.Sprintf("Updating @%s role to %s", username, role))

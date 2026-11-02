@@ -105,6 +105,9 @@ and uploads the ciphertext. The server never sees plaintext.`,
 			}
 
 			client := api.New(cfg)
+			if err := requireReauth(client, "sensitive"); err != nil {
+				return err
+			}
 			keys, err := cliCrypto.ParseEnvFileStrict(string(data))
 			if err != nil {
 				return fmt.Errorf("%s: %w", envFile, err)
@@ -237,6 +240,9 @@ never sees plaintext.`,
 			}
 
 			client := api.New(cfg)
+			if err := requireReauth(client, "sensitive"); err != nil {
+				return err
+			}
 			// A pull first asks for the lightweight history head. We only fetch and
 			// decrypt the payload when the remote changed or the local file was
 			// edited outside DotSync. --force always performs a full pull.

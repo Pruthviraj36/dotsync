@@ -18,6 +18,7 @@ ciphertext, public keys, and opaque key envelopes.
 
 Get started:
   dotsync login       Authenticate with GitHub
+  dotsync account-password set
   dotsync init        Link this folder to a project
   dotsync push        Upload your .env (encrypted)
   dotsync pull        Download latest .env
@@ -56,6 +57,7 @@ func init() {
 	rootCmd.AddCommand(
 		versionCmd(),
 		loginCmd(),
+		accountPasswordCmd(),
 		logoutCmd(),
 		initCmd(),
 		pushCmd(),

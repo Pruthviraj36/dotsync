@@ -150,6 +150,27 @@ func ServiceTokenID(ctx context.Context) string {
 	return ""
 }
 
+// RequireReauth requires a short-lived account-password confirmation for a
+// sensitive operation. Non-interactive service tokens bypass this check and
+// retain their existing route and environment restrictions.
+func RequireReauth(authSvc *auth.Service, scope string) func(http.Handler) http.Handler {
+	return func(next http.Handler) http.Handler {
+		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			if IsServiceTokenRequest(r.Context()) {
+				next.ServeHTTP(w, r)
+				return
+			}
+			claims := auth.ClaimsFromCtx(r.Context())
+			token := strings.TrimSpace(r.Header.Get("X-DotSync-Reauth"))
+			if claims == nil || token == "" || authSvc.ValidateReauthToken(token, claims.UserID, scope) != nil {
+				writeError(w, http.StatusUnauthorized, "account password confirmation required")
+				return
+			}
+			next.ServeHTTP(w, r)
+		})
+	}
+}
+
 // serviceTokenPath matches exactly the read-only endpoints a CI token may use.
 // Matching the whole path (not a suffix) prevents a token from reaching a new
 // endpoint that merely happens to end in "/history" or "/password".

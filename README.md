@@ -45,6 +45,7 @@ installing anything.
 
 ```bash
 dotsync login          # authenticate with GitHub
+dotsync account-password set
 dotsync init           # link this folder to a project
 dotsync push           # encrypt and upload your .env
 dotsync pull           # download and decrypt latest .env
@@ -155,6 +156,22 @@ Each command creates a scoped service token and displays `DOTSYNC_TOKEN` plus th
 separate `DOTSYNC_PROJECT_KEY` needed to decrypt E2EE secrets in CI. Store them as
 independent CI secrets; never combine or commit them.
 
+### Sensitive-operation confirmation
+
+DotSync accounts can set a separate local account password:
+
+```bash
+dotsync account-password set
+```
+
+After it is set, the CLI asks for that password before secret push/pull,
+team changes, device-key/envelope operations, and project-key rotation. The
+server receives only the password over the authenticated TLS request, stores
+an Argon2id hash, and issues a short-lived in-memory confirmation token for
+the current CLI session. The password cannot be reset automatically; losing it
+requires manual account recovery. CI service tokens remain non-interactive and
+keep their existing scoped behavior.
+
 ---
 
 ## Teams
@@ -234,17 +251,19 @@ verified. They are ordered by security and operational impact:
    resumable initialization when the server project exists but local setup failed.
 5. **Add device-key lifecycle management:** support replacing a lost or rotated
    X25519 device key without silently stranding existing envelopes.
-6. **Align audit access documentation and behavior:** document that audit logs are
-   owner/admin-only and add pagination/export if broader audit operations are
-   required.
-7. **Finish error-path hardening:** audit all database row-scan and partial-failure
-   paths so errors are returned rather than skipped.
-8. **Improve release and deployment verification:** document migration rollout,
-   key recovery, backups, and release authenticity for self-hosted operators.
-9. **Refresh historical analysis documents:** mark old audit findings as
-   historical or update them so contributors do not mistake resolved issues for
-   active defects.
-10. **Expand integration coverage:** test owner bootstrap, member onboarding,
+6. **Complete legacy migration:** migrate existing password-encrypted projects
+    and remove the server-held password compatibility path.
+7. **Define historical-version rotation policy:** decide whether member removal
+    re-encrypts all history or explicitly retains historical access.
+8. ~~**Align audit access documentation and behavior**~~ — completed; audit logs
+    are owner/admin-only and paginated.
+9. ~~**Finish error-path hardening**~~ — completed for the previously identified
+    database row-scan paths.
+10. ~~**Improve release and deployment verification**~~ — documented in the
+     self-hosting and release sections.
+11. ~~**Refresh historical analysis documents**~~ — completed; stale audits are
+     marked historical.
+12. **Expand integration coverage:** test owner bootstrap, member onboarding,
     member removal, key rotation, service-token access, legacy migration, and
     replay/conflict behavior on PostgreSQL.
 
