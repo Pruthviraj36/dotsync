@@ -168,6 +168,7 @@ func main() {
 			r.Use(mw.Authenticate(authSvc, serviceTokenSvc))
 			r.Post("/logout", authHandler.Logout)
 			r.Get("/me", authHandler.Me)
+			r.Get("/password/status", authHandler.AccountPasswordStatus)
 			r.Put("/password", authHandler.SetAccountPassword)
 			r.Post("/reauth", authHandler.Reauthenticate)
 		})

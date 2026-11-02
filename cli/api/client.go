@@ -136,6 +136,21 @@ func (c *Client) SetAccountPassword(current, password string) error {
 	return decodeResponse(resp, nil)
 }
 
+func (c *Client) AccountPasswordSet() (bool, error) {
+	resp, err := c.do(http.MethodGet, "/api/auth/password/status", nil)
+	if err != nil {
+		return false, err
+	}
+	defer resp.Body.Close()
+	var result struct {
+		Set bool `json:"set"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return false, fmt.Errorf("decode account password status: %w", err)
+	}
+	return result.Set, nil
+}
+
 func (c *Client) Reauthenticate(password, scope string) error {
 	resp, err := c.do(http.MethodPost, "/api/auth/reauth", map[string]string{
 		"password": password,

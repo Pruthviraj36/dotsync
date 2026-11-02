@@ -238,6 +238,20 @@ func (h *AuthHandler) SetAccountPassword(w http.ResponseWriter, r *http.Request)
 	writeJSON(w, http.StatusOK, map[string]string{"message": "account password saved"})
 }
 
+// GET /api/auth/password/status
+func (h *AuthHandler) AccountPasswordStatus(w http.ResponseWriter, r *http.Request) {
+	claims := auth.ClaimsFromCtx(r.Context())
+	var set bool
+	if err := h.db.QueryRowContext(r.Context(),
+		`SELECT account_password_hash IS NOT NULL AND account_password_hash <> '' FROM users WHERE id = $1`,
+		claims.UserID,
+	).Scan(&set); err != nil {
+		writeError(w, http.StatusNotFound, "user not found")
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"set": set})
+}
+
 // POST /api/auth/reauth
 func (h *AuthHandler) Reauthenticate(w http.ResponseWriter, r *http.Request) {
 	if mw.IsServiceTokenRequest(r.Context()) {

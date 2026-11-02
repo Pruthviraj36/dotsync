@@ -150,6 +150,27 @@ func createNewProject(client *api.Client, cfg *config.GlobalConfig, reader *bufi
 
 	txRunning("creation")
 
+	passwordSet, err := client.AccountPasswordSet()
+	if err != nil {
+		return err
+	}
+	if !passwordSet {
+		next, promptErr := readPassword(" New account password: ")
+		if promptErr != nil {
+			return promptErr
+		}
+		confirm, promptErr := readPassword(" Confirm account password: ")
+		if promptErr != nil {
+			return promptErr
+		}
+		if next != confirm {
+			return fmt.Errorf("passwords do not match")
+		}
+		if err := client.SetAccountPassword("", next); err != nil {
+			return fmt.Errorf("set account password: %w", err)
+		}
+	}
+
 	proj, err := client.CreateProject(name, slug, desc)
 	if err != nil {
 		// A prior run may have created the server record before local identity
